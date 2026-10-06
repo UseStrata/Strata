@@ -44,15 +44,18 @@ ever reaches backward or sideways.**
 ## 2. File layout (mirrors D--)
 
 **The compiler is written in Strata** (since v1.0.0; it was originally written in D--, now
-in `archive/`). `build.ps1` bootstraps it: a pinned `stratac` release (stage0, see
-`bootstrap.txt`) compiles `src/` (stage1), stage1 compiles `src/` again (stage2), and the
-two must emit identical C (the fixpoint).
+in `archive/`). `build.ps1` (Windows) / `build.sh` (macOS, Linux) bootstraps it: stage0 (a
+pinned `stratac` release, see `bootstrap.txt`; on macOS / Linux the C seed in `seed/`)
+compiles `src/` (stage1), stage1 compiles `src/` again (stage2), and the two must emit
+identical C (the fixpoint).
 
 ```
 compiler/
 ├─ ARCHITECTURE.md      ← this file
 ├─ build.ps1            bootstraps + builds all artifacts into bin/ (2 exes + libstrata.dll)
-├─ bootstrap.txt        the release version stage0 is pinned to
+├─ build.sh             the same on macOS / Linux, from seed/ (libstrata.dylib / .so)
+├─ bootstrap.txt        the release version stage0 is pinned to (Windows)
+├─ seed/                the C seed: a stratac compiled to C + its headers (macOS / Linux stage0)
 ├─ api/                 libstrata's project file + the embedding API: strata.h, strata.hpp, Strata.cs
 ├─ src/
 │  │  ── the CORE (no main; the "library") ──
@@ -67,14 +70,15 @@ compiler/
 │  ├─ core.strata       umbrella module (`export import`s every phase), main-free
 │  │  ── the build system (on top of the core) ──
 │  ├─ project.strata    reads strata.toml into a Project
-│  ├─ build.strata      the build pipeline (C -> gcc -> exe/dll) + the build cache
+│  ├─ build.strata      the build pipeline (C -> gcc/cc -> exe/dll) + the build cache
+│  ├─ strata_host.h     C the compiler imports: messages, memory, and the OS (via lib/crossplatform.h)
 │  │  ── shared front-end utility ──
 │  ├─ dump.strata       renders core data (tokens/AST) to text
 │  │  ── front-ends (thin; each has top-level code = its main) ──
 │  ├─ stratac.strata    front-end #1: the CLI (tokens, ast, check, emit, build, run)
 │  ├─ libstrata.strata  front-end #3: the public C API (libstrata.dll, for engines)
 │  └─ console.strata    front-end #2: the explorer console
-├─ bin/                 build output: stratac.exe, console.exe, libstrata.dll
+├─ bin/                 build output: stratac(.exe), console(.exe), libstrata.dll/.dylib/.so
 ├─ build/               bootstrap compilers (cached release + stage1/2)
 ├─ lib/                 the C runtime the OUTPUT links against (arena.h, math, prelude)
 ├─ examples/            sample .strata programs

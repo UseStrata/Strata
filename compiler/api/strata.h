@@ -1,11 +1,14 @@
-/* strata.h - embed the Strata compiler (libstrata.dll) in an engine, editor or tool.
+/* strata.h - embed the Strata compiler (libstrata) in an engine, editor or tool.
  * Copyright © 2026 Connor Rutberg. Strata is GPL-3.0 with the Strata Embedding Exception:
  * any program may link and ship libstrata, whatever its own license (LICENSE-EMBEDDING.md).
  *
  * Link:   gcc/clang (MinGW)  host.c -I<strata>/include -L<strata> -lstrata
- *         anything else      load libstrata.dll at runtime (LoadLibrary / dlopen, P/Invoke, ...)
- * Ship:   libstrata.dll, and the lib/ folder beside it (Strata's runtime headers, needed to
- *         build programs). strata_build() also needs gcc on PATH.
+ *         macOS / Linux      cc host.c -I<strata>/include -L<strata> -lstrata -Wl,-rpath,<strata>
+ *                            (libstrata.dylib / libstrata.so; found through the rpath)
+ *         anything else      load the library at runtime (LoadLibrary / dlopen, P/Invoke, ...)
+ * Ship:   libstrata (.dll / .dylib / .so), and the lib/ folder beside it (Strata's runtime
+ *         headers, needed to build programs). strata_build() also needs a C compiler on
+ *         PATH: gcc on Windows, cc elsewhere, or $STRATA_CC.
  *
  * Conventions
  *   - Strings are UTF-8 and NUL-terminated. Strings returned by the library stay valid

@@ -2,3 +2,10 @@
 [project]
 name  = "multi"
 entry = "src/main.strata"
+
+# crossplatform.h's Window section is compiled in (STRATA_PROGRAM), so link what it calls
+[linux]
+libs = ["X11"]
+
+[macos]
+frameworks = ["Cocoa"]

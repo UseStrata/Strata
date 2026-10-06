@@ -70,33 +70,44 @@ Strata.md   the founding project plan
 
 ## Build & run
 
-Requires a C compiler (`gcc`). The build downloads a pinned `stratac` release once to
-bootstrap from (see `compiler/bootstrap.txt`). To just *use* Strata, grab a release zip,
-or run `compiler\install.ps1`.
+Requires a C compiler: `gcc` (MinGW) on Windows; `cc` (clang or gcc) on macOS and Linux,
+or set `STRATA_CC`. To just *use* Strata, grab a release, or run the installer below.
+
+The compiler is written in Strata, so the build bootstraps it. On **Windows** it downloads
+a pinned `stratac` release once (see `compiler/bootstrap.txt`). On **macOS / Linux** it
+compiles the C seed in `compiler/seed/` (a `stratac` compiled to portable C, see its
+README). Either way: stage0 → stage1 → stage2, and stage1 and stage2 must agree.
 
 ```powershell
-# bootstrap (pinned release -> stratac -> stratac) and build stratac.exe, console.exe,
-# libstrata.dll into compiler\bin\
+# Windows: build stratac.exe, console.exe, libstrata.dll into compiler\bin\
 powershell -ExecutionPolicy Bypass -File compiler\build.ps1
-
-# run a program
 compiler\bin\stratac.exe run compiler\examples\run1.strata
-
-# or make a project
-stratac new mygame
-cd mygame
-stratac run
-
 # install to %LOCALAPPDATA%\Programs\strata and add to PATH
 powershell -ExecutionPolicy Bypass -File compiler\install.ps1
 ```
 
+```sh
+# macOS / Linux: build stratac, console, libstrata.dylib / .so into compiler/bin/
+sh compiler/build.sh
+compiler/bin/stratac run compiler/examples/run1.strata
+# install to ~/.local/share/strata, linked as ~/.local/bin/stratac
+sh compiler/install.sh
+```
+
+```sh
+# make a project
+stratac new mygame
+cd mygame
+stratac run
+```
+
 `stratac` subcommands: `run`, `build`, `check`, `emit`, `ast`, `tokens`.
 
-Tests (byte-for-byte golden files per compiler stage):
+Tests (byte-for-byte golden files per compiler stage, projects, embedding):
 
-```powershell
-powershell -ExecutionPolicy Bypass -File compiler\tests\run.ps1
+```sh
+powershell -ExecutionPolicy Bypass -File compiler\tests\run.ps1     # Windows
+sh compiler/tests/run.sh                                            # macOS / Linux
 ```
 
 ## License

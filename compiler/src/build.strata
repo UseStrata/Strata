@@ -13,11 +13,14 @@
 //
 // Known gap: C headers the program includes (`import "x.h"`) aren't part of the
 // fingerprint; `--force` rebuilds regardless.
+//
+// Platforms: whatever differs between Windows, macOS and Linux (file names, starting the
+// C compiler, making folders, shared-library flags) goes through strata_host.h, which
+// uses lib/crossplatform.h. The C compiler is gcc (Windows) or cc, or $STRATA_CC.
 
 import core
 import project
-import <stdlib.h>   // system()
-import "strata_host.h"   // strata_report: where messages go (see strata_host.h)
+import "strata_host.h"   // strata_report, strata_cc, strata_run_argv, ... (see strata_host.h)
 
 export struct BuildSpec {
     string entry            // the root .strata file
@@ -43,10 +46,23 @@ string[dynamic] no_strings() {
     return a
 }
 
-// The classic single-file build: foo.strata -> foo.c + foo.exe beside it.
+// What this platform calls a program and a shared library: foo.exe / foo.dll on Windows,
+// foo / foo.dylib on macOS, foo / foo.so on Linux.
+export string exe_ext() {
+    if host_os() == "windows" { return ".exe" }
+    return ""
+}
+export string dll_ext() {
+    string os = host_os()
+    if os == "windows" { return ".dll" }
+    if os == "macos" { return ".dylib" }
+    return ".so"
+}
+
+// The classic single-file build: foo.strata -> foo.c + foo(.exe) beside it.
 export BuildSpec spec_for_file(string path, string version, bool quiet) {
     string stem = stem_of(path)
-    return BuildSpec{ path, stem + ".c", stem + ".exe", false, true,
+    return BuildSpec{ path, stem + ".c", stem + exe_ext(), false, true,
                       no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), no_strings(),
                       "", false, quiet, version, false }
 }
@@ -55,8 +71,8 @@ export BuildSpec spec_for_file(string path, string version, bool quiet) {
 export BuildSpec spec_for_project(Project p, string version, bool release, bool force, bool quiet) {
     string root = p.root
     string out = root + "/" + p.out_dir
-    string ext = ".exe"
-    if p.output == "dll" { ext = ".dll" }
+    string ext = exe_ext()
+    if p.output == "dll" { ext = dll_ext() }
     BuildSpec s = BuildSpec{ root + "/" + p.entry, out + "/" + p.name + ".c", out + "/" + p.name + ext,
                              p.output == "dll", release || p.release,
                              p.defines, no_strings(), no_strings(), p.libs, no_strings(), p.frameworks,
@@ -69,7 +85,7 @@ export BuildSpec spec_for_project(Project p, string version, bool release, bool 
 
 // ---- helpers ----------------------------------------------------------------
 
-// Windows paths for cmd.exe (it treats `/` as a switch in some commands)
+// Windows paths, with `\` (for running a program by its path on Windows)
 export string win_path(string p) {
     string r = ""
     int n = p.len
@@ -93,6 +109,40 @@ string fingerprint(string s) {
 }
 
 bool file_present(string p) { return read_file(p).len > 0 }
+
+// The pieces joined with spaces (for fingerprints and messages; not run by a shell)
+string spaced(string[dynamic] pieces) {
+    string[dynamic] parts = []
+    for i in 0..pieces.len {
+        if i > 0 { parts.push(" ") }
+        parts.push(pieces[i])
+    }
+    return strata_join(&parts)
+}
+
+// Compiling code for a shared library: position-independent (Windows dlls don't need it)
+bool needs_pic(BuildSpec s) { return s.dll && host_os() != "windows" }
+
+// Linking a shared library. Windows also writes an import library (<name>.dll.a) for C
+// programs to link against. macOS (an @rpath install name) and Linux (a soname) record
+// just the library's file name in programs that link it, so they find it through their
+// rpath / the loader's search path, not by the path it was built at. `in_rsp`: the
+// arguments go in a gcc response file, where paths are quoted.
+string[dynamic] dll_link_args(string out_bin, bool in_rsp) {
+    string[dynamic] a = []
+    a.push("-shared")
+    string os = host_os()
+    if os == "windows" {
+        string implib = stem_of(out_bin) + ".dll.a"
+        if in_rsp { implib = rsp_arg(implib) }
+        a.push("-Wl,--out-implib," + implib)
+    } else if os == "macos" {
+        a.push("-Wl,-install_name,@rpath/" + basename_of(out_bin))
+    } else {
+        a.push("-Wl,-soname," + basename_of(out_bin))
+    }
+    return a
+}
 
 // "mathlib" -> "MATHLIB_H": an include guard from a file name
 string guard_for(string name) {
@@ -131,22 +181,31 @@ export bool run_build(BuildSpec s, string libdir) {
     string c = generate(&cg, prog)
     if cg.had_error { strata_report("codegen: program uses features not supported yet"); return false }
 
-    // the gcc command
-    string opt = " -O0 -g"
-    if s.release { opt = " -O2" }
-    string cmd = "gcc -std=gnu11" + opt + " " + quoted(s.out_c)
-    for i in 0..s.c_sources.len    { cmd = cmd + " " + quoted(s.c_sources[i]) }
-    cmd = cmd + " -I" + quoted(libdir)
-    for i in 0..s.include_dirs.len { cmd = cmd + " -I" + quoted(s.include_dirs[i]) }
-    for i in 0..s.defines.len      { cmd = cmd + " -D" + quoted(s.defines[i]) }
-    for i in 0..s.lib_dirs.len     { cmd = cmd + " -L" + quoted(s.lib_dirs[i]) }
+    // the C compiler's command line (run directly, one argument each: nothing to quote)
+    string[dynamic] argv = []
+    argv.push(strata_cc())
+    argv.push("-std=gnu11")
+    if s.release { argv.push("-O2") } else { argv.push("-O0"); argv.push("-g") }
+    if needs_pic(s) { argv.push("-fPIC") }
+    argv.push(s.out_c)
+    for i in 0..s.c_sources.len    { argv.push(s.c_sources[i]) }
+    argv.push("-I" + libdir)
+    for i in 0..s.include_dirs.len { argv.push("-I" + s.include_dirs[i]) }
+    for i in 0..s.defines.len      { argv.push("-D" + s.defines[i]) }
+    for i in 0..s.lib_dirs.len     { argv.push("-L" + s.lib_dirs[i]) }
     for i in 0..prog.decls.len {   // `link "..."` directives in the source
-        if prog.decls[i].kind == DcLink { cmd = cmd + " -l" + prog.decls[i].path }
+        if prog.decls[i].kind == DcLink { argv.push("-l" + prog.decls[i].path) }
     }
-    for i in 0..s.libs.len         { cmd = cmd + " -l" + s.libs[i] }
-    for i in 0..s.frameworks.len   { cmd = cmd + " -framework " + s.frameworks[i] }
-    if s.dll { cmd = cmd + " -shared -Wl,--out-implib," + quoted(stem_of(s.out_bin) + ".dll.a") }
-    cmd = cmd + " -o " + quoted(s.out_bin) + " -lm"
+    for i in 0..s.libs.len         { argv.push("-l" + s.libs[i]) }
+    for i in 0..s.frameworks.len   { argv.push("-framework"); argv.push(s.frameworks[i]) }
+    if s.dll {
+        string[dynamic] da = dll_link_args(s.out_bin, false)
+        for i in 0..da.len { argv.push(da[i]) }
+    }
+    argv.push("-o")
+    argv.push(s.out_bin)
+    argv.push("-lm")
+    string cmd = spaced(argv)
 
     // a dll gets a C header declaring its entry points (kept current even on a cache hit)
     string header = ""
@@ -164,12 +223,12 @@ export bool run_build(BuildSpec s, string libdir) {
             return true
         }
         string dir = dirname_of(s.out_c)
-        if dir != "." { system(cstr("if not exist " + quoted(win_path(dir)) + " mkdir " + quoted(win_path(dir)))) }
+        if dir != "." { strata_make_dirs(dir) }
     }
 
     write_file(s.out_c, c)
     if s.dll { write_file(stem_of(s.out_bin) + ".h", header) }
-    int rc = system(cstr(cmd))
+    int rc = strata_run_argv(&argv)
     if rc != 0 { return false }
     if s.cache_file != "" { write_file(s.cache_file, key) }
     if !s.quiet { strata_report("built " + s.out_bin) }
@@ -204,7 +263,7 @@ bool run_split_build(BuildSpec s, string libdir, Program prog) {
     string opt = " -O0 -g"
     if s.release { mode = "release"; opt = " -O2" }
     string obj = out_dir + "/obj/" + mode
-    system(cstr("if not exist " + quoted(win_path(obj)) + " mkdir " + quoted(win_path(obj))))
+    strata_make_dirs(obj)
 
     Codegen cg = new_codegen()
     cg.no_main = s.dll
@@ -213,7 +272,9 @@ bool run_split_build(BuildSpec s, string libdir, Program prog) {
     write_if_changed(obj + "/" + name + ".strata.h", so.header)
 
     // compile flags shared by every file (in response files, so gcc starts directly)
-    string flags = "-std=gnu11" + opt + " -pipe -I" + rsp_arg(obj) + " -I" + rsp_arg(libdir)
+    string pic = ""
+    if needs_pic(s) { pic = " -fPIC" }
+    string flags = "-std=gnu11" + opt + pic + " -pipe -I" + rsp_arg(obj) + " -I" + rsp_arg(libdir)
     for i in 0..s.include_dirs.len { flags = flags + " -I" + rsp_arg(s.include_dirs[i]) }
     for i in 0..s.defines.len      { flags = flags + " -D" + quoted(s.defines[i]) }
     string salt = flags + "\n" + s.tool_version + "\n"
@@ -272,13 +333,13 @@ bool run_split_build(BuildSpec s, string libdir, Program prog) {
     if s.dll { write_if_changed(stem_of(s.out_bin) + ".h", generate_header(prog, guard_for(name), basename_of(s.entry))) }
 
     if rsps.len > 0 {
-        if strata_run_gcc_parallel(&rsps, jobs) > 0 { return false }
+        if strata_run_cc_parallel(&rsps, jobs) > 0 { return false }
         for i in 0..keys.len { write_file(key_files[i], keys[i]) }
     }
 
     // link (skipped if nothing was recompiled and the link inputs are the same); the
-    // arguments go in a response file too - hundreds of object paths overflow cmd.exe's
-    // 8191-character command line
+    // arguments go in a response file too - hundreds of object paths overflow Windows'
+    // command-line limit
     string[dynamic] args = []
     args.push("-o " + rsp_arg(s.out_bin) + opt + "\n")
     for i in 0..objects.len { args.push(rsp_arg(objects[i]) + "\n") }
@@ -288,7 +349,10 @@ bool run_split_build(BuildSpec s, string libdir, Program prog) {
     }
     for i in 0..s.libs.len       { args.push("-l" + s.libs[i] + "\n") }
     for i in 0..s.frameworks.len { args.push("-framework " + s.frameworks[i] + "\n") }
-    if s.dll { args.push("-shared -Wl,--out-implib," + rsp_arg(stem_of(s.out_bin) + ".dll.a") + "\n") }
+    if s.dll {
+        string[dynamic] da = dll_link_args(s.out_bin, true)
+        for i in 0..da.len { args.push(da[i] + "\n") }
+    }
     args.push("-lm\n")
     string link_text = strata_join(&args)
     string link_rsp = obj + "/link.rsp"
@@ -300,7 +364,7 @@ bool run_split_build(BuildSpec s, string libdir, Program prog) {
     }
     string[dynamic] link_job = []
     link_job.push(link_rsp)
-    if strata_run_gcc_parallel(&link_job, 1) > 0 { return false }
+    if strata_run_cc_parallel(&link_job, 1) > 0 { return false }
     write_file(s.cache_file, link_key)
     if !s.quiet {
         strata_report("built " + s.out_bin + " (" + int_to_str(rsps.len) + " of " + int_to_str(total) +

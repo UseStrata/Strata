@@ -6,7 +6,7 @@
 > [`CHANGELOG.md`](CHANGELOG.md) (per-version detail) and
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
-**Current:** stratac **1.5.0** · tests **58/58** · repo **https://github.com/UseStrata/Strata**
+**Current:** stratac **1.6.0** (cross-platform) · tests **58** (1.6.0: awaiting its first CI run on Windows / macOS / Linux) · repo **https://github.com/UseStrata/Strata**
 · installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH)
 
 ---
@@ -35,15 +35,18 @@ Strata/
 ├─ compiler/
 │  ├─ ARCHITECTURE.md    compiler internals (read before touching src/)
 │  ├─ build.ps1          bootstrap + build bin/stratac.exe, console.exe, libstrata.dll
-│  ├─ bootstrap.txt      the release version the build bootstraps from (currently 1.1.0)
-│  ├─ install.ps1        install to %LOCALAPPDATA%\Programs\strata + PATH (-Uninstall)
-│  ├─ package.ps1        release zip into dist/
+│  ├─ build.sh           the same on macOS / Linux, from seed/ (stratac, console, libstrata.dylib/.so)
+│  ├─ bootstrap.txt      the release version the Windows build bootstraps from (currently 1.1.0)
+│  ├─ seed/              the C seed: a stratac compiled to C + its headers (macOS / Linux stage0)
+│  ├─ install.ps1/.sh    install (Windows: %LOCALAPPDATA%\Programs\strata + PATH; else ~/.local)
+│  ├─ package.ps1/.sh    release zip / tar.gz into dist/
 │  ├─ src/               THE COMPILER, in Strata (§4)
 │  ├─ lib/               the C runtime compiled programs use (§7)
 │  ├─ api/               libstrata's project file + strata.h / strata.hpp / Strata.cs (§6)
 │  ├─ examples/          sample programs, also the golden-test inputs (§8)
-│  ├─ tests/             run.ps1 + goldens + test projects + embedding hosts (§9)
+│  ├─ tests/             run.ps1 / run.sh + goldens + test projects + embedding hosts (§9)
 │  └─ bin/ build/ dist/  build output, bootstrap compilers, release zips (gitignored)
+├─ .github/workflows/    ci.yml: Windows (bootstrap + seed) → macOS + Linux (from that seed)
 ├─ editors/              VS Code + Visual Studio syntax highlighting (generated grammar)
 ├─ website/design/       DESIGN.md: the language design
 └─ archive/              retired: the D-- compiler + D--→Strata translator (see its README)
@@ -70,6 +73,20 @@ builds it again → stage2. **The build fails unless stage1 and stage2 emit byte
 (the fixpoint). stage2 ships as `bin/stratac.exe`; `console.exe` is built by it;
 `libstrata.dll` is built from `compiler/api/strata.toml`.
 
+**macOS / Linux** (needs `cc`; X11 headers on Linux for the test projects):
+```
+sh compiler/build.sh            # stage0 = seed/stratac.c compiled with cc, then stage1 → stage2
+sh compiler/tests/run.sh        # build + the same checks as run.ps1
+sh compiler/install.sh          # ~/.local/share/strata, linked as ~/.local/bin/stratac
+```
+`build.sh --bootstrap <stratac>` uses another stage0; `--write-seed` (and `build.ps1
+-WriteSeed`) refreshes `seed/` from the build. The seed is the compiler's own C (the
+fixpoint output) plus the `strata_host.h` and `lib/*.h` it was made against, so it is the
+same on every OS and keeps compiling whatever `src/` becomes. **The first seed must come
+from Windows** (a 1.6.0+ compiler: the releases are Windows-only). CI makes one on every
+push and bootstraps macOS / Linux from it; on `main`, when `seed/VERSION` isn't the
+compiler's version yet, CI commits the new seed back (so each version gets one seed).
+
 **Quick iteration on the compiler:** `compiler\bin\stratac.exe build compiler\src\stratac.strata`
 → `src\stratac.exe` (don't make a compiler overwrite its own running exe). Run the full
 `run.ps1` before committing.
@@ -94,7 +111,8 @@ Project builds are **incremental and parallel** (§4, "Split builds").
 **Releasing a version** (the established process):
 1. Bump `export string stratac_version()` in `compiler/src/version.strata` (and
    `editors/vscode/package.json`); add a `CHANGELOG.md` section; update this file.
-2. `run.ps1` must pass. Commit to `main`, tag `vX.Y.Z`.
+2. `run.ps1` must pass. Refresh the seed (`build.ps1 -WriteSeed`) and commit it with the
+   release. Commit to `main`, tag `vX.Y.Z`.
 3. Verify from a clean checkout: `git worktree add <tmp> vX.Y.Z`, run its `run.ps1`, then
    `package.ps1 -Version X.Y.Z` there (so the zip's binaries match the tag).
 4. `git push origin main vX.Y.Z`; `gh release create vX.Y.Z <zip> --title ... --notes ...`.
@@ -123,7 +141,7 @@ file.strata → lexer → parser → (module loader) → checker → codegen →
 | `project`, `build` | the build system: `strata.toml`; pipeline, cache, split builds, dll + header |
 | `libstrata` | the public embedding API (`strata_*` exports) |
 | `stratac`, `console`, `dump`, `version` | CLI front-end, explorer front-end, printers, version string |
-| `strata_host.h` | C helpers the compiler imports: message sink (print vs capture), memory reset, lib/ lookup, one-pass string join, array free, file-exists, parallel gcc runner |
+| `strata_host.h` | C helpers the compiler imports: message sink (print vs capture), memory reset, lib/ lookup, one-pass string join, array free; and the OS, through `lib/crossplatform.h` (included by relative path, `static`, no Window section): `strata_host_os`, `strata_cc`, `strata_exe_path`, `strata_make_dirs`, `strata_run_argv`, parallel `strata_run_cc_parallel` |
 
 **Key ideas**
 - **Everything lowers to plain C**; sugar is resolved in the checker, gone by codegen.
@@ -212,11 +230,12 @@ functions and gets a generated `<name>.h` + `<name>.dll.a` beside the dll.
 | `sio.h` | `read_file`, `write_file`, `args()` |
 | `smath.h` / `sprelude.h` | vectors, matrices, quaternions / min, max, clamp, lerp, PI |
 | `sstate.h` | `STRATA_STATE`: runtime state is `static`, or shared across a split build's files |
-| `crossplatform.h` | single-header platform layer (a Window section so far; per-section opt-outs) |
+| `crossplatform.h` | single-header platform layer: Window, System (OS name, cores, exe / module path), Files (exists, is-dir, mkdir -p), Process (start / wait, no shell); per-section opt-outs, `STRATA_CROSSPLATFORM_STATIC`. **The compiler's only OS code** |
 
 **Rule:** the bootstrap release compiles the compiler against *its own* older `lib/`. So a
 new runtime function the compiler uses must be guarded (`#ifdef STRATA_ARR_TRACKED`,
-`STRATA_STR_LEN_CACHE`) or live in `src/strata_host.h` instead.
+`STRATA_STR_LEN_CACHE`) or live in `src/strata_host.h` instead. (`crossplatform.h` is the
+exception: `strata_host.h` includes it as `"../lib/crossplatform.h"`, i.e. from this repo.)
 
 ---
 
@@ -230,7 +249,7 @@ via `lib/crossplatform.h`). Graphical (open a window; build, don't auto-run): `w
 
 ---
 
-## 9. Tests (`compiler/tests/run.ps1`: 58 checks)
+## 9. Tests (`compiler/tests/run.ps1`: 58 checks; `run.sh`: the same on macOS / Linux)
 
 1. **Bootstrap + fixpoint** (runs `build.ps1`).
 2. **Goldens:** `tests/<stage>/<name>.expected` vs `stratac <stage> examples/<name>.strata`,
@@ -263,8 +282,14 @@ via `lib/crossplatform.h`). Graphical (open a window; build, don't auto-run): `w
 
 ## 11. Known limitations
 
-- **Windows only** for `stratac` itself (it runs gcc via cmd, writes `.exe`). Generated C and
-  `crossplatform.h` are portable; the toolchain isn't yet.
+- **macOS / Linux are written but not yet run end to end:** they need the first C seed
+  (made on Windows, or by CI). `crossplatform.h` and `strata_host.h` are tested on macOS;
+  the Windows branches are unchanged in behaviour but only compile-checked by CI.
+- `link "user32"` in a source file is not per-platform (`examples/crossplatform.strata`
+  builds only on Windows); use a project's `[windows]` / `[macos]` / `[linux]` sections.
+- Shared libraries keep the project's name on every OS (`mathlib.so`, not
+  `libmathlib.so`), so C hosts on macOS / Linux link them by path, not `-lmathlib`.
+- `embed/csharp` is skipped by `run.sh` (Strata.cs not set up for macOS / Linux yet).
 - **Needs gcc** to build programs (check/emit don't). Bundling tcc is planned.
 - **Build cache** doesn't track C headers your program `import`s — use `--force` after
   editing one.
@@ -282,7 +307,7 @@ via `lib/crossplatform.h`). Graphical (open a window; build, don't auto-run): `w
 
 **Done this era (see CHANGELOG):** 1.0 self-hosting · 1.1 module system · 1.2 build system
 · 1.3 embedding API · 1.4 compiler 25–540× faster · 1.5 break/continue, incremental parallel
-builds, hardened limits.
+builds, hardened limits · 1.6 stratac on Windows, macOS and Linux (crossplatform.h, C seed).
 
 **Candidates, roughly in value order:**
 1. **Bundle tcc** for debug builds (near-instant; removes the gcc requirement for `run`).
@@ -293,7 +318,10 @@ builds, hardened limits.
 4. `stratac watch` (keep the program in memory, rebuild on save) → an LSP later.
 5. Language sugar: qualified names, module constants/globals, default/named args.
 6. SoA / `#soa` arrays (M4), hot-reload runtime (M5).
-7. Housekeeping: bump `bootstrap.txt` (to ≥1.5.0) so the compiler's own code can use
+7. Cross-platform follow-ups: commit the first seed (from CI or `build.ps1 -WriteSeed`);
+   publish macOS / Linux release archives (`package.sh`); make the Windows bootstrap use
+   the seed too (then releases needn't be downloaded at all); per-platform `link`.
+8. Housekeeping: bump `bootstrap.txt` (to ≥1.5.0) so the compiler's own code can use
    `break`/`continue`/modules features; clean up the D--isms in `src/` (paren conditions,
    `;`, `0 - 1`); delete `archive/` if the D-- path is no longer wanted (user's call).
 
@@ -305,7 +333,11 @@ iteration (today)? · which of the candidates comes next.
 ## 13. Working notes (for whoever picks this up — human or agent)
 
 - **The bootstrap rule:** the compiler's own source may only use features of the release in
-  `bootstrap.txt`. To use a new feature in `src/`: release a version with it, bump the pin.
+  `bootstrap.txt` **and of the seed** (`seed/VERSION`). To use a new feature in `src/`:
+  release a version with it, bump the pin, refresh the seed.
+- **OS-specific code goes in `lib/crossplatform.h`** (a new section or function), called
+  from `src/strata_host.h`. No `system()`, `cmd.exe`, `.exe` literals or `#ifdef _WIN32`
+  in the Strata sources: ask `host_os()` / `exe_ext()` / `dll_ext()`.
 - **Edit `compiler/src/*.strata` directly.** `src/strata_host.h` is compiled from the repo,
   so new C helpers the compiler needs belong there (not in `lib/`, see §7).
 - **Keywords can't be identifiers** — e.g. `link`, `region`, `cast`, `sizeof`, `break`.

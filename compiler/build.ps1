@@ -14,12 +14,14 @@
 # don't, the build fails. stage2 is what ships. Run from anywhere:
 #     powershell -ExecutionPolicy Bypass -File compiler\build.ps1
 #     ... -Bootstrap C:\path\to\stratac.exe     use a specific stage0 instead
+#     ... -WriteSeed                            also refresh seed/ (the portable C seed
+#                                               that bootstraps macOS / Linux: build.sh)
 #
 # The stage0 rule: src/ may only use language features the pinned release supports.
 # Before the compiler's own code uses a new feature, release a version that has it and
 # bump bootstrap.txt to it.
 
-param([string]$Bootstrap)
+param([string]$Bootstrap, [switch]$WriteSeed)
 
 $ErrorActionPreference = "Stop"
 $here     = Split-Path -Parent $MyInvocation.MyCommand.Path   # ...\compiler
@@ -82,6 +84,22 @@ Write-Host "fixpoint ok: stage1 and stage2 emit identical C" -ForegroundColor Gr
 
 Copy-Item $stage2 (Join-Path $bin "stratac.exe") -Force
 $stratac = Join-Path $bin "stratac.exe"
+
+# --- the seed: this compiler as portable C, for bootstrapping other platforms ----
+# src\stratac.c is stage1's output for the compiler (= stage2's, by the fixpoint), written
+# by stratac itself (LF, byte-exact). Kept with the headers it was generated against, so
+# build.sh can compile it however src/ and lib/ change later. See seed/README.md.
+if ($WriteSeed) {
+    $seed = Join-Path $here "seed"
+    foreach ($d in $seed, (Join-Path $seed "src"), (Join-Path $seed "lib")) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null } }
+    Copy-Item (Join-Path $src "stratac.c") (Join-Path $seed "stratac.c") -Force
+    Copy-Item (Join-Path $src "strata_host.h") (Join-Path $seed "src\strata_host.h") -Force
+    Remove-Item (Join-Path $seed "lib\*.h") -ErrorAction SilentlyContinue
+    Copy-Item (Join-Path $lib "*.h") (Join-Path $seed "lib") -Force
+    $ver = [regex]::Match((Get-Content (Join-Path $src "version.strata") -Raw), 'return "([0-9][0-9.]*)').Groups[1].Value
+    [IO.File]::WriteAllText((Join-Path $seed "VERSION"), "$ver`n")
+    Write-Host "wrote seed\ (stratac $ver)" -ForegroundColor Green
+}
 
 # --- console.exe: built by the shipped compiler ------------------------------
 Write-Host "building console.exe ..." -ForegroundColor Cyan

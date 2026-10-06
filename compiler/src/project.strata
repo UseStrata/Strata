@@ -32,7 +32,7 @@
 // Unknown sections and keys are errors, so a typo can't silently do nothing.
 
 import modules   // dirname_of
-import "strata_host.h"   // strata_report: where messages go (see strata_host.h)
+import "strata_host.h"   // strata_report: where messages go; strata_host_os (see strata_host.h)
 
 export struct Project {
     bool   ok
@@ -53,9 +53,9 @@ export struct Project {
     bool   split             // compile one C file per module (default true)
 }
 
-// The platform stratac is running on. stratac only runs on Windows so far; this is the one
-// place to change when it runs elsewhere.
-export string host_os() { return "windows" }
+// The platform stratac is running on: "windows", "macos" or "linux" (lib/crossplatform.h).
+// Picks the [windows] / [linux] / [macos] section of a project file.
+export string host_os() { return strata_host_os() }
 
 // ---- small string helpers --------------------------------------------------
 

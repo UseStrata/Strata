@@ -1,5 +1,5 @@
-# Builds libstrata.dll: the Strata compiler as a library (API: strata.h).
-#   stratac build compiler/api        (build.ps1 does this)
+# Builds libstrata (.dll / .dylib / .so): the Strata compiler as a library (API: strata.h).
+#   stratac build compiler/api        (build.ps1 / build.sh do this)
 [project]
 name    = "libstrata"
 entry   = "../src/libstrata.strata"
@@ -10,3 +10,6 @@ out_dir = "../bin"
 release      = true
 split        = false          # strata_host.h keeps process state in `static`s: one C file
 include_dirs = ["../src"]    # strata_host.h lives beside the compiler's sources
+
+[linux]
+libs = ["dl"]                 # dladdr (finding lib/ next to libstrata.so), glibc < 2.34

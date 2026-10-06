@@ -5,6 +5,8 @@
 # stratac output beside the compiler's own sources (build.ps1 builds src/stratac.strata)
 compiler/src/*.c
 compiler/src/*.exe
+compiler/src/stratac
+compiler/src/console
 
 # build output of the test projects (tests/projects/*/build/)
 compiler/tests/projects/*/build/
@@ -13,10 +15,15 @@ compiler/tests/embed/build/
 compiler/tests/embed/csharp/bin/
 compiler/tests/embed/csharp/obj/
 compiler/tests/embed/prog/*.c
+compiler/tests/embed/prog/main
 
 # stratac output beside example programs
 compiler/examples/*.c
 compiler/examples/*.exe
+# (macOS / Linux programs have no extension: ignore everything but the sources)
+compiler/examples/*
+!compiler/examples/*.strata
+!compiler/examples/*/
 
 # old D-- build output left in the archived bootstrap seed
 archive/dminusminus-seed/src/*.c
@@ -39,6 +46,9 @@ compiler/dist/
 *.ilk
 *.exp
 *.lib
+*.so
+*.dylib
+*.dSYM/
 
 # --- editor / OS -----------------------------------------------------------
 .vs/

@@ -7,6 +7,40 @@ and a GitHub Release.
 ## [Unreleased]
 - nothing yet.
 
+## [1.6.0] - 2026-10-06
+### Added
+- **`stratac` itself is cross-platform: Windows, macOS and Linux.** Everything that
+  differs between them goes through `lib/crossplatform.h` (see below) from
+  `src/strata_host.h`; no `cmd.exe`, no `system()`. Programs are `foo.exe` on Windows and
+  `foo` elsewhere; shared libraries are `.dll` / `.dylib` / `.so` (macOS: an `@rpath`
+  install name, Linux: a soname; the `.dll.a` import library is Windows-only). The C
+  compiler is `gcc` on Windows, `cc` elsewhere, or `$STRATA_CC`. `host_os()` now reports
+  the real platform, so a project's `[windows]` / `[linux]` / `[macos]` section applies
+  where it should. `stratac` finds its `lib/` from its own path (also when started from
+  PATH or through a symlink), and `libstrata` from the library's path.
+- **`lib/crossplatform.h`: System, Files and Process sections** beside Window:
+  `PlatformName`, `PlatformCpuCount`, `PlatformExecutablePath`, `PlatformModulePath`;
+  `PlatformPathExists`, `PlatformIsDirectory`, `PlatformMakeDirectories` (mkdir -p);
+  `PlatformStartProcess` / `PlatformWaitProcess` / `PlatformRunProcess` (no shell;
+  arguments arrive exactly as given, quoted for the Windows C runtime). New option
+  `STRATA_CROSSPLATFORM_STATIC` keeps every function private to the including file.
+  `<windows.h>` is now included only for the Window section.
+- **Bootstrapping on macOS / Linux: the C seed** (`compiler/seed/`): a `stratac`
+  compiled to portable C plus the headers it was generated against. `build.sh` compiles
+  it with `cc` as stage0, then does the usual stage1 → stage2 fixpoint. Make or refresh
+  it with `build.ps1 -WriteSeed` or `build.sh --write-seed`.
+- POSIX scripts beside the PowerShell ones: `build.sh`, `tests/run.sh` (the same
+  checks as `run.ps1`), `install.sh` (`~/.local/share/strata`, linked into
+  `~/.local/bin`), `package.sh` (a `.tar.gz`).
+- CI (`.github/workflows/ci.yml`): Windows bootstraps from the pinned release and makes
+  the seed; macOS and Linux bootstrap from it and run `tests/run.sh`.
+- `stratac new` writes a `[macos]` section too.
+### Changed
+- Single-file builds run the C compiler directly with one argument per flag (no shell
+  quoting), so build fingerprints change once: every cached project rebuilds once.
+- The embedding test host (`tests/embed/host_api.c`) measures memory on macOS and Linux
+  too.
+
 ## [1.5.0] - 2026-09-26
 ### Added
 - **`break` and `continue`** in `while`, `for x in a..b` and `for x in array` loops.

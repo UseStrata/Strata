@@ -16,3 +16,6 @@ compiler/tests/** text eol=lf
 
 # Keep the language bar meaningful: don't count golden fixtures as source.
 compiler/tests/** linguist-detectable=false
+
+# The C seed (compiler/seed/) is generated: compiled to bootstrap macOS / Linux, never edited.
+compiler/seed/** text eol=lf linguist-generated=true

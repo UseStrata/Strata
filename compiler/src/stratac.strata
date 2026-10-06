@@ -16,7 +16,8 @@ import dump   // print_tokens / print_program
 import project   // strata.toml
 import build     // the build pipeline + cache, targets
 import version   // stratac_version
-import <stdlib.h>   // system()  (C header, passed through to the generated C)
+import <stdlib.h>   // exit()  (C header, passed through to the generated C)
+import "strata_host.h"   // strata_exe_path, strata_make_dirs, strata_run_argv
 
 
 // ---- paths -------------------------------------------------------------
@@ -24,8 +25,16 @@ import <stdlib.h>   // system()  (C header, passed through to the generated C)
 
 bool file_exists(string p) { return read_file(p).len > 0; }
 
-// Find the runtime lib/ (arena.h, ...) relative to the stratac executable.
+// Find the runtime lib/ (arena.h, ...) relative to the stratac executable: next to it
+// (an install), or one level up (the repo: bin/../lib). The OS knows where the exe is,
+// even when it was started from PATH; argv[0] and the current folder are fallbacks.
 string resolve_libdir(string argv0) {
+    string exe = strata_exe_path()
+    if exe != "" {
+        string edir = dirname_of(exe)
+        if (file_exists(edir + "/lib/arena.h"))    { return edir + "/lib"; }
+        if (file_exists(edir + "/../lib/arena.h")) { return edir + "/../lib"; }
+    }
     string dir = dirname_of(argv0)
     if (file_exists(dir + "/lib/arena.h"))    { return dir + "/lib"; }
     if (file_exists(dir + "/../lib/arena.h")) { return dir + "/../lib"; }
@@ -93,19 +102,20 @@ int cmd_run(Target t, string libdir, bool release, bool force, string[dynamic] p
     BuildSpec spec = cli_spec(t, release, force, true)
     if spec.dll { print("error: this project builds a dll; there's nothing to run"); return 1 }
     if !run_build(spec, libdir) { return 1 }
-    string exe = win_path(spec.out_bin)
-    // a bare `prog.exe` is not found when the shell doesn't search the current dir
-    if (dirname_of(exe) == ".") { exe = ".\\" + exe; }
-    string runcmd = "\"" + exe + "\""
-    for i in 0..prog_args.len { runcmd = runcmd + " \"" + prog_args[i] + "\"" }
-    runcmd = "\"" + runcmd + "\""// cmd.exe strips the outer quote pair
-    return system(cstr(runcmd))
+    // a bare `prog` would be searched for on PATH, not in the current folder
+    string exe = spec.out_bin
+    if dirname_of(exe) == "." { exe = "./" + exe }
+    if host_os() == "windows" { exe = win_path(exe) }
+    string[dynamic] argv = []
+    argv.push(exe)
+    for i in 0..prog_args.len { argv.push(prog_args[i]) }
+    return strata_run_argv(&argv)
 }
 
 // stratac new <name>: a project folder with a strata.toml and src/main.strata
 int cmd_new(string name) {
     if file_exists(name + "/strata.toml") { print("error: " + name + "/strata.toml already exists"); return 1 }
-    system(cstr("if not exist \"" + win_path(name + "/src") + "\" mkdir \"" + win_path(name + "/src") + "\""))
+    if !strata_make_dirs(name + "/src") { print("error: could not create " + name + "/src"); return 1 }
     string pname = basename_of(name)
     string toml = "# " + pname + " - a Strata project. Build: stratac build   Run: stratac run\n" +
                   "[project]\n" +
@@ -121,7 +131,10 @@ int cmd_new(string name) {
                   "libs = []                # e.g. [\"user32\"]\n" +
                   "\n" +
                   "[linux]\n" +
-                  "libs = []                # e.g. [\"X11\"]\n"
+                  "libs = []                # e.g. [\"X11\"]\n" +
+                  "\n" +
+                  "[macos]\n" +
+                  "frameworks = []          # e.g. [\"Cocoa\"]\n"
     bool ok = write_file(name + "/strata.toml", toml)
     ok = ok && write_file(name + "/src/main.strata", "// " + pname + " - the entry point. Other files in this folder are modules: `import name`.\nprint(\"hello from " + pname + "\")\n")
     ok = ok && write_file(name + "/.gitignore", "build/\n")
