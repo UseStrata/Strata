@@ -29,20 +29,20 @@ int main(int strata_argc_, char** strata_argv_) {
         b.vel = (vec2){GetRandomValue((-200), 200), GetRandomValue((-200), 200)};
         ({ Ball _e = b; arr_push(&(balls), &_e); });
     }
-    while ((!WindowShouldClose())) {
+    while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         for (int64_t i = 0; i < balls.len; i++) {
             ((Ball*)(balls).data)[i].pos = vec2_add(((Ball*)(balls).data)[i].pos, vec2_scale(((Ball*)(balls).data)[i].vel, dt));
-            if ((((Ball*)(balls).data)[i].pos.x < 10)) {
+            if (((Ball*)(balls).data)[i].pos.x < 10) {
                 ((Ball*)(balls).data)[i].vel.x = (0 - ((Ball*)(balls).data)[i].vel.x);
             }
-            if ((((Ball*)(balls).data)[i].pos.x > 790)) {
+            if (((Ball*)(balls).data)[i].pos.x > 790) {
                 ((Ball*)(balls).data)[i].vel.x = (0 - ((Ball*)(balls).data)[i].vel.x);
             }
-            if ((((Ball*)(balls).data)[i].pos.y < 10)) {
+            if (((Ball*)(balls).data)[i].pos.y < 10) {
                 ((Ball*)(balls).data)[i].vel.y = (0 - ((Ball*)(balls).data)[i].vel.y);
             }
-            if ((((Ball*)(balls).data)[i].pos.y > 440)) {
+            if (((Ball*)(balls).data)[i].pos.y > 440) {
                 ((Ball*)(balls).data)[i].vel.y = (0 - ((Ball*)(balls).data)[i].vel.y);
             }
         }

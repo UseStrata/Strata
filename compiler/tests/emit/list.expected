@@ -24,7 +24,7 @@ int main(int strata_argc_, char** strata_argv_) {
     head = ({ Node _v = (Node){1, head}; Node* _p = (Node*)arena_alloc(strata_heap(), sizeof(Node)); *_p = _v; _p; });
     int64_t sum = 0;
     Node* cur = head;
-    while ((cur != 0)) {
+    while (cur != 0) {
         sum = (sum + cur->val);
         cur = cur->next;
     }

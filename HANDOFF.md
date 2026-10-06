@@ -6,7 +6,7 @@
 > [`CHANGELOG.md`](CHANGELOG.md) (per-version detail) and
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
-**Current:** stratac **1.6.0** (cross-platform) · tests **58** (1.6.0: awaiting its first CI run on Windows / macOS / Linux) · repo **https://github.com/UseStrata/Strata**
+**Current:** stratac **1.6.0** (cross-platform) · tests **58/58** (Windows) · **57 + 1 skip** (macOS, Linux: no C# host yet), all in CI · repo **https://github.com/UseStrata/Strata**
 · installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH)
 
 ---
@@ -282,9 +282,9 @@ via `lib/crossplatform.h`). Graphical (open a window; build, don't auto-run): `w
 
 ## 11. Known limitations
 
-- **macOS / Linux are written but not yet run end to end:** they need the first C seed
-  (made on Windows, or by CI). `crossplatform.h` and `strata_host.h` are tested on macOS;
-  the Windows branches are unchanged in behaviour but only compile-checked by CI.
+- **macOS / Linux** bootstrap from `seed/` and pass `run.sh` (CI, and locally on an
+  Apple Silicon Mac); the seed made on Windows is byte-identical to the C macOS emits.
+  Until the seed is refreshed, stage0's builds print clang warnings (its older codegen).
 - `link "user32"` in a source file is not per-platform (`examples/crossplatform.strata`
   builds only on Windows); use a project's `[windows]` / `[macos]` / `[linux]` sections.
 - Shared libraries keep the project's name on every OS (`mathlib.so`, not

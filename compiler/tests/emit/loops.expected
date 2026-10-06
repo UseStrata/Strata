@@ -23,7 +23,7 @@ int64_t deep(int64_t k) {
         Arena _region = arena_make();
         {
             Arena _region2 = arena_make();
-            if ((k > 0)) {
+            if (k > 0) {
                 { int64_t _ret = (k * 2);
                     arena_free(&_region2);
                     arena_free(&_region);
@@ -41,14 +41,14 @@ int main(int strata_argc_, char** strata_argv_) {
     int64_t n = 0;
     while (true) {
         n += 1;
-        if ((n == 5)) {
+        if (n == 5) {
             break;
         }
     }
     printf("%lld\n", (long long)(n));
     int64_t odd = 0;
     for (int64_t i = 0; i < 10; i++) {
-        if (((i % 2) == 0)) {
+        if ((i % 2) == 0) {
             continue;
         }
         odd += i;
@@ -59,7 +59,7 @@ int main(int strata_argc_, char** strata_argv_) {
     { Array _arr = xs;
         for (int64_t _i = 0; _i < _arr.len; _i++) {
             int64_t x = ((int64_t*)_arr.data)[_i];
-            if ((x > 10)) {
+            if (x > 10) {
                 found = x;
                 break;
             }
@@ -69,7 +69,7 @@ int main(int strata_argc_, char** strata_argv_) {
     int64_t pairs = 0;
     for (int64_t a = 0; a < 4; a++) {
         for (int64_t b = 0; b < 4; b++) {
-            if ((b > a)) {
+            if (b > a) {
                 break;
             }
             pairs += 1;
@@ -107,11 +107,11 @@ int main(int strata_argc_, char** strata_argv_) {
             Arena scratch = arena_make();
             Box* p = (Box*)arena_alloc(&scratch, sizeof(Box));
             made += 1;
-            if ((i == 1)) {
+            if (i == 1) {
                 arena_free(&scratch);
                 continue;
             }
-            if ((i == 4)) {
+            if (i == 4) {
                 arena_free(&scratch);
                 break;
             }

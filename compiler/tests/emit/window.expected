@@ -17,7 +17,7 @@ int main(int strata_argc_, char** strata_argv_) {
     strata_set_args(strata_argc_, strata_argv_);
     InitWindow(800, 450, "Strata - hello from a game language");
     SetTargetFPS(60);
-    while ((!WindowShouldClose())) {
+    while (!WindowShouldClose()) {
         BeginDrawing();
         ClearBackground(RAYWHITE);
         DrawText("Hello from Strata!", 250, 200, 20, DARKGRAY);

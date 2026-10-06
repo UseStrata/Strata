@@ -40,6 +40,8 @@ and a GitHub Release.
   quoting), so build fingerprints change once: every cached project rebuilds once.
 - The embedding test host (`tests/embed/host_api.c`) measures memory on macOS and Linux
   too.
+- `if` / `while` conditions are emitted without doubled parentheses (`if (n == 5)`, not
+  `if ((n == 5))`), which clang warned about in every program (`-Wparentheses-equality`).
 
 ## [1.5.0] - 2026-09-26
 ### Added

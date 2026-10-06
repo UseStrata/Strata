@@ -38,10 +38,10 @@ int64_t area(Rect r) {
 }
 
 Kind kind_of(Rect r) {
-    if ((r.w == r.h)) {
+    if (r.w == r.h) {
         return Square;
     }
-    if ((r.w > r.h)) {
+    if (r.w > r.h) {
         return Wide;
     }
     return Tall;

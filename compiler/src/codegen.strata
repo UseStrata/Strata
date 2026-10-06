@@ -86,6 +86,35 @@ string join_pieces(string[dynamic] pieces) { return strata_join(&pieces) }
 
 // Join pieces with a separator in one pass. (Building a string with `s = s + piece` in a
 // loop copies everything so far each time: quadratic for a 100k-item array literal.)
+// A condition for C's `if (...)` / `while (...)`: `(n == 5)` as it is, anything else
+// wrapped. (Doubled parentheses around a comparison are a clang warning,
+// -Wparentheses-equality.) The C text is one parenthesized group if the `(` at its start
+// closes at its end; parentheses inside string and char literals don't count.
+string paren_cond(string c) {
+    int n = c.len
+    if n < 2 || c[0] != '(' || c[n - 1] != ')' { return "(" + c + ")" }
+    int depth = 0
+    int i = 0
+    bool wraps = true
+    while i < n - 1 && wraps {
+        char ch = c[i]
+        if ch == '"' || ch == '\'' {          // skip a literal, escapes included
+            i += 1
+            while i < n - 1 && c[i] != ch {
+                if c[i] == '\\' { i += 1 }
+                i += 1
+            }
+        } else if ch == '(' { depth += 1 }
+        else if ch == ')' {
+            depth -= 1
+            if depth == 0 { wraps = false }    // the first group closed before the end
+        }
+        i += 1
+    }
+    if wraps { return c }
+    return "(" + c + ")"
+}
+
 string join_with(string[dynamic] pieces, string sep) {
     string[dynamic] out = []
     for i in 0..pieces.len {
@@ -483,7 +512,7 @@ void gen_stmt(Codegen* cg, int ind, Stmt* s) {
                 }
             }
         case StIf:
-            cg_out(cg, cg_indent(ind) + "if (" + gen_expr(cg, s.cond) + ") ")
+            cg_out(cg, cg_indent(ind) + "if " + paren_cond(gen_expr(cg, s.cond)) + " ")
             gen_braced(cg, ind, s.then_block)
             if (s.else_branch != null) {
                 cg_out(cg, " else ")
@@ -493,7 +522,7 @@ void gen_stmt(Codegen* cg, int ind, Stmt* s) {
                 cg_out(cg, "\n")
             }
         case StWhile:
-            cg_out(cg, cg_indent(ind) + "while (" + gen_expr(cg, s.cond) + ") ")
+            cg_out(cg, cg_indent(ind) + "while " + paren_cond(gen_expr(cg, s.cond)) + " ")
             loop_enter(cg)
             gen_braced(cg, ind, s.body); cg_out(cg, "\n")
             cg_out(cg, loop_leave(cg, ind))

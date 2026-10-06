@@ -19,7 +19,7 @@ int main(int strata_argc_, char** strata_argv_) {
     SetTargetFPS(60);
     vec2 pos = (vec2){400, 225};
     float speed = 260.0;
-    while ((!WindowShouldClose())) {
+    while (!WindowShouldClose()) {
         float dt = GetFrameTime();
         vec2 dir = (vec2){0, 0};
         if (IsKeyDown(KEY_RIGHT)) {

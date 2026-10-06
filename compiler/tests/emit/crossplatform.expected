@@ -17,9 +17,9 @@ int main(int strata_argc_, char** strata_argv_) {
     strata_set_args(strata_argc_, strata_argv_);
     CreatePlatformWindow(800, 600, "Test Crossplatform Window");
     int64_t frames = 0;
-    while ((PlatformPollEvents() == 1)) {
+    while (PlatformPollEvents() == 1) {
         frames += 1;
-        if (((frames % 60) == 0)) {
+        if ((frames % 60) == 0) {
             PlatformSetWindowTitle(str_concat(str_concat(str_concat("Strata window - ", str_from_int(PlatformGetWindowWidth())), " x "), str_from_int(PlatformGetWindowHeight())));
         }
     }
