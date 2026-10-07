@@ -10,13 +10,6 @@
 #include <sarr.h>
 #include <sprelude.h>
 #include "strata_host.h"
-#include "strata_host.h"
-#include "strata_host.h"
-#include "strata_host.h"
-#include "strata_host.h"
-#include "strata_host.h"
-#include <stdlib.h>
-#include "strata_host.h"
 #include <stdlib.h>
 
 typedef enum { TkIdent, TkInt, TkFloat, TkString, TkChar, TkKwVar, TkKwConst, TkKwStruct, TkKwEnum, TkKwIf, TkKwElse, TkKwWhile, TkKwFor, TkKwIn, TkKwReturn, TkKwTrue, TkKwFalse, TkKwRegion, TkKwImport, TkKwLink, TkKwSwitch, TkKwCase, TkKwDefault, TkKwExport, TkKwCast, TkKwSizeof, TkKwBreak, TkKwContinue, TkLParen, TkRParen, TkLBrace, TkRBrace, TkLBracket, TkRBracket, TkComma, TkSemicolon, TkColon, TkDot, TkDotDot, TkHash, TkAssign, TkPlus, TkMinus, TkStar, TkSlash, TkPercent, TkPlusEq, TkMinusEq, TkStarEq, TkSlashEq, TkEqEq, TkBangEq, TkLt, TkLtEq, TkGt, TkGtEq, TkAmpAmp, TkPipePipe, TkBang, TkAmp, TkPipe, TkCaret, TkTilde, TkShl, TkShr, TkPipeEq, TkAmpEq, TkCaretEq, TkShlEq, TkShrEq, TkNewline, TkEof, TkError } TokKind;
@@ -5527,13 +5520,23 @@ void gen_includes(Codegen* cg, Program prog) {
     cg_out(cg, "#include <sio.h>\n");
     cg_out(cg, "#include <sarr.h>\n");
     cg_out(cg, "#include <sprelude.h>\n");
+    Array seen = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if (d->kind == DcInclude) {
+            const char* line = str_concat(str_concat("#include \"", d->path), "\"\n");
             if (d->is_system) {
-                cg_out(cg, str_concat(str_concat("#include <", d->path), ">\n"));
-            } else {
-                cg_out(cg, str_concat(str_concat("#include \"", d->path), "\"\n"));
+                line = str_concat(str_concat("#include <", d->path), ">\n");
+            }
+            bool dup = false;
+            for (int64_t k = 0; k < seen.len; k++) {
+                if (str_eq(((const char**)(seen).data)[k], line)) {
+                    dup = true;
+                }
+            }
+            if (!dup) {
+                ({ const char* _e = line; arr_push(&(seen), &_e); });
+                cg_out(cg, line);
             }
         }
     }
