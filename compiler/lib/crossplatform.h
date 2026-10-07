@@ -27,9 +27,9 @@
  *   Process  start programs, wait for them       opt out: STRATA_CROSSPLATFORM_NO_PROCESS
  *
  * LINKING (per section)
- *   Window   Windows: user32  (Strata: link "user32"; MSVC and MinGW link it by default)
- *            Linux:   X11     (Strata: link "X11")
- *            macOS:   -framework Cocoa  (strata.toml: [macos] frameworks = ["Cocoa"])
+ *   Window   Windows: user32, Linux: X11, macOS: -framework Cocoa. A Strata program that
+ *            imports this header links them automatically (MSVC and MinGW link user32
+ *            by default anyway).
  *   System   Linux:   dl, on glibc older than 2.34 (PlatformModulePath uses dladdr)
  *   Files, Process: nothing extra.
  *   On Linux with a strict -std=c99/c11, compile with -D_DEFAULT_SOURCE (the Files,

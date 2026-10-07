@@ -285,8 +285,9 @@ via `lib/crossplatform.h`). Graphical (open a window; build, don't auto-run): `w
 - **macOS / Linux** bootstrap from `seed/` and pass `run.sh` (CI, and locally on an
   Apple Silicon Mac); the seed made on Windows is byte-identical to the C macOS emits.
   Until the seed is refreshed, stage0's builds print clang warnings (its older codegen).
-- `link "user32"` in a source file is not per-platform (`examples/crossplatform.strata`
-  builds only on Windows); use a project's `[windows]` / `[macos]` / `[linux]` sections.
+- `link "x"` in a source file is not per-platform; use a project's `[windows]` /
+  `[macos]` / `[linux]` sections. (`import <crossplatform.h>` links its OS library
+  automatically: `os_link_args` in `build.strata`.)
 - Shared libraries keep the project's name on every OS (`mathlib.so`, not
   `libmathlib.so`), so C hosts on macOS / Linux link them by path, not `-lmathlib`.
 - `embed/csharp` is skipped by `run.sh` (Strata.cs not set up for macOS / Linux yet).

@@ -144,6 +144,30 @@ string[dynamic] dll_link_args(string out_bin, bool in_rsp) {
     return a
 }
 
+// lib/crossplatform.h's Window section calls the OS's windowing library, so a program
+// that imports the header links it automatically: user32 on Windows, Cocoa on macOS, X11
+// on Linux. (Not if the project defines STRATA_CROSSPLATFORM_NO_WINDOW.) One argument per
+// element; a response file can take them one per line.
+string[dynamic] os_link_args(Program prog, BuildSpec s) {
+    string[dynamic] a = []
+    bool window = false
+    for i in 0..prog.decls.len {
+        Decl* d = prog.decls[i]
+        if d.kind == DcInclude && basename_of(d.path) == "crossplatform.h" { window = true }
+    }
+    for i in 0..s.defines.len {
+        string def = s.defines[i]
+        if def == "STRATA_CROSSPLATFORM_NO_WINDOW" || (def.len > 31 && substr(def, 0, 31) == "STRATA_CROSSPLATFORM_NO_WINDOW=") { window = false }
+    }
+    if window {
+        string os = host_os()
+        if os == "windows" { a.push("-luser32") }
+        else if os == "macos" { a.push("-framework"); a.push("Cocoa") }
+        else { a.push("-lX11") }
+    }
+    return a
+}
+
 // "mathlib" -> "MATHLIB_H": an include guard from a file name
 string guard_for(string name) {
     string upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -198,6 +222,8 @@ export bool run_build(BuildSpec s, string libdir) {
     }
     for i in 0..s.libs.len         { argv.push("-l" + s.libs[i]) }
     for i in 0..s.frameworks.len   { argv.push("-framework"); argv.push(s.frameworks[i]) }
+    string[dynamic] oa = os_link_args(prog, s)
+    for i in 0..oa.len             { argv.push(oa[i]) }
     if s.dll {
         string[dynamic] da = dll_link_args(s.out_bin, false)
         for i in 0..da.len { argv.push(da[i]) }
@@ -349,6 +375,8 @@ bool run_split_build(BuildSpec s, string libdir, Program prog) {
     }
     for i in 0..s.libs.len       { args.push("-l" + s.libs[i] + "\n") }
     for i in 0..s.frameworks.len { args.push("-framework " + s.frameworks[i] + "\n") }
+    string[dynamic] oa = os_link_args(prog, s)
+    for i in 0..oa.len           { args.push(oa[i] + "\n") }
     if s.dll {
         string[dynamic] da = dll_link_args(s.out_bin, true)
         for i in 0..da.len { args.push(da[i] + "\n") }

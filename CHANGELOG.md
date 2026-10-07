@@ -5,7 +5,11 @@ All notable changes to Strata are recorded here. Versions follow
 and a GitHub Release.
 
 ## [Unreleased]
-- nothing yet.
+### Added
+- **Importing `<crossplatform.h>` links its OS library automatically**: user32 on
+  Windows, Cocoa on macOS, X11 on Linux (not when the project defines
+  `STRATA_CROSSPLATFORM_NO_WINDOW`). `examples/crossplatform.strata` no longer needs
+  `link "user32"`, so it builds as a single file on every OS.
 
 ## [1.6.0] - 2026-10-06
 ### Added

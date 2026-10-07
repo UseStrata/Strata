@@ -1,12 +1,10 @@
 // crossplatform.strata - a native window from Strata, using lib/crossplatform.h
 // (Win32 on Windows, Cocoa on macOS, X11 on Linux).
 //
-// import: the header's implementation switches on automatically in a Strata program.
-// link:   the OS library the implementation calls into. On Windows that's user32
-//         (CreateWindowExW, PeekMessageW, ...). On Linux it would be "X11" instead.
+// import: the header's implementation switches on automatically in a Strata program,
+//         and stratac links the OS library it calls into (user32 / Cocoa / X11).
 
 import <crossplatform.h>
-link "user32"
 
 CreatePlatformWindow(800, 600, "Test Crossplatform Window")
 
