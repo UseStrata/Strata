@@ -633,12 +633,17 @@ void gen_includes(Codegen* cg, Program prog) {
     cg_out(cg, "#include <sarr.h>\n")
     cg_out(cg, "#include <sprelude.h>\n")
 
-    // imported C headers (interop)
+    // imported C headers (interop): each once, where it's first imported, however many
+    // modules import it
+    string[dynamic] seen = []
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
         if (d.kind == DcInclude) {
-            if (d.is_system) { cg_out(cg, "#include <" + d.path + ">\n"); }
-            else             { cg_out(cg, "#include \"" + d.path + "\"\n"); }
+            string line = "#include \"" + d.path + "\"\n"
+            if (d.is_system) { line = "#include <" + d.path + ">\n" }
+            bool dup = false
+            for k in 0..seen.len { if seen[k] == line { dup = true } }
+            if !dup { seen.push(line); cg_out(cg, line) }
         }
     }
     if cg.no_main {

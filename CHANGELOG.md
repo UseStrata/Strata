@@ -42,6 +42,8 @@ and a GitHub Release.
   too.
 - `if` / `while` conditions are emitted without doubled parentheses (`if (n == 5)`, not
   `if ((n == 5))`), which clang warned about in every program (`-Wparentheses-equality`).
+- Each imported C header is `#include`d once, however many modules import it (the
+  compiler's own C had `#include "strata_host.h"` seven times).
 
 ## [1.5.0] - 2026-09-26
 ### Added
