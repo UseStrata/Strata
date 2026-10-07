@@ -10,10 +10,14 @@ Also provides comment toggling, bracket matching, auto-closing pairs and indenta
 ## Install
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File editors\vscode\install.ps1
+powershell -ExecutionPolicy Bypass -File editors\vscode\install.ps1    # Windows
+```
+```sh
+sh editors/vscode/install.sh                                         # macOS / Linux
 ```
 
-This copies the extension to `%USERPROFILE%\.vscode\extensions\strata` (no admin needed).
+This copies the extension to `~/.vscode/extensions/strata` (`%USERPROFILE%` on Windows; no
+admin needed). PowerShell 7 on any OS can also run `pwsh editors/vscode/install.ps1`.
 Then run **Developer: Reload Window** and open any `.strata` file; the language indicator
 in the bottom-right should read **Strata**.
 
