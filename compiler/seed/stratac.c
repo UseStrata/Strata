@@ -511,6 +511,7 @@ void loop_enter(Codegen* cg);
 const char* loop_leave(Codegen* cg, int64_t ind);
 void cg_out(Codegen* cg, const char* s);
 const char* join_pieces(Array pieces);
+const char* paren_cond(const char* c);
 const char* join_with(Array pieces, const char* sep);
 const char* cg_indent(int64_t n);
 const char* cg_strip_us(const char* s);
@@ -607,7 +608,7 @@ int64_t dmm_main(Array args);
 
 NameIdx new_idx(int64_t n) {
     int64_t cap = 16;
-    while ((cap < (n * 2))) {
+    while (cap < (n * 2)) {
         cap = (cap * 2);
     }
     Array head = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
@@ -672,7 +673,7 @@ bool at_end(Lexer* l) {
 char advance(Lexer* l) {
     char c = l->src[l->pos];
     l->pos += 1;
-    if ((c == '\n')) {
+    if (c == '\n') {
         l->line += 1;
         l->col = 1;
     } else {
@@ -689,7 +690,7 @@ char peek(Lexer* l) {
 }
 
 char peek_next(Lexer* l) {
-    if (((l->pos + 1) >= str_len(l->src))) {
+    if ((l->pos + 1) >= str_len(l->src)) {
         return '\000';
     }
     return l->src[(l->pos + 1)];
@@ -699,7 +700,7 @@ bool match(Lexer* l, char expected) {
     if (at_end(l)) {
         return false;
     }
-    if ((l->src[l->pos] != expected)) {
+    if (l->src[l->pos] != expected) {
         return false;
     }
     advance(l);
@@ -707,11 +708,11 @@ bool match(Lexer* l, char expected) {
 }
 
 bool same_slice(const char* s, int64_t start, int64_t n, const char* w) {
-    if ((str_len(w) != n)) {
+    if (str_len(w) != n) {
         return false;
     }
     for (int64_t i = 0; i < n; i++) {
-        if ((s[(start + i)] != w[i])) {
+        if (s[(start + i)] != w[i]) {
             return false;
         }
     }
@@ -720,7 +721,7 @@ bool same_slice(const char* s, int64_t start, int64_t n, const char* w) {
 
 const char* intern(Lexer* l, int64_t start, int64_t n) {
     int64_t k = (((int64_t*)(l->names_idx.head).data)[slice_hash(l->src, start, n, l->names_idx.mask)] - 1);
-    while ((k >= 0)) {
+    while (k >= 0) {
         if (same_slice(l->src, start, n, ((const char**)(l->names).data)[k])) {
             return ((const char**)(l->names).data)[k];
         }
@@ -733,7 +734,7 @@ const char* intern(Lexer* l, int64_t start, int64_t n) {
 }
 
 Token make(Lexer* l, TokKind kind) {
-    if ((((kind == TkIdent) || (kind == TkInt)) || (kind == TkFloat))) {
+    if (((kind == TkIdent) || (kind == TkInt)) || (kind == TkFloat)) {
         return (Token){kind, intern(l, l->start, (l->pos - l->start)), l->start_line, l->start_col};
     }
     return (Token){kind, kind_name(kind), l->start_line, l->start_col};
@@ -751,29 +752,29 @@ Token fail(Lexer* l) {
 void skip_trivia(Lexer* l) {
     while (true) {
         char c = peek(l);
-        if ((c == '\n')) {
+        if (c == '\n') {
             l->saw_newline = true;
             advance(l);
         } else 
-        if ((((c == ' ') || (c == '\t')) || (c == '\r'))) {
+        if (((c == ' ') || (c == '\t')) || (c == '\r')) {
             advance(l);
         } else 
-        if (((c == '/') && (peek_next(l) == '/'))) {
-            while (((!at_end(l)) && (peek(l) != '\n'))) {
+        if ((c == '/') && (peek_next(l) == '/')) {
+            while ((!at_end(l)) && (peek(l) != '\n')) {
                 advance(l);
             }
         } else 
-        if (((c == '/') && (peek_next(l) == '*'))) {
+        if ((c == '/') && (peek_next(l) == '*')) {
             advance(l);
             advance(l);
             int64_t depth = 1;
-            while (((!at_end(l)) && (depth > 0))) {
-                if (((peek(l) == '/') && (peek_next(l) == '*'))) {
+            while ((!at_end(l)) && (depth > 0)) {
+                if ((peek(l) == '/') && (peek_next(l) == '*')) {
                     advance(l);
                     advance(l);
                     depth += 1;
                 } else 
-                if (((peek(l) == '*') && (peek_next(l) == '/'))) {
+                if ((peek(l) == '*') && (peek_next(l) == '/')) {
                     advance(l);
                     advance(l);
                     depth -= 1;
@@ -781,7 +782,7 @@ void skip_trivia(Lexer* l) {
                     advance(l);
                 }
             }
-            if ((depth > 0)) {
+            if (depth > 0) {
                 l->had_error = true;
             }
         } else {
@@ -799,14 +800,14 @@ const char* literal_body(Lexer* l) {
 }
 
 Token string_lit(Lexer* l) {
-    while (((!at_end(l)) && (peek(l) != '"'))) {
+    while ((!at_end(l)) && (peek(l) != '"')) {
         char c = peek(l);
-        if ((c == '\n')) {
+        if (c == '\n') {
             return fail(l);
         }
-        if ((c == '\\')) {
+        if (c == '\\') {
             advance(l);
-            if ((at_end(l) || (!valid_escape(advance(l), '"')))) {
+            if (at_end(l) || (!valid_escape(advance(l), '"'))) {
                 return fail(l);
             }
         } else {
@@ -825,12 +826,12 @@ Token char_lit(Lexer* l) {
         return fail(l);
     }
     char c = advance(l);
-    if ((c == '\\')) {
-        if ((at_end(l) || (!valid_escape(advance(l), '\'')))) {
+    if (c == '\\') {
+        if (at_end(l) || (!valid_escape(advance(l), '\''))) {
             return fail(l);
         }
     }
-    if ((!match(l, '\''))) {
+    if (!match(l, '\'')) {
         return fail(l);
     }
     return make_text(l, TkChar, literal_body(l));
@@ -838,35 +839,35 @@ Token char_lit(Lexer* l) {
 
 Token number(Lexer* l) {
     char first = l->src[l->start];
-    if (((first == '0') && ((peek(l) == 'x') || (peek(l) == 'X')))) {
+    if ((first == '0') && ((peek(l) == 'x') || (peek(l) == 'X'))) {
         advance(l);
-        while ((is_hex(peek(l)) || (peek(l) == '_'))) {
+        while (is_hex(peek(l)) || (peek(l) == '_')) {
             advance(l);
         }
         return make(l, TkInt);
     }
-    if (((first == '0') && ((peek(l) == 'b') || (peek(l) == 'B')))) {
+    if ((first == '0') && ((peek(l) == 'b') || (peek(l) == 'B'))) {
         advance(l);
-        while ((((peek(l) == '0') || (peek(l) == '1')) || (peek(l) == '_'))) {
+        while (((peek(l) == '0') || (peek(l) == '1')) || (peek(l) == '_')) {
             advance(l);
         }
         return make(l, TkInt);
     }
-    while ((is_digit(peek(l)) || (peek(l) == '_'))) {
+    while (is_digit(peek(l)) || (peek(l) == '_')) {
         advance(l);
     }
     bool is_float = false;
-    if (((peek(l) == '.') && is_digit(peek_next(l)))) {
+    if ((peek(l) == '.') && is_digit(peek_next(l))) {
         is_float = true;
         advance(l);
-        while ((is_digit(peek(l)) || (peek(l) == '_'))) {
+        while (is_digit(peek(l)) || (peek(l) == '_')) {
             advance(l);
         }
     }
-    if (((peek(l) == 'e') || (peek(l) == 'E'))) {
+    if ((peek(l) == 'e') || (peek(l) == 'E')) {
         is_float = true;
         advance(l);
-        if (((peek(l) == '+') || (peek(l) == '-'))) {
+        if ((peek(l) == '+') || (peek(l) == '-')) {
             advance(l);
         }
         while (is_digit(peek(l))) {
@@ -1197,8 +1198,8 @@ Array lex(const char* src) {
     int64_t nest = 0;
     lx.saw_newline = false;
     skip_trivia((&lx));
-    while ((!at_end((&lx)))) {
-        if ((((lx.saw_newline && have_last) && (nest == 0)) && ends_statement(last))) {
+    while (!at_end((&lx))) {
+        if (((lx.saw_newline && have_last) && (nest == 0)) && ends_statement(last)) {
             ({ Token _e = (Token){TkNewline, "", lx.line, lx.col}; arr_push(&(tokens), &_e); });
         }
         lx.saw_newline = false;
@@ -1208,16 +1209,16 @@ Array lex(const char* src) {
         Token t = scan_token((&lx));
         ({ Token _e = t; arr_push(&(tokens), &_e); });
         last = t.kind;
-        if (((t.kind == TkLParen) || (t.kind == TkLBracket))) {
+        if ((t.kind == TkLParen) || (t.kind == TkLBracket)) {
             nest += 1;
         } else 
-        if ((((t.kind == TkRParen) || (t.kind == TkRBracket)) && (nest > 0))) {
+        if (((t.kind == TkRParen) || (t.kind == TkRBracket)) && (nest > 0)) {
             nest -= 1;
         }
         have_last = true;
         skip_trivia((&lx));
     }
-    if (((lx.saw_newline && have_last) && ends_statement(last))) {
+    if ((lx.saw_newline && have_last) && ends_statement(last)) {
         ({ Token _e = (Token){TkNewline, "", lx.line, lx.col}; arr_push(&(tokens), &_e); });
     }
     ({ Token _e = (Token){TkEof, "", lx.line, lx.col}; arr_push(&(tokens), &_e); });
@@ -1636,7 +1637,7 @@ Token p_peek(Parser* p) {
 
 Token p_peek_at(Parser* p, int64_t off) {
     int64_t i = (p->pos + off);
-    if ((i < p->toks.len)) {
+    if (i < p->toks.len) {
         return ((Token*)(p->toks).data)[i];
     }
     return ((Token*)(p->toks).data)[(p->toks.len - 1)];
@@ -1655,7 +1656,7 @@ bool p_check(Parser* p, TokKind k) {
 }
 
 Token p_advance(Parser* p) {
-    if ((!p_at_end(p))) {
+    if (!p_at_end(p)) {
         p->pos += 1;
     }
     return p_prev(p);
@@ -1670,23 +1671,23 @@ bool p_match(Parser* p, TokKind k) {
 }
 
 const char* tok_desc(Token t) {
-    if ((((t.kind == TkIdent) || (t.kind == TkInt)) || (t.kind == TkFloat))) {
+    if (((t.kind == TkIdent) || (t.kind == TkInt)) || (t.kind == TkFloat)) {
         return str_concat(str_concat(str_concat(kind_name(t.kind), " '"), t.text), "'");
     }
-    if ((t.kind == TkString)) {
+    if (t.kind == TkString) {
         return "a string literal";
     }
-    if ((t.kind == TkChar)) {
+    if (t.kind == TkChar) {
         return "a char literal";
     }
-    if ((((t.kind == TkNewline) || (t.kind == TkEof)) || (t.kind == TkError))) {
+    if (((t.kind == TkNewline) || (t.kind == TkEof)) || (t.kind == TkError)) {
         return kind_name(t.kind);
     }
     return str_concat(str_concat("'", kind_name(t.kind)), "'");
 }
 
 void p_error(Parser* p, Token t, const char* msg) {
-    if ((!p->had_error)) {
+    if (!p->had_error) {
         p->err_line = t.line;
         p->err_col = t.col;
         p->err_msg = msg;
@@ -1707,7 +1708,7 @@ Token p_expect(Parser* p, TokKind k) {
 }
 
 void skip_newlines(Parser* p) {
-    while ((p_check(p, TkNewline) || p_check(p, TkSemicolon))) {
+    while (p_check(p, TkNewline) || p_check(p, TkSemicolon)) {
         p_advance(p);
     }
 }
@@ -1716,11 +1717,11 @@ TypeNode* parse_type(Parser* p) {
     Token nt = p_peek(p);
     TypeNode* t = new_type(TyNamed, nt.line, nt.col);
     t->name = p_expect(p, TkIdent).text;
-    while ((p_check(p, TkLBracket) || p_check(p, TkStar))) {
+    while (p_check(p, TkLBracket) || p_check(p, TkStar)) {
         if (p_check(p, TkLBracket)) {
             p_advance(p);
             TypeNode* arr = new_type(TyArray, t->line, t->col);
-            if ((p_check(p, TkIdent) && str_eq(p_peek(p).text, "dynamic"))) {
+            if (p_check(p, TkIdent) && str_eq(p_peek(p).text, "dynamic")) {
                 p_advance(p);
                 arr->kind = TyDynArray;
             } else 
@@ -1742,22 +1743,22 @@ TypeNode* parse_type(Parser* p) {
 }
 
 int64_t skip_type_at(Parser* p, int64_t i) {
-    if ((((Token*)(p->toks).data)[i].kind != TkIdent)) {
+    if (((Token*)(p->toks).data)[i].kind != TkIdent) {
         return (0 - 1);
     }
     i += 1;
-    while (((((Token*)(p->toks).data)[i].kind == TkLBracket) || (((Token*)(p->toks).data)[i].kind == TkStar))) {
-        if ((((Token*)(p->toks).data)[i].kind == TkStar)) {
+    while ((((Token*)(p->toks).data)[i].kind == TkLBracket) || (((Token*)(p->toks).data)[i].kind == TkStar)) {
+        if (((Token*)(p->toks).data)[i].kind == TkStar) {
             i += 1;
         } else {
             i += 1;
-            if ((((Token*)(p->toks).data)[i].kind == TkInt)) {
+            if (((Token*)(p->toks).data)[i].kind == TkInt) {
                 i += 1;
             } else 
-            if (((((Token*)(p->toks).data)[i].kind == TkIdent) && str_eq(((Token*)(p->toks).data)[i].text, "dynamic"))) {
+            if ((((Token*)(p->toks).data)[i].kind == TkIdent) && str_eq(((Token*)(p->toks).data)[i].text, "dynamic")) {
                 i += 1;
             }
-            if ((((Token*)(p->toks).data)[i].kind != TkRBracket)) {
+            if (((Token*)(p->toks).data)[i].kind != TkRBracket) {
                 return (0 - 1);
             }
             i += 1;
@@ -1768,7 +1769,7 @@ int64_t skip_type_at(Parser* p, int64_t i) {
 
 bool looks_like_typed_decl(Parser* p) {
     int64_t i = skip_type_at(p, p->pos);
-    if ((i < 0)) {
+    if (i < 0) {
         return false;
     }
     return (((Token*)(p->toks).data)[i].kind == TkIdent);
@@ -1776,10 +1777,10 @@ bool looks_like_typed_decl(Parser* p) {
 
 bool looks_like_func(Parser* p) {
     int64_t i = skip_type_at(p, p->pos);
-    if ((i < 0)) {
+    if (i < 0) {
         return false;
     }
-    if ((((Token*)(p->toks).data)[i].kind != TkIdent)) {
+    if (((Token*)(p->toks).data)[i].kind != TkIdent) {
         return false;
     }
     i += 1;
@@ -1805,7 +1806,7 @@ Decl* import_decl(Parser* p) {
     if (p_check(p, TkLt)) {
         p_advance(p);
         const char* path = "";
-        while (((!p_check(p, TkGt)) && (!p_at_end(p)))) {
+        while ((!p_check(p, TkGt)) && (!p_at_end(p))) {
             path = str_concat(path, p_advance(p).text);
         }
         p_expect(p, TkGt);
@@ -1830,7 +1831,7 @@ Decl* enum_decl(Parser* p) {
     ed->name = p_expect(p, TkIdent).text;
     p_expect(p, TkLBrace);
     skip_newlines(p);
-    while (((!p_check(p, TkRBrace)) && (!p_at_end(p)))) {
+    while ((!p_check(p, TkRBrace)) && (!p_at_end(p))) {
         ({ const char* _e = p_expect(p, TkIdent).text; arr_push(&(ed->members), &_e); });
         p_match(p, TkComma);
         skip_newlines(p);
@@ -1845,7 +1846,7 @@ Decl* struct_decl(Parser* p) {
     sd->name = p_expect(p, TkIdent).text;
     p_expect(p, TkLBrace);
     skip_newlines(p);
-    while (((!p_check(p, TkRBrace)) && (!p_at_end(p)))) {
+    while ((!p_check(p, TkRBrace)) && (!p_at_end(p))) {
         TypeNode* fty = parse_type(p);
         const char* fnm = p_expect(p, TkIdent).text;
         ({ FieldDef _e = (FieldDef){fnm, fty}; arr_push(&(sd->fields), &_e); });
@@ -1863,7 +1864,7 @@ Decl* func_decl(Parser* p) {
     fd->name = p_expect(p, TkIdent).text;
     p_expect(p, TkLParen);
     skip_newlines(p);
-    if ((!p_check(p, TkRParen))) {
+    if (!p_check(p, TkRParen)) {
         bool more = true;
         while (more) {
             TypeNode* pty = parse_type(p);
@@ -1882,7 +1883,7 @@ Program parse_program(Parser* p) {
     Array decls = ({ Array _a = arr_make(sizeof(Decl*)); _a; });
     Array main = ({ Array _a = arr_make(sizeof(Stmt*)); _a; });
     skip_newlines(p);
-    while (((!p_at_end(p)) && (!p->had_error))) {
+    while ((!p_at_end(p)) && (!p->had_error)) {
         bool exported = false;
         if (p_check(p, TkKwExport)) {
             p_advance(p);
@@ -1904,9 +1905,9 @@ Program parse_program(Parser* p) {
             d->is_exported = exported;
             ({ Decl* _e = d; arr_push(&(decls), &_e); });
         } else 
-        if ((exported && p_check(p, TkKwImport))) {
+        if (exported && p_check(p, TkKwImport)) {
             Decl* d = import_decl(p);
-            if ((d->kind != DcImport)) {
+            if (d->kind != DcImport) {
                 p_error(p, p_prev(p), "only a Strata module can be re-exported ('export import Name')");
             }
             d->is_exported = true;
@@ -1924,7 +1925,7 @@ Program parse_program(Parser* p) {
         } else {
             int64_t before = p->pos;
             ({ Stmt* _e = statement(p); arr_push(&(main), &_e); });
-            if ((p->pos == before)) {
+            if (p->pos == before) {
                 p_unexpected(p);
                 p_advance(p);
             }
@@ -1938,14 +1939,14 @@ Program parse_program(Parser* p) {
 Stmt* block(Parser* p) {
     Token lb = p_expect(p, TkLBrace);
     Stmt* b = new_stmt(StBlock, lb.line, lb.col);
-    if ((!nest_enter(p))) {
+    if (!nest_enter(p)) {
         return b;
     }
     skip_newlines(p);
-    while (((!p_check(p, TkRBrace)) && (!p_at_end(p)))) {
+    while ((!p_check(p, TkRBrace)) && (!p_at_end(p))) {
         int64_t before = p->pos;
         ({ Stmt* _e = statement(p); arr_push(&(b->stmts), &_e); });
-        if ((p->pos == before)) {
+        if (p->pos == before) {
             p_unexpected(p);
             p_advance(p);
         }
@@ -1978,7 +1979,7 @@ Stmt* var_decl_core(Parser* p) {
 Stmt* expr_or_assign_core(Parser* p) {
     Expr* e = expression(p);
     TokKind t = p_peek(p).kind;
-    if (((((((((((t == TkAssign) || (t == TkPlusEq)) || (t == TkMinusEq)) || (t == TkStarEq)) || (t == TkSlashEq)) || (t == TkPipeEq)) || (t == TkAmpEq)) || (t == TkCaretEq)) || (t == TkShlEq)) || (t == TkShrEq))) {
+    if ((((((((((t == TkAssign) || (t == TkPlusEq)) || (t == TkMinusEq)) || (t == TkStarEq)) || (t == TkSlashEq)) || (t == TkPipeEq)) || (t == TkAmpEq)) || (t == TkCaretEq)) || (t == TkShlEq)) || (t == TkShrEq)) {
         Token op = p_advance(p);
         Stmt* s = new_stmt(StAssign, e->line, e->col);
         s->target = e;
@@ -1994,7 +1995,7 @@ Stmt* expr_or_assign_core(Parser* p) {
 Stmt* return_stmt(Parser* p) {
     Token kw = p_advance(p);
     Stmt* s = new_stmt(StReturn, kw.line, kw.col);
-    if (((((!p_check(p, TkNewline)) && (!p_check(p, TkSemicolon))) && (!p_check(p, TkRBrace))) && (!p_at_end(p)))) {
+    if ((((!p_check(p, TkNewline)) && (!p_check(p, TkSemicolon))) && (!p_check(p, TkRBrace))) && (!p_at_end(p))) {
         s->expr = expression(p);
     }
     return s;
@@ -2058,7 +2059,7 @@ Stmt* switch_stmt(Parser* p) {
     s->subject = header_expr(p);
     p_expect(p, TkLBrace);
     skip_newlines(p);
-    while (((!p_check(p, TkRBrace)) && (!p_at_end(p)))) {
+    while ((!p_check(p, TkRBrace)) && (!p_at_end(p))) {
         Array vals = ({ Array _a = arr_make(sizeof(Expr*)); _a; });
         bool is_def = false;
         Token ct = p_peek(p);
@@ -2080,10 +2081,10 @@ Stmt* switch_stmt(Parser* p) {
         p_expect(p, TkColon);
         skip_newlines(p);
         Stmt* body = new_stmt(StBlock, ct.line, ct.col);
-        while (((((!p_check(p, TkKwCase)) && (!p_check(p, TkKwDefault))) && (!p_check(p, TkRBrace))) && (!p_at_end(p)))) {
+        while ((((!p_check(p, TkKwCase)) && (!p_check(p, TkKwDefault))) && (!p_check(p, TkRBrace))) && (!p_at_end(p))) {
             int64_t before = p->pos;
             ({ Stmt* _e = statement(p); arr_push(&(body->stmts), &_e); });
-            if ((p->pos == before)) {
+            if (p->pos == before) {
                 p_unexpected(p);
                 p_advance(p);
             }
@@ -2132,7 +2133,7 @@ Stmt* statement(Parser* p) {
         {
             {
                 Token kw = p_advance(p);
-                if ((kw.kind == TkKwBreak)) {
+                if (kw.kind == TkKwBreak) {
                     return new_stmt(StBreak, kw.line, kw.col);
                 }
                 return new_stmt(StContinue, kw.line, kw.col);
@@ -2175,7 +2176,7 @@ int64_t max_nesting(void) {
 
 bool nest_enter(Parser* p) {
     p->depth += 1;
-    if ((p->depth > max_nesting())) {
+    if (p->depth > max_nesting()) {
         p_error(p, p_peek(p), str_concat(str_concat("code is nested too deeply (more than ", str_from_int(max_nesting())), " levels)"));
         p->depth -= 1;
         return false;
@@ -2184,7 +2185,7 @@ bool nest_enter(Parser* p) {
 }
 
 Expr* expression(Parser* p) {
-    if ((!nest_enter(p))) {
+    if (!nest_enter(p)) {
         Token t = p_peek(p);
         p_advance(p);
         return new_expr(ExName, t.line, t.col);
@@ -2250,7 +2251,7 @@ Expr* bit_and(Parser* p) {
 
 Expr* equality(Parser* p) {
     Expr* e = comparison(p);
-    while ((p_check(p, TkEqEq) || p_check(p, TkBangEq))) {
+    while (p_check(p, TkEqEq) || p_check(p, TkBangEq)) {
         const char* op = p_advance(p).text;
         e = make_binary(op, e, comparison(p));
     }
@@ -2259,7 +2260,7 @@ Expr* equality(Parser* p) {
 
 Expr* comparison(Parser* p) {
     Expr* e = shift(p);
-    while ((((p_check(p, TkLt) || p_check(p, TkLtEq)) || p_check(p, TkGt)) || p_check(p, TkGtEq))) {
+    while (((p_check(p, TkLt) || p_check(p, TkLtEq)) || p_check(p, TkGt)) || p_check(p, TkGtEq)) {
         const char* op = p_advance(p).text;
         e = make_binary(op, e, shift(p));
     }
@@ -2268,7 +2269,7 @@ Expr* comparison(Parser* p) {
 
 Expr* shift(Parser* p) {
     Expr* e = term(p);
-    while ((p_check(p, TkShl) || p_check(p, TkShr))) {
+    while (p_check(p, TkShl) || p_check(p, TkShr)) {
         const char* op = p_advance(p).text;
         e = make_binary(op, e, term(p));
     }
@@ -2277,7 +2278,7 @@ Expr* shift(Parser* p) {
 
 Expr* term(Parser* p) {
     Expr* e = factor(p);
-    while ((p_check(p, TkPlus) || p_check(p, TkMinus))) {
+    while (p_check(p, TkPlus) || p_check(p, TkMinus)) {
         const char* op = p_advance(p).text;
         e = make_binary(op, e, factor(p));
     }
@@ -2286,7 +2287,7 @@ Expr* term(Parser* p) {
 
 Expr* factor(Parser* p) {
     Expr* e = unary(p);
-    while (((p_check(p, TkStar) || p_check(p, TkSlash)) || p_check(p, TkPercent))) {
+    while ((p_check(p, TkStar) || p_check(p, TkSlash)) || p_check(p, TkPercent)) {
         const char* op = p_advance(p).text;
         e = make_binary(op, e, unary(p));
     }
@@ -2294,11 +2295,11 @@ Expr* factor(Parser* p) {
 }
 
 Expr* unary(Parser* p) {
-    if (((((p_check(p, TkBang) || p_check(p, TkMinus)) || p_check(p, TkStar)) || p_check(p, TkAmp)) || p_check(p, TkTilde))) {
+    if ((((p_check(p, TkBang) || p_check(p, TkMinus)) || p_check(p, TkStar)) || p_check(p, TkAmp)) || p_check(p, TkTilde)) {
         Token op = p_advance(p);
         Expr* u = new_expr(ExUnary, op.line, op.col);
         u->text = op.text;
-        if ((!nest_enter(p))) {
+        if (!nest_enter(p)) {
             return u;
         }
         u->a = unary(p);
@@ -2323,7 +2324,7 @@ Expr* postfix(Parser* p) {
             bool saved = p->no_brace;
             p->no_brace = false;
             skip_newlines(p);
-            if ((!p_check(p, TkRParen))) {
+            if (!p_check(p, TkRParen)) {
                 bool more = true;
                 while (more) {
                     ({ Expr* _e = expression(p); arr_push(&(c->items), &_e); });
@@ -2354,7 +2355,7 @@ Expr* postfix(Parser* p) {
 
 Expr* primary(Parser* p) {
     Token t = p_peek(p);
-    if ((t.kind == TkKwCast)) {
+    if (t.kind == TkKwCast) {
         p_advance(p);
         Expr* cx = new_expr(ExCast, t.line, t.col);
         p_expect(p, TkLt);
@@ -2368,7 +2369,7 @@ Expr* primary(Parser* p) {
         p_expect(p, TkRParen);
         return cx;
     }
-    if ((t.kind == TkKwSizeof)) {
+    if (t.kind == TkKwSizeof) {
         p_advance(p);
         Expr* sz = new_expr(ExSizeof, t.line, t.col);
         p_expect(p, TkLParen);
@@ -2458,7 +2459,7 @@ Expr* primary(Parser* p) {
                 bool saved = p->no_brace;
                 p->no_brace = false;
                 skip_newlines(p);
-                if ((!p_check(p, TkRBracket))) {
+                if (!p_check(p, TkRBracket)) {
                     bool more = true;
                     while (more) {
                         ({ Expr* _e = expression(p); arr_push(&(a->items), &_e); });
@@ -2476,7 +2477,7 @@ Expr* primary(Parser* p) {
         case TkIdent:
         {
             {
-                if (((!p->no_brace) && (p_peek_at(p, 1).kind == TkLBrace))) {
+                if ((!p->no_brace) && (p_peek_at(p, 1).kind == TkLBrace)) {
                     p_advance(p);
                     p_advance(p);
                     Expr* s = new_expr(ExStructLit, t.line, t.col);
@@ -2484,7 +2485,7 @@ Expr* primary(Parser* p) {
                     bool saved = p->no_brace;
                     p->no_brace = false;
                     skip_newlines(p);
-                    if ((!p_check(p, TkRBrace))) {
+                    if (!p_check(p, TkRBrace)) {
                         bool more = true;
                         while (more) {
                             ({ Expr* _e = expression(p); arr_push(&(s->items), &_e); });
@@ -2518,14 +2519,14 @@ const char* stem_of(const char* p) {
     int64_t dot = (0 - 1);
     int64_t slash = (0 - 1);
     for (int64_t i = 0; i < str_len(p); i++) {
-        if ((p[i] == '.')) {
+        if (p[i] == '.') {
             dot = i;
         }
-        if (((p[i] == '/') || (p[i] == '\\'))) {
+        if ((p[i] == '/') || (p[i] == '\\')) {
             slash = i;
         }
     }
-    if (((dot >= 0) && ((slash < 0) || (dot > slash)))) {
+    if ((dot >= 0) && ((slash < 0) || (dot > slash))) {
         return str_sub(p, 0, dot);
     }
     return p;
@@ -2534,7 +2535,7 @@ const char* stem_of(const char* p) {
 const char* basename_of(const char* p) {
     int64_t slash = (0 - 1);
     for (int64_t i = 0; i < str_len(p); i++) {
-        if (((p[i] == '/') || (p[i] == '\\'))) {
+        if ((p[i] == '/') || (p[i] == '\\')) {
             slash = i;
         }
     }
@@ -2544,11 +2545,11 @@ const char* basename_of(const char* p) {
 const char* dirname_of(const char* p) {
     int64_t slash = (0 - 1);
     for (int64_t i = 0; i < str_len(p); i++) {
-        if (((p[i] == '/') || (p[i] == '\\'))) {
+        if ((p[i] == '/') || (p[i] == '\\')) {
             slash = i;
         }
     }
-    if ((slash < 0)) {
+    if (slash < 0) {
         return ".";
     }
     return str_sub(p, 0, slash);
@@ -2557,7 +2558,7 @@ const char* dirname_of(const char* p) {
 const char* module_rel_path(const char* name) {
     const char* rel = "";
     for (int64_t i = 0; i < str_len(name); i++) {
-        if ((name[i] == '.')) {
+        if (name[i] == '.') {
             rel = str_concat(rel, "/");
         } else {
             rel = str_concat(rel, str_sub(name, i, 1));
@@ -2582,13 +2583,13 @@ int64_t ld_find(Loader* ld, const char* path) {
 
 int64_t ld_module(Loader* ld, const char* path, const char* file, const char* name, bool is_root) {
     int64_t existing = ld_find(ld, path);
-    if ((existing >= 0)) {
+    if (existing >= 0) {
         return existing;
     }
     int64_t idx = ld->prog.modules.len;
     ({ Module _e = new_module(name, path, file); arr_push(&(ld->prog.modules), &_e); });
     const char* src = "";
-    if ((is_root && ld->has_text)) {
+    if (is_root && ld->has_text) {
         src = str_sub(ld->root_text, 0, str_len(ld->root_text));
     } else {
         src = strata_read_file(path);
@@ -2604,17 +2605,17 @@ int64_t ld_module(Loader* ld, const char* path, const char* file, const char* na
     if (is_root) {
         ld->prog.main = part.main;
     } else 
-    if ((part.main.len > 0)) {
+    if (part.main.len > 0) {
         Stmt* s = ((Stmt**)(part.main).data)[0];
         ld_error(ld, file, s->line, s->col, "a module can only contain declarations; top-level code is only allowed in the main file");
     }
     for (int64_t i = 0; i < part.decls.len; i++) {
         Decl* d = ((Decl**)(part.decls).data)[i];
         d->module = idx;
-        if ((d->kind == DcImport)) {
+        if (d->kind == DcImport) {
             const char* rel = module_rel_path(d->path);
             const char* mpath = str_concat(str_concat(ld->root, "/"), rel);
-            if ((str_len(strata_read_file(mpath)) == 0)) {
+            if (str_len(strata_read_file(mpath)) == 0) {
                 ld_error(ld, file, d->line, d->col, str_concat(str_concat(str_concat(str_concat("cannot find module '", d->path), "' (looked for "), rel), " in the project folder)"));
             } else {
                 int64_t m = ld_module(ld, mpath, rel, d->path, false);
@@ -2733,7 +2734,7 @@ const char* t_str(Type* t) {
         }
         case TcArray:
         {
-            if ((t->elem != 0)) {
+            if (t->elem != 0) {
                 return str_concat(t_str(t->elem), "[]");
             }
             return "?[]";
@@ -2741,7 +2742,7 @@ const char* t_str(Type* t) {
         }
         case TcDynArray:
         {
-            if ((t->elem != 0)) {
+            if (t->elem != 0) {
                 return str_concat(t_str(t->elem), "[dynamic]");
             }
             return "?[dynamic]";
@@ -2749,7 +2750,7 @@ const char* t_str(Type* t) {
         }
         case TcPointer:
         {
-            if ((t->elem != 0)) {
+            if (t->elem != 0) {
                 return str_concat(t_str(t->elem), "*");
             }
             return "?*";
@@ -2770,7 +2771,7 @@ TypeNode* named_node(const char* n) {
 }
 
 TypeNode* type_to_node(Type* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return 0;
     }
     switch (t->cat) {
@@ -2857,22 +2858,22 @@ TypeNode* type_to_node(Type* t) {
 void ck_error(Checker* c, int64_t line, int64_t col, const char* msg) {
     c->had_error = true;
     const char* file = c->file;
-    if (((c->cur >= 0) && (c->cur < c->mods.len))) {
+    if ((c->cur >= 0) && (c->cur < c->mods.len)) {
         file = ((Module*)(c->mods).data)[c->cur].file;
     }
     strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(file, ":"), str_from_int(line)), ":"), str_from_int(col)), ": error: "), msg));
 }
 
 bool ck_sees(Checker* c, int64_t owner, bool exported) {
-    if ((owner == c->cur)) {
+    if (owner == c->cur) {
         return true;
     }
-    if ((!exported)) {
+    if (!exported) {
         return false;
     }
     Module m = ((Module*)(c->mods).data)[c->cur];
     for (int64_t i = 0; i < m.visible.len; i++) {
-        if ((((int64_t*)(m.visible).data)[i] == owner)) {
+        if (((int64_t*)(m.visible).data)[i] == owner) {
             return true;
         }
     }
@@ -2880,11 +2881,11 @@ bool ck_sees(Checker* c, int64_t owner, bool exported) {
 }
 
 void ck_add_visible(Checker* c, int64_t m, int64_t v) {
-    if ((v == m)) {
+    if (v == m) {
         return;
     }
     for (int64_t i = 0; i < ((Module*)(c->mods).data)[m].visible.len; i++) {
-        if ((((int64_t*)(((Module*)(c->mods).data)[m].visible).data)[i] == v)) {
+        if (((int64_t*)(((Module*)(c->mods).data)[m].visible).data)[i] == v) {
             return;
         }
     }
@@ -2907,17 +2908,17 @@ const char* ck_hidden(Checker* c, const char* name) {
     bool exported = false;
     int64_t best = 0;
     int64_t k = idx_first((&c->name_idx), name);
-    while ((k >= 0)) {
+    while (k >= 0) {
         NameEntry n = ((NameEntry*)(c->names).data)[k];
-        if ((str_eq(n.name, name) && (n.module != c->cur))) {
+        if (str_eq(n.name, name) && (n.module != c->cur)) {
             int64_t score = 1;
-            if (((!n.exported) && ck_sees(c, n.module, true))) {
+            if ((!n.exported) && ck_sees(c, n.module, true)) {
                 score = 3;
             } else 
             if (n.exported) {
                 score = 2;
             }
-            if ((score >= best)) {
+            if (score >= best) {
                 best = score;
                 owner = n.module;
                 exported = n.exported;
@@ -2925,11 +2926,11 @@ const char* ck_hidden(Checker* c, const char* name) {
         }
         k = idx_next((&c->name_idx), k);
     }
-    if ((owner < 0)) {
+    if (owner < 0) {
         return "";
     }
     const char* f = ((Module*)(c->mods).data)[owner].file;
-    if ((!exported)) {
+    if (!exported) {
         return str_concat(str_concat(str_concat(str_concat("'", name), "' is private to "), f), " (mark it 'export' to use it from another file)");
     }
     return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("'", name), "' is declared in "), f), ", which this file doesn't import (add 'import "), ((Module*)(c->mods).data)[owner].name), "')");
@@ -2938,8 +2939,8 @@ const char* ck_hidden(Checker* c, const char* name) {
 int64_t ck_struct_index(Checker* c, const char* name) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->struct_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((StructInfo*)(c->structs).data)[k].name, name) && ck_sees(c, ((StructInfo*)(c->structs).data)[k].module, ((StructInfo*)(c->structs).data)[k].exported))) {
+    while (k >= 0) {
+        if (str_eq(((StructInfo*)(c->structs).data)[k].name, name) && ck_sees(c, ((StructInfo*)(c->structs).data)[k].module, ((StructInfo*)(c->structs).data)[k].exported)) {
             found = k;
         }
         k = idx_next((&c->struct_idx), k);
@@ -2950,7 +2951,7 @@ int64_t ck_struct_index(Checker* c, const char* name) {
 int64_t ck_struct_by_cname(Checker* c, const char* cname) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->cname_idx), cname);
-    while ((k >= 0)) {
+    while (k >= 0) {
         if (str_eq(((StructInfo*)(c->structs).data)[k].cname, cname)) {
             found = k;
         }
@@ -2962,8 +2963,8 @@ int64_t ck_struct_by_cname(Checker* c, const char* cname) {
 int64_t ck_func_index(Checker* c, const char* name) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->func_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((FuncInfo*)(c->funcs).data)[k].name, name) && ck_sees(c, ((FuncInfo*)(c->funcs).data)[k].module, ((FuncInfo*)(c->funcs).data)[k].exported))) {
+    while (k >= 0) {
+        if (str_eq(((FuncInfo*)(c->funcs).data)[k].name, name) && ck_sees(c, ((FuncInfo*)(c->funcs).data)[k].module, ((FuncInfo*)(c->funcs).data)[k].exported)) {
             found = k;
         }
         k = idx_next((&c->func_idx), k);
@@ -2974,8 +2975,8 @@ int64_t ck_func_index(Checker* c, const char* name) {
 int64_t ck_enum_index(Checker* c, const char* name) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->enum_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((EnumInfo*)(c->enums).data)[k].name, name) && ck_sees(c, ((EnumInfo*)(c->enums).data)[k].module, ((EnumInfo*)(c->enums).data)[k].exported))) {
+    while (k >= 0) {
+        if (str_eq(((EnumInfo*)(c->enums).data)[k].name, name) && ck_sees(c, ((EnumInfo*)(c->enums).data)[k].module, ((EnumInfo*)(c->enums).data)[k].exported)) {
             found = k;
         }
         k = idx_next((&c->enum_idx), k);
@@ -2986,9 +2987,9 @@ int64_t ck_enum_index(Checker* c, const char* name) {
 int64_t ck_member_index(Checker* c, const char* name) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->member_idx), name);
-    while ((k >= 0)) {
+    while (k >= 0) {
         EnumMember m = ((EnumMember*)(c->enum_members).data)[k];
-        if ((str_eq(m.member, name) && ck_sees(c, m.module, m.exported))) {
+        if (str_eq(m.member, name) && ck_sees(c, m.module, m.exported)) {
             found = k;
         }
         k = idx_next((&c->member_idx), k);
@@ -2997,10 +2998,10 @@ int64_t ck_member_index(Checker* c, const char* name) {
 }
 
 Type* ck_prim(const char* n) {
-    if ((((((((((str_eq(n, "int") || str_eq(n, "i64")) || str_eq(n, "i32")) || str_eq(n, "i16")) || str_eq(n, "i8")) || str_eq(n, "uint")) || str_eq(n, "u64")) || str_eq(n, "u32")) || str_eq(n, "u16")) || str_eq(n, "u8"))) {
+    if (((((((((str_eq(n, "int") || str_eq(n, "i64")) || str_eq(n, "i32")) || str_eq(n, "i16")) || str_eq(n, "i8")) || str_eq(n, "uint")) || str_eq(n, "u64")) || str_eq(n, "u32")) || str_eq(n, "u16")) || str_eq(n, "u8")) {
         return ty(TcInt, n);
     }
-    if (((str_eq(n, "float") || str_eq(n, "f64")) || str_eq(n, "f32"))) {
+    if ((str_eq(n, "float") || str_eq(n, "f64")) || str_eq(n, "f32")) {
         return ty(TcFloat, n);
     }
     if (str_eq(n, "bool")) {
@@ -3015,7 +3016,7 @@ Type* ck_prim(const char* n) {
     if (str_eq(n, "void")) {
         return ty(TcVoid, n);
     }
-    if (((str_eq(n, "vec2") || str_eq(n, "vec3")) || str_eq(n, "vec4"))) {
+    if ((str_eq(n, "vec2") || str_eq(n, "vec3")) || str_eq(n, "vec4")) {
         return ty(TcVec, n);
     }
     if (str_eq(n, "mat4")) {
@@ -3041,13 +3042,13 @@ int64_t vec_dim(const char* vname) {
 }
 
 bool vec_comp_ok(char c, int64_t dim) {
-    if (((c == 'x') || (c == 'y'))) {
+    if ((c == 'x') || (c == 'y')) {
         return true;
     }
-    if ((c == 'z')) {
+    if (c == 'z') {
         return (dim >= 3);
     }
-    if ((c == 'w')) {
+    if (c == 'w') {
         return (dim >= 4);
     }
     return false;
@@ -3055,14 +3056,14 @@ bool vec_comp_ok(char c, int64_t dim) {
 
 int64_t vec_swizzle_size(const char* vname, const char* field) {
     int64_t dim = vec_dim(vname);
-    if ((dim == 0)) {
+    if (dim == 0) {
         return 0;
     }
-    if (((str_len(field) < 1) || (str_len(field) > 4))) {
+    if ((str_len(field) < 1) || (str_len(field) > 4)) {
         return 0;
     }
     for (int64_t i = 0; i < str_len(field); i++) {
-        if ((!vec_comp_ok(field[i], dim))) {
+        if (!vec_comp_ok(field[i], dim)) {
             return 0;
         }
     }
@@ -3070,34 +3071,34 @@ int64_t vec_swizzle_size(const char* vname, const char* field) {
 }
 
 Type* ck_type(Checker* c, TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return c->t_void;
     }
-    if ((t->kind == TyDynArray)) {
+    if (t->kind == TyDynArray) {
         return ty_dynarr(ck_type(c, t->elem));
     }
-    if (((t->kind == TyArray) || (t->kind == TyFixedArray))) {
+    if ((t->kind == TyArray) || (t->kind == TyFixedArray)) {
         return ty_arr(ck_type(c, t->elem));
     }
-    if ((t->kind == TyPointer)) {
+    if (t->kind == TyPointer) {
         return ty_ptr(ck_type(c, t->elem));
     }
     Type* p = ck_prim(t->name);
-    if ((p != 0)) {
+    if (p != 0) {
         return p;
     }
     int64_t si = ck_struct_index(c, t->name);
-    if ((si >= 0)) {
+    if (si >= 0) {
         t->name = ((StructInfo*)(c->structs).data)[si].cname;
         return ty(TcStruct, t->name);
     }
     int64_t ei = ck_enum_index(c, t->name);
-    if ((ei >= 0)) {
+    if (ei >= 0) {
         t->name = ((EnumInfo*)(c->enums).data)[ei].cname;
         return ty(TcInt, t->name);
     }
     const char* why = ck_hidden(c, t->name);
-    if ((!str_eq(why, ""))) {
+    if (!str_eq(why, "")) {
         ck_error(c, t->line, t->col, why);
     } else {
         ck_error(c, t->line, t->col, str_concat(str_concat("unknown type '", t->name), "'"));
@@ -3106,7 +3107,7 @@ Type* ck_type(Checker* c, TypeNode* t) {
 }
 
 bool ck_assignable(Type* target, Type* value) {
-    if (((target->cat == TcUnknown) || (value->cat == TcUnknown))) {
+    if ((target->cat == TcUnknown) || (value->cat == TcUnknown)) {
         return true;
     }
     switch (target->cat) {
@@ -3157,10 +3158,10 @@ bool ck_assignable(Type* target, Type* value) {
         }
         case TcArray:
         {
-            if ((value->cat != TcArray)) {
+            if (value->cat != TcArray) {
                 return false;
             }
-            if (((value->elem != 0) && (value->elem->cat == TcUnknown))) {
+            if ((value->elem != 0) && (value->elem->cat == TcUnknown)) {
                 return true;
             }
             return (((target->elem != 0) && (value->elem != 0)) && ck_assignable(target->elem, value->elem));
@@ -3168,10 +3169,10 @@ bool ck_assignable(Type* target, Type* value) {
         }
         case TcDynArray:
         {
-            if ((value->cat != TcDynArray)) {
+            if (value->cat != TcDynArray) {
                 return false;
             }
-            if (((value->elem != 0) && (value->elem->cat == TcUnknown))) {
+            if ((value->elem != 0) && (value->elem->cat == TcUnknown)) {
                 return true;
             }
             return (((target->elem != 0) && (value->elem != 0)) && ck_assignable(target->elem, value->elem));
@@ -3179,10 +3180,10 @@ bool ck_assignable(Type* target, Type* value) {
         }
         case TcPointer:
         {
-            if ((value->cat != TcPointer)) {
+            if (value->cat != TcPointer) {
                 return false;
             }
-            if (((value->elem != 0) && (value->elem->cat == TcUnknown))) {
+            if ((value->elem != 0) && (value->elem->cat == TcUnknown)) {
                 return true;
             }
             return (((target->elem != 0) && (value->elem != 0)) && ck_assignable(target->elem, value->elem));
@@ -3201,19 +3202,19 @@ bool t_is_scalar(Type* t) {
 }
 
 bool ck_castable(Type* from, Type* to) {
-    if ((t_is_unknown(from) || t_is_unknown(to))) {
+    if (t_is_unknown(from) || t_is_unknown(to)) {
         return true;
     }
     if (ck_assignable(to, from)) {
         return true;
     }
-    if ((t_is_scalar(from) && t_is_scalar(to))) {
+    if (t_is_scalar(from) && t_is_scalar(to)) {
         return true;
     }
-    if (((from->cat == TcPointer) && ((to->cat == TcPointer) || (to->cat == TcInt)))) {
+    if ((from->cat == TcPointer) && ((to->cat == TcPointer) || (to->cat == TcInt))) {
         return true;
     }
-    if (((to->cat == TcPointer) && (from->cat == TcInt))) {
+    if ((to->cat == TcPointer) && (from->cat == TcInt)) {
         return true;
     }
     return false;
@@ -3241,7 +3242,7 @@ bool ck_declare(Checker* c, const char* name, Type* t, bool is_const, int64_t li
 
 LookupResult ck_lookup(Checker* c, const char* name) {
     Scope* s = c->scope;
-    while ((s != 0)) {
+    while (s != 0) {
         for (int64_t i = 0; i < s->vars.len; i++) {
             if (str_eq(((VarInfo*)(s->vars).data)[i].name, name)) {
                 return (LookupResult){true, ((VarInfo*)(s->vars).data)[i].type, ((VarInfo*)(s->vars).data)[i].is_const};
@@ -3293,24 +3294,24 @@ LvalueResult ck_lvalue(Checker* c, Expr* e) {
 }
 
 TypeNode* ck_node(Checker* c, Type* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return 0;
     }
     const char* n = t->name;
-    if ((t->cat == TcBool)) {
+    if (t->cat == TcBool) {
         n = "bool";
     } else 
-    if ((t->cat == TcChar)) {
+    if (t->cat == TcChar) {
         n = "char";
     } else 
-    if ((t->cat == TcStr)) {
+    if (t->cat == TcStr) {
         n = "string";
     } else 
-    if ((!((((((t->cat == TcInt) || (t->cat == TcFloat)) || (t->cat == TcVec)) || (t->cat == TcMat)) || (t->cat == TcQuat)) || (t->cat == TcStruct)))) {
+    if (!((((((t->cat == TcInt) || (t->cat == TcFloat)) || (t->cat == TcVec)) || (t->cat == TcMat)) || (t->cat == TcQuat)) || (t->cat == TcStruct))) {
         return type_to_node(t);
     }
     int64_t k = idx_first((&c->node_idx), n);
-    while ((k >= 0)) {
+    while (k >= 0) {
         if (str_eq(((TypeNode**)(c->nodes).data)[k]->name, n)) {
             return ((TypeNode**)(c->nodes).data)[k];
         }
@@ -3330,7 +3331,7 @@ Type* ck_expr(Checker* c, Expr* e) {
 
 Type* ck_expr_as(Checker* c, Expr* e, Type* target) {
     Type* t = ck_expr(c, e);
-    if (((((e->kind == ExArrayLit) && (target->cat == TcDynArray)) && (t->cat == TcDynArray)) && ck_assignable(target, t))) {
+    if ((((e->kind == ExArrayLit) && (target->cat == TcDynArray)) && (t->cat == TcDynArray)) && ck_assignable(target, t)) {
         e->rtype = ck_node(c, target);
         return target;
     }
@@ -3339,15 +3340,15 @@ Type* ck_expr_as(Checker* c, Expr* e, Type* target) {
 
 Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
     const char* op = e->text;
-    if (((((lt->cat == TcMat) || (rt->cat == TcMat)) || (lt->cat == TcQuat)) || (rt->cat == TcQuat))) {
+    if ((((lt->cat == TcMat) || (rt->cat == TcMat)) || (lt->cat == TcQuat)) || (rt->cat == TcQuat)) {
         if (str_eq(op, "*")) {
-            if (((lt->cat == TcMat) && (rt->cat == TcMat))) {
+            if ((lt->cat == TcMat) && (rt->cat == TcMat)) {
                 return lt;
             }
-            if ((((lt->cat == TcMat) && (rt->cat == TcVec)) && str_eq(rt->name, "vec4"))) {
+            if (((lt->cat == TcMat) && (rt->cat == TcVec)) && str_eq(rt->name, "vec4")) {
                 return rt;
             }
-            if (((lt->cat == TcQuat) && (rt->cat == TcQuat))) {
+            if ((lt->cat == TcQuat) && (rt->cat == TcQuat)) {
                 return lt;
             }
             ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("'*' is not defined between ", t_str(lt)), " and "), t_str(rt)));
@@ -3356,22 +3357,22 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
         ck_error(c, e->line, e->col, "only '*' is defined for matrices/quaternions");
         return c->t_unknown;
     }
-    if (((lt->cat == TcVec) || (rt->cat == TcVec))) {
-        if ((str_eq(op, "+") || str_eq(op, "-"))) {
-            if ((((lt->cat == TcVec) && (rt->cat == TcVec)) && str_eq(lt->name, rt->name))) {
+    if ((lt->cat == TcVec) || (rt->cat == TcVec)) {
+        if (str_eq(op, "+") || str_eq(op, "-")) {
+            if (((lt->cat == TcVec) && (rt->cat == TcVec)) && str_eq(lt->name, rt->name)) {
                 return lt;
             }
             ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("'", op), "' requires two vectors of the same size, got "), t_str(lt)), " and "), t_str(rt)));
             return c->t_unknown;
         }
         if (str_eq(op, "*")) {
-            if ((((lt->cat == TcVec) && (rt->cat == TcVec)) && str_eq(lt->name, rt->name))) {
+            if (((lt->cat == TcVec) && (rt->cat == TcVec)) && str_eq(lt->name, rt->name)) {
                 return lt;
             }
-            if (((lt->cat == TcVec) && t_is_numeric(rt))) {
+            if ((lt->cat == TcVec) && t_is_numeric(rt)) {
                 return lt;
             }
-            if (((rt->cat == TcVec) && t_is_numeric(lt))) {
+            if ((rt->cat == TcVec) && t_is_numeric(lt)) {
                 return rt;
             }
             ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("'*' on a vector needs a matching vector or a scalar, got ", t_str(lt)), " and "), t_str(rt)));
@@ -3380,44 +3381,44 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
         ck_error(c, e->line, e->col, str_concat(str_concat("'", op), "' is not defined for vectors"));
         return c->t_unknown;
     }
-    if ((str_eq(op, "&&") || str_eq(op, "||"))) {
-        if ((((lt->cat != TcBool) && (!t_is_unknown(lt))) || ((rt->cat != TcBool) && (!t_is_unknown(rt))))) {
+    if (str_eq(op, "&&") || str_eq(op, "||")) {
+        if (((lt->cat != TcBool) && (!t_is_unknown(lt))) || ((rt->cat != TcBool) && (!t_is_unknown(rt)))) {
             ck_error(c, e->line, e->col, str_concat(str_concat("'", op), "' requires bool operands"));
         }
         return c->t_bool;
     }
-    if ((str_eq(op, "==") || str_eq(op, "!="))) {
-        if (((((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (lt->cat != rt->cat)) && (!(t_ordered(lt) && t_ordered(rt))))) {
+    if (str_eq(op, "==") || str_eq(op, "!=")) {
+        if ((((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (lt->cat != rt->cat)) && (!(t_ordered(lt) && t_ordered(rt)))) {
             ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("cannot compare ", t_str(lt)), " and "), t_str(rt)));
         }
         return c->t_bool;
     }
-    if ((((str_eq(op, "<") || str_eq(op, "<=")) || str_eq(op, ">")) || str_eq(op, ">="))) {
-        if ((((!t_ordered(lt)) && (!t_is_unknown(lt))) || ((!t_ordered(rt)) && (!t_is_unknown(rt))))) {
+    if (((str_eq(op, "<") || str_eq(op, "<=")) || str_eq(op, ">")) || str_eq(op, ">=")) {
+        if (((!t_ordered(lt)) && (!t_is_unknown(lt))) || ((!t_ordered(rt)) && (!t_is_unknown(rt)))) {
             ck_error(c, e->line, e->col, str_concat(str_concat("'", op), "' requires numeric operands"));
         }
         return c->t_bool;
     }
-    if ((str_eq(op, "+") && ((lt->cat == TcStr) || (rt->cat == TcStr)))) {
-        if ((((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (!((lt->cat == TcStr) && (rt->cat == TcStr))))) {
+    if (str_eq(op, "+") && ((lt->cat == TcStr) || (rt->cat == TcStr))) {
+        if (((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (!((lt->cat == TcStr) && (rt->cat == TcStr)))) {
             ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("cannot concatenate ", t_str(lt)), " and "), t_str(rt)));
         }
         return c->t_str_;
     }
-    if (((((str_eq(op, "|") || str_eq(op, "&")) || str_eq(op, "^")) || str_eq(op, "<<")) || str_eq(op, ">>"))) {
-        if (((((!t_is_integer(lt)) && (lt->cat != TcChar)) && (!t_is_unknown(lt))) || (((!t_is_integer(rt)) && (rt->cat != TcChar)) && (!t_is_unknown(rt))))) {
+    if ((((str_eq(op, "|") || str_eq(op, "&")) || str_eq(op, "^")) || str_eq(op, "<<")) || str_eq(op, ">>")) {
+        if ((((!t_is_integer(lt)) && (lt->cat != TcChar)) && (!t_is_unknown(lt))) || (((!t_is_integer(rt)) && (rt->cat != TcChar)) && (!t_is_unknown(rt)))) {
             ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("'", op), "' requires integer operands, got "), t_str(lt)), " and "), t_str(rt)));
         }
         return c->t_int;
     }
-    if ((((!t_ordered(lt)) && (!t_is_unknown(lt))) || ((!t_ordered(rt)) && (!t_is_unknown(rt))))) {
+    if (((!t_ordered(lt)) && (!t_is_unknown(lt))) || ((!t_ordered(rt)) && (!t_is_unknown(rt)))) {
         ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("'", op), "' requires numeric operands, got "), t_str(lt)), " and "), t_str(rt)));
         return c->t_unknown;
     }
-    if ((str_eq(op, "%") && ((lt->cat == TcFloat) || (rt->cat == TcFloat)))) {
+    if (str_eq(op, "%") && ((lt->cat == TcFloat) || (rt->cat == TcFloat))) {
         ck_error(c, e->line, e->col, "'%' requires integer operands");
     }
-    if (((lt->cat == TcFloat) || (rt->cat == TcFloat))) {
+    if ((lt->cat == TcFloat) || (rt->cat == TcFloat)) {
         return c->t_float;
     }
     return c->t_int;
@@ -3458,7 +3459,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     return v.type;
                 }
                 int64_t mi = ck_member_index(c, e->text);
-                if ((mi >= 0)) {
+                if (mi >= 0) {
                     e->text = ((EnumMember*)(c->enum_members).data)[mi].cname;
                     return ty(TcInt, ((EnumMember*)(c->enum_members).data)[mi].enum_name);
                 }
@@ -3469,11 +3470,11 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     return ty_ptr(c->t_unknown);
                 }
                 const char* why = ck_hidden(c, e->text);
-                if ((!str_eq(why, ""))) {
+                if (!str_eq(why, "")) {
                     ck_error(c, e->line, e->col, why);
                     return c->t_unknown;
                 }
-                if ((!c->has_foreign)) {
+                if (!c->has_foreign) {
                     ck_error(c, e->line, e->col, str_concat(str_concat("use of undeclared name '", e->text), "'"));
                 }
                 return c->t_unknown;
@@ -3485,37 +3486,37 @@ Type* ck_expr_i(Checker* c, Expr* e) {
             {
                 if (str_eq(e->text, "&")) {
                     LvalueResult lv = ck_lvalue(c, e->a);
-                    if ((!lv.ok)) {
+                    if (!lv.ok) {
                         ck_error(c, e->line, e->col, "cannot take the address of a non-lvalue");
                     }
                     return ty_ptr(ck_expr(c, e->a));
                 }
                 Type* t = ck_expr(c, e->a);
                 if (str_eq(e->text, "*")) {
-                    if ((t->cat == TcPointer)) {
-                        if ((t->elem != 0)) {
+                    if (t->cat == TcPointer) {
+                        if (t->elem != 0) {
                             return t->elem;
                         }
                         return c->t_unknown;
                     }
-                    if ((!t_is_unknown(t))) {
+                    if (!t_is_unknown(t)) {
                         ck_error(c, e->line, e->col, str_concat("cannot dereference a value of type ", t_str(t)));
                     }
                     return c->t_unknown;
                 }
                 if (str_eq(e->text, "!")) {
-                    if (((t->cat != TcBool) && (!t_is_unknown(t)))) {
+                    if ((t->cat != TcBool) && (!t_is_unknown(t))) {
                         ck_error(c, e->line, e->col, str_concat("'!' requires bool, got ", t_str(t)));
                     }
                     return c->t_bool;
                 }
                 if (str_eq(e->text, "~")) {
-                    if ((((!t_is_integer(t)) && (t->cat != TcChar)) && (!t_is_unknown(t)))) {
+                    if (((!t_is_integer(t)) && (t->cat != TcChar)) && (!t_is_unknown(t))) {
                         ck_error(c, e->line, e->col, str_concat("'~' requires an integer operand, got ", t_str(t)));
                     }
                     return t;
                 }
-                if (((!t_is_numeric(t)) && (!t_is_unknown(t)))) {
+                if ((!t_is_numeric(t)) && (!t_is_unknown(t))) {
                     ck_error(c, e->line, e->col, str_concat("'-' requires a numeric operand, got ", t_str(t)));
                 }
                 return t;
@@ -3533,17 +3534,17 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 }
                 Array spine = ({ Array _a = arr_make(sizeof(Expr*)); _a; });
                 Expr* x = e;
-                while (((x->kind == ExBinary) && (!str_eq(x->text, "..")))) {
+                while ((x->kind == ExBinary) && (!str_eq(x->text, ".."))) {
                     ({ Expr* _e = x; arr_push(&(spine), &_e); });
                     x = x->a;
                 }
                 Type* lt = ck_expr(c, x);
                 int64_t k = (spine.len - 1);
-                while ((k >= 0)) {
+                while (k >= 0) {
                     Expr* node = ((Expr**)(spine).data)[k];
                     Type* rt = ck_expr(c, node->b);
                     Type* t = ck_binary(c, node, lt, rt);
-                    if ((k > 0)) {
+                    if (k > 0) {
                         node->rtype = ck_node(c, t);
                     }
                     lt = t;
@@ -3565,24 +3566,24 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 if (t_is_unknown(ot)) {
                     return c->t_unknown;
                 }
-                if ((ot->cat == TcVec)) {
+                if (ot->cat == TcVec) {
                     int64_t sw = vec_swizzle_size(ot->name, e->field);
-                    if ((sw == 1)) {
+                    if (sw == 1) {
                         return c->t_float;
                     }
-                    if ((sw == 2)) {
+                    if (sw == 2) {
                         return ty(TcVec, "vec2");
                     }
-                    if ((sw == 3)) {
+                    if (sw == 3) {
                         return ty(TcVec, "vec3");
                     }
-                    if ((sw == 4)) {
+                    if (sw == 4) {
                         return ty(TcVec, "vec4");
                     }
                     ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat("vector ", ot->name), " has no component/swizzle '"), e->field), "'"));
                     return c->t_unknown;
                 }
-                if ((((ot->cat == TcStr) || (ot->cat == TcArray)) || (ot->cat == TcDynArray))) {
+                if (((ot->cat == TcStr) || (ot->cat == TcArray)) || (ot->cat == TcDynArray)) {
                     if (str_eq(e->field, "len")) {
                         return c->t_int;
                     }
@@ -3590,17 +3591,17 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     return c->t_unknown;
                 }
                 const char* sname = "";
-                if ((ot->cat == TcStruct)) {
+                if (ot->cat == TcStruct) {
                     sname = ot->name;
                 } else 
-                if ((((ot->cat == TcPointer) && (ot->elem != 0)) && (ot->elem->cat == TcStruct))) {
+                if (((ot->cat == TcPointer) && (ot->elem != 0)) && (ot->elem->cat == TcStruct)) {
                     sname = ot->elem->name;
                 } else {
                     ck_error(c, e->line, e->col, str_concat(str_concat("type ", t_str(ot)), " has no fields"));
                     return c->t_unknown;
                 }
                 int64_t si = ck_struct_by_cname(c, sname);
-                if ((si >= 0)) {
+                if (si >= 0) {
                     for (int64_t i = 0; i < ((StructInfo*)(c->structs).data)[si].fields.len; i++) {
                         if (str_eq(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].name, e->field)) {
                             return ((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type;
@@ -3617,31 +3618,31 @@ Type* ck_expr_i(Checker* c, Expr* e) {
             {
                 Type* ot = ck_expr(c, e->a);
                 Type* it = ck_expr(c, e->b);
-                if (((!t_is_integer(it)) && (!t_is_unknown(it)))) {
+                if ((!t_is_integer(it)) && (!t_is_unknown(it))) {
                     ck_error(c, e->line, e->col, str_concat("index must be an integer, got ", t_str(it)));
                 }
-                if ((ot->cat == TcStr)) {
+                if (ot->cat == TcStr) {
                     return c->t_char;
                 }
-                if ((ot->cat == TcArray)) {
-                    if ((ot->elem != 0)) {
+                if (ot->cat == TcArray) {
+                    if (ot->elem != 0) {
                         return ot->elem;
                     }
                     return c->t_unknown;
                 }
-                if ((ot->cat == TcDynArray)) {
-                    if ((ot->elem != 0)) {
+                if (ot->cat == TcDynArray) {
+                    if (ot->elem != 0) {
                         return ot->elem;
                     }
                     return c->t_unknown;
                 }
-                if ((ot->cat == TcPointer)) {
-                    if ((ot->elem != 0)) {
+                if (ot->cat == TcPointer) {
+                    if (ot->elem != 0) {
                         return ot->elem;
                     }
                     return c->t_unknown;
                 }
-                if ((!t_is_unknown(ot))) {
+                if (!t_is_unknown(ot)) {
                     ck_error(c, e->line, e->col, str_concat("cannot index a value of type ", t_str(ot)));
                 }
                 return c->t_unknown;
@@ -3651,13 +3652,13 @@ Type* ck_expr_i(Checker* c, Expr* e) {
         case ExArrayLit:
         {
             {
-                if ((e->items.len == 0)) {
+                if (e->items.len == 0) {
                     return ty_dynarr(c->t_unknown);
                 }
                 Type* first = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 for (int64_t i = 1; i < e->items.len; i++) {
                     Type* et = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                    if (((!ck_assignable(first, et)) && (!ck_assignable(et, first)))) {
+                    if ((!ck_assignable(first, et)) && (!ck_assignable(et, first))) {
                         ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(str_concat(str_concat(str_concat("array element ", str_from_int((i + 1))), " has type "), t_str(et)), ", expected "), t_str(first)));
                     }
                 }
@@ -3669,9 +3670,9 @@ Type* ck_expr_i(Checker* c, Expr* e) {
         {
             {
                 int64_t si = ck_struct_index(c, e->type_name);
-                if ((si < 0)) {
+                if (si < 0) {
                     const char* why = ck_hidden(c, e->type_name);
-                    if ((!str_eq(why, ""))) {
+                    if (!str_eq(why, "")) {
                         ck_error(c, e->line, e->col, why);
                     } else {
                         ck_error(c, e->line, e->col, str_concat(str_concat("unknown struct '", e->type_name), "'"));
@@ -3682,16 +3683,16 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     return c->t_unknown;
                 }
                 int64_t nf = ((StructInfo*)(c->structs).data)[si].fields.len;
-                if ((e->items.len != nf)) {
+                if (e->items.len != nf) {
                     ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("struct ", e->type_name), " has "), str_from_int(nf)), " field(s), but "), str_from_int(e->items.len)), " given"));
                 }
                 int64_t k = e->items.len;
-                if ((nf < k)) {
+                if (nf < k) {
                     k = nf;
                 }
                 for (int64_t i = 0; i < k; i++) {
                     Type* at = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                    if ((!ck_assignable(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type, at))) {
+                    if (!ck_assignable(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type, at)) {
                         ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("field '", ((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].name), "' of "), e->type_name), " expects "), t_str(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type)), ", got "), t_str(at)));
                     }
                 }
@@ -3708,7 +3709,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
             {
                 Type* from = ck_expr(c, e->a);
                 Type* to = ck_type(c, e->type);
-                if ((!ck_castable(from, to))) {
+                if (!ck_castable(from, to)) {
                     ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("cannot cast ", t_str(from)), " to "), t_str(to)));
                 }
                 return to;
@@ -3733,32 +3734,32 @@ Type* ck_expr_i(Checker* c, Expr* e) {
 
 Type* ck_call(Checker* c, Expr* e) {
     Expr* callee = e->a;
-    if ((callee->kind == ExField)) {
+    if (callee->kind == ExField) {
         if (str_eq(callee->field, "new")) {
             Type* recv = ck_expr(c, callee->a);
-            if (((recv->cat != TcStruct) || (!str_eq(recv->name, "Arena")))) {
-                if ((!t_is_unknown(recv))) {
+            if ((recv->cat != TcStruct) || (!str_eq(recv->name, "Arena"))) {
+                if (!t_is_unknown(recv)) {
                     ck_error(c, e->line, e->col, str_concat(".new is only valid on an arena, got ", t_str(recv)));
                 }
             }
-            if ((e->items.len != 1)) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, "new(T) takes exactly one type argument");
                 return c->t_unknown;
             }
             Expr* arg = ((Expr**)(e->items).data)[0];
-            if ((arg->kind != ExName)) {
+            if (arg->kind != ExName) {
                 ck_error(c, arg->line, arg->col, "new() expects a type name");
                 return c->t_unknown;
             }
             Type* elem = ck_prim(arg->text);
-            if ((elem == 0)) {
+            if (elem == 0) {
                 int64_t si = ck_struct_index(c, arg->text);
-                if ((si >= 0)) {
+                if (si >= 0) {
                     arg->text = ((StructInfo*)(c->structs).data)[si].cname;
                     elem = ty(TcStruct, arg->text);
                 } else {
                     const char* why = ck_hidden(c, arg->text);
-                    if ((!str_eq(why, ""))) {
+                    if (!str_eq(why, "")) {
                         ck_error(c, arg->line, arg->col, why);
                     } else {
                         ck_error(c, arg->line, arg->col, str_concat(str_concat("unknown type '", arg->text), "'"));
@@ -3771,17 +3772,17 @@ Type* ck_call(Checker* c, Expr* e) {
         }
         if (str_eq(callee->field, "push")) {
             Type* recv = ck_expr(c, callee->a);
-            if ((recv->cat == TcDynArray)) {
-                if ((e->items.len != 1)) {
+            if (recv->cat == TcDynArray) {
+                if (e->items.len != 1) {
                     ck_error(c, e->line, e->col, "push takes exactly one argument");
                 } else {
                     Type* at = ck_expr(c, ((Expr**)(e->items).data)[0]);
-                    if (((recv->elem != 0) && (!ck_assignable(recv->elem, at)))) {
+                    if ((recv->elem != 0) && (!ck_assignable(recv->elem, at))) {
                         ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(str_concat(str_concat("push expects ", t_str(recv->elem)), ", got "), t_str(at)));
                     }
                 }
             } else {
-                if ((!t_is_unknown(recv))) {
+                if (!t_is_unknown(recv)) {
                     ck_error(c, e->line, e->col, str_concat("push is only valid on a dynamic array, got ", t_str(recv)));
                 }
                 for (int64_t i = 0; i < e->items.len; i++) {
@@ -3796,16 +3797,16 @@ Type* ck_call(Checker* c, Expr* e) {
         }
         return c->t_unknown;
     }
-    if ((callee->kind == ExName)) {
+    if (callee->kind == ExName) {
         const char* name = callee->text;
         if (str_eq(name, "arena")) {
-            if ((e->items.len != 0)) {
+            if (e->items.len != 0) {
                 ck_error(c, e->line, e->col, "arena() takes no arguments");
             }
             return ty(TcStruct, "Arena");
         }
         if (str_eq(name, "print")) {
-            if ((e->items.len != 1)) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, "print() takes exactly one argument");
             }
             for (int64_t i = 0; i < e->items.len; i++) {
@@ -3813,84 +3814,84 @@ Type* ck_call(Checker* c, Expr* e) {
             }
             return c->t_void;
         }
-        if ((str_eq(name, "min") || str_eq(name, "max"))) {
-            if ((e->items.len != 2)) {
+        if (str_eq(name, "min") || str_eq(name, "max")) {
+            if (e->items.len != 2) {
                 ck_error(c, e->line, e->col, str_concat(name, "(a, b) takes 2 arguments"));
             }
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                if (((!t_is_numeric(a)) && (!t_is_unknown(a)))) {
+                if ((!t_is_numeric(a)) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(name, " expects numbers, got "), t_str(a)));
                 }
             }
             return c->t_float;
         }
-        if ((str_eq(name, "clamp") || str_eq(name, "lerp"))) {
-            if ((e->items.len != 3)) {
+        if (str_eq(name, "clamp") || str_eq(name, "lerp")) {
+            if (e->items.len != 3) {
                 ck_error(c, e->line, e->col, str_concat(name, "() takes 3 arguments"));
             }
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                if (((!t_is_numeric(a)) && (!t_is_unknown(a)))) {
+                if ((!t_is_numeric(a)) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(name, " expects numbers, got "), t_str(a)));
                 }
             }
             return c->t_float;
         }
         if (str_eq(name, "substr")) {
-            if ((e->items.len != 3)) {
+            if (e->items.len != 3) {
                 ck_error(c, e->line, e->col, "substr(s, start, len) takes 3 arguments");
             } else {
                 Type* s = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[1]);
                 Type* n = ck_expr(c, ((Expr**)(e->items).data)[2]);
-                if (((s->cat != TcStr) && (!t_is_unknown(s)))) {
+                if ((s->cat != TcStr) && (!t_is_unknown(s))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat("substr expects a string, got ", t_str(s)));
                 }
-                if (((!t_is_integer(a)) && (!t_is_unknown(a)))) {
+                if ((!t_is_integer(a)) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[1]->line, ((Expr**)(e->items).data)[1]->col, str_concat("substr start must be an integer, got ", t_str(a)));
                 }
-                if (((!t_is_integer(n)) && (!t_is_unknown(n)))) {
+                if ((!t_is_integer(n)) && (!t_is_unknown(n))) {
                     ck_error(c, ((Expr**)(e->items).data)[2]->line, ((Expr**)(e->items).data)[2]->col, str_concat("substr length must be an integer, got ", t_str(n)));
                 }
             }
             return c->t_str_;
         }
         if (str_eq(name, "int_to_str")) {
-            if ((e->items.len != 1)) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, "int_to_str(n) takes 1 argument");
             } else {
                 Type* n = ck_expr(c, ((Expr**)(e->items).data)[0]);
-                if (((!t_is_integer(n)) && (!t_is_unknown(n)))) {
+                if ((!t_is_integer(n)) && (!t_is_unknown(n))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat("int_to_str expects an integer, got ", t_str(n)));
                 }
             }
             return c->t_str_;
         }
-        if ((str_eq(name, "read_file") || str_eq(name, "cstr"))) {
-            if ((e->items.len != 1)) {
+        if (str_eq(name, "read_file") || str_eq(name, "cstr")) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, str_concat(name, "() takes 1 argument"));
             } else {
                 Type* p = ck_expr(c, ((Expr**)(e->items).data)[0]);
-                if (((p->cat != TcStr) && (!t_is_unknown(p)))) {
+                if ((p->cat != TcStr) && (!t_is_unknown(p))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(str_concat(name, " expects a string, got "), t_str(p)));
                 }
             }
             return c->t_str_;
         }
         if (str_eq(name, "args")) {
-            if ((e->items.len != 0)) {
+            if (e->items.len != 0) {
                 ck_error(c, e->line, e->col, "args() takes no arguments");
             }
             return ty_dynarr(c->t_str_);
         }
         if (str_eq(name, "write_file")) {
-            if ((e->items.len != 2)) {
+            if (e->items.len != 2) {
                 ck_error(c, e->line, e->col, "write_file(path, data) takes 2 arguments");
             } else {
                 for (int64_t i = 0; i < 2; i++) {
                     Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                    if (((a->cat != TcStr) && (!t_is_unknown(a)))) {
+                    if ((a->cat != TcStr) && (!t_is_unknown(a))) {
                         ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat("write_file expects strings, got ", t_str(a)));
                     }
                 }
@@ -3898,14 +3899,14 @@ Type* ck_call(Checker* c, Expr* e) {
             return c->t_bool;
         }
         if (str_eq(name, "alloc")) {
-            if ((e->items.len != 1)) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, "alloc(value) takes exactly one argument");
                 return c->t_unknown;
             }
             Type* vt = ck_expr(c, ((Expr**)(e->items).data)[0]);
             return ty_ptr(vt);
         }
-        if (((str_eq(name, "vec2") || str_eq(name, "vec3")) || str_eq(name, "vec4"))) {
+        if ((str_eq(name, "vec2") || str_eq(name, "vec3")) || str_eq(name, "vec4")) {
             int64_t n = 2;
             if (str_eq(name, "vec3")) {
                 n = 3;
@@ -3913,36 +3914,36 @@ Type* ck_call(Checker* c, Expr* e) {
             if (str_eq(name, "vec4")) {
                 n = 4;
             }
-            if (((e->items.len != n) && (e->items.len != 1))) {
+            if ((e->items.len != n) && (e->items.len != 1)) {
                 ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(name, "() takes "), str_from_int(n)), " components (or 1 to splat)"));
             }
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* at = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                if (((!t_is_numeric(at)) && (!t_is_unknown(at)))) {
+                if ((!t_is_numeric(at)) && (!t_is_unknown(at))) {
                     ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(name, " components must be numeric, got "), t_str(at)));
                 }
             }
             return ty(TcVec, name);
         }
         if (str_eq(name, "dot")) {
-            if ((e->items.len != 2)) {
+            if (e->items.len != 2) {
                 ck_error(c, e->line, e->col, "dot(a, b) takes 2 arguments");
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 Type* b = ck_expr(c, ((Expr**)(e->items).data)[1]);
-                if ((((((a->cat != TcVec) || (b->cat != TcVec)) || (!str_eq(a->name, b->name))) && (!t_is_unknown(a))) && (!t_is_unknown(b)))) {
+                if (((((a->cat != TcVec) || (b->cat != TcVec)) || (!str_eq(a->name, b->name))) && (!t_is_unknown(a))) && (!t_is_unknown(b))) {
                     ck_error(c, e->line, e->col, "dot expects two vectors of the same size");
                 }
             }
             return c->t_float;
         }
-        if ((str_eq(name, "length") || str_eq(name, "normalize"))) {
+        if (str_eq(name, "length") || str_eq(name, "normalize")) {
             Type* r = c->t_float;
-            if ((e->items.len != 1)) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, str_concat(name, "(v) takes 1 argument"));
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
-                if (((a->cat != TcVec) && (!t_is_unknown(a)))) {
+                if ((a->cat != TcVec) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(str_concat(name, " expects a vector, got "), t_str(a)));
                 }
                 if (str_eq(name, "normalize")) {
@@ -3952,19 +3953,19 @@ Type* ck_call(Checker* c, Expr* e) {
             return r;
         }
         if (str_eq(name, "cross")) {
-            if ((e->items.len != 2)) {
+            if (e->items.len != 2) {
                 ck_error(c, e->line, e->col, "cross(a, b) takes 2 arguments");
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 Type* b = ck_expr(c, ((Expr**)(e->items).data)[1]);
-                if (((((!str_eq(a->name, "vec3")) || (!str_eq(b->name, "vec3"))) && (!t_is_unknown(a))) && (!t_is_unknown(b)))) {
+                if ((((!str_eq(a->name, "vec3")) || (!str_eq(b->name, "vec3"))) && (!t_is_unknown(a))) && (!t_is_unknown(b))) {
                     ck_error(c, e->line, e->col, "cross expects two vec3");
                 }
             }
             return ty(TcVec, "vec3");
         }
-        if ((str_eq(name, "mat4_identity") || str_eq(name, "quat_identity"))) {
-            if ((e->items.len != 0)) {
+        if (str_eq(name, "mat4_identity") || str_eq(name, "quat_identity")) {
+            if (e->items.len != 0) {
                 ck_error(c, e->line, e->col, str_concat(name, "() takes no arguments"));
             }
             if (str_eq(name, "quat_identity")) {
@@ -3972,27 +3973,27 @@ Type* ck_call(Checker* c, Expr* e) {
             }
             return ty(TcMat, "mat4");
         }
-        if ((str_eq(name, "mat4_translate") || str_eq(name, "mat4_scale"))) {
-            if ((e->items.len != 1)) {
+        if (str_eq(name, "mat4_translate") || str_eq(name, "mat4_scale")) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, str_concat(name, "(v) takes 1 argument"));
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
-                if (((!str_eq(a->name, "vec3")) && (!t_is_unknown(a)))) {
+                if ((!str_eq(a->name, "vec3")) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(name, " expects a vec3"));
                 }
             }
             return ty(TcMat, "mat4");
         }
-        if ((str_eq(name, "mat4_rotate") || str_eq(name, "quat_axis_angle"))) {
-            if ((e->items.len != 2)) {
+        if (str_eq(name, "mat4_rotate") || str_eq(name, "quat_axis_angle")) {
+            if (e->items.len != 2) {
                 ck_error(c, e->line, e->col, str_concat(name, "(axis, angle) takes 2 arguments"));
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 Type* b = ck_expr(c, ((Expr**)(e->items).data)[1]);
-                if (((!str_eq(a->name, "vec3")) && (!t_is_unknown(a)))) {
+                if ((!str_eq(a->name, "vec3")) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(name, " axis must be a vec3"));
                 }
-                if (((!t_is_numeric(b)) && (!t_is_unknown(b)))) {
+                if ((!t_is_numeric(b)) && (!t_is_unknown(b))) {
                     ck_error(c, ((Expr**)(e->items).data)[1]->line, ((Expr**)(e->items).data)[1]->col, str_concat(name, " angle must be numeric"));
                 }
             }
@@ -4002,80 +4003,80 @@ Type* ck_call(Checker* c, Expr* e) {
             return ty(TcMat, "mat4");
         }
         if (str_eq(name, "mat4_perspective")) {
-            if ((e->items.len != 4)) {
+            if (e->items.len != 4) {
                 ck_error(c, e->line, e->col, "mat4_perspective(fovy, aspect, near, far) takes 4 arguments");
             }
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                if (((!t_is_numeric(a)) && (!t_is_unknown(a)))) {
+                if ((!t_is_numeric(a)) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, "mat4_perspective arguments must be numeric");
                 }
             }
             return ty(TcMat, "mat4");
         }
         if (str_eq(name, "mat4_look_at")) {
-            if ((e->items.len != 3)) {
+            if (e->items.len != 3) {
                 ck_error(c, e->line, e->col, "mat4_look_at(eye, center, up) takes 3 arguments");
             }
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
-                if (((!str_eq(a->name, "vec3")) && (!t_is_unknown(a)))) {
+                if ((!str_eq(a->name, "vec3")) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, "mat4_look_at arguments must be vec3");
                 }
             }
             return ty(TcMat, "mat4");
         }
         if (str_eq(name, "quat_normalize")) {
-            if ((e->items.len != 1)) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, "quat_normalize(q) takes 1 argument");
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
-                if (((a->cat != TcQuat) && (!t_is_unknown(a)))) {
+                if ((a->cat != TcQuat) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, "quat_normalize expects a quat");
                 }
             }
             return ty(TcQuat, "quat");
         }
         if (str_eq(name, "quat_to_mat4")) {
-            if ((e->items.len != 1)) {
+            if (e->items.len != 1) {
                 ck_error(c, e->line, e->col, "quat_to_mat4(q) takes 1 argument");
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
-                if (((a->cat != TcQuat) && (!t_is_unknown(a)))) {
+                if ((a->cat != TcQuat) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, "quat_to_mat4 expects a quat");
                 }
             }
             return ty(TcMat, "mat4");
         }
         if (str_eq(name, "quat_rotate")) {
-            if ((e->items.len != 2)) {
+            if (e->items.len != 2) {
                 ck_error(c, e->line, e->col, "quat_rotate(q, v) takes 2 arguments");
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 Type* b = ck_expr(c, ((Expr**)(e->items).data)[1]);
-                if (((a->cat != TcQuat) && (!t_is_unknown(a)))) {
+                if ((a->cat != TcQuat) && (!t_is_unknown(a))) {
                     ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, "quat_rotate expects a quat");
                 }
-                if (((!str_eq(b->name, "vec3")) && (!t_is_unknown(b)))) {
+                if ((!str_eq(b->name, "vec3")) && (!t_is_unknown(b))) {
                     ck_error(c, ((Expr**)(e->items).data)[1]->line, ((Expr**)(e->items).data)[1]->col, "quat_rotate expects a vec3");
                 }
             }
             return ty(TcVec, "vec3");
         }
         int64_t fi = ck_func_index(c, name);
-        if ((fi >= 0)) {
+        if (fi >= 0) {
             callee->text = ((FuncInfo*)(c->funcs).data)[fi].cname;
             int64_t np = ((FuncInfo*)(c->funcs).data)[fi].params.len;
-            if ((e->items.len != np)) {
+            if (e->items.len != np) {
                 ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("function '", name), "' expects "), str_from_int(np)), " argument(s), got "), str_from_int(e->items.len)));
             }
             int64_t k = e->items.len;
-            if ((np < k)) {
+            if (np < k) {
                 k = np;
             }
             for (int64_t i = 0; i < k; i++) {
                 Type* at = ck_expr_as(c, ((Expr**)(e->items).data)[i], ((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i]);
-                if ((!ck_assignable(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i], at))) {
+                if (!ck_assignable(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i], at)) {
                     ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("argument ", str_from_int((i + 1))), " to '"), name), "' expects "), t_str(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i])), ", got "), t_str(at)));
                 }
             }
@@ -4085,14 +4086,14 @@ Type* ck_call(Checker* c, Expr* e) {
             return ((FuncInfo*)(c->funcs).data)[fi].ret;
         }
         const char* why = ck_hidden(c, name);
-        if ((!str_eq(why, ""))) {
+        if (!str_eq(why, "")) {
             ck_error(c, e->line, e->col, why);
             for (int64_t i = 0; i < e->items.len; i++) {
                 ck_expr(c, ((Expr**)(e->items).data)[i]);
             }
             return c->t_unknown;
         }
-        if ((!c->has_foreign)) {
+        if (!c->has_foreign) {
             ck_error(c, e->line, e->col, str_concat(str_concat("call to undeclared function '", name), "'"));
         }
         for (int64_t i = 0; i < e->items.len; i++) {
@@ -4125,21 +4126,21 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 Type* declared = c->t_unknown;
-                if ((s->type != 0)) {
+                if (s->type != 0) {
                     declared = ck_type(c, s->type);
                 }
-                if ((s->init != 0)) {
+                if (s->init != 0) {
                     Type* vt = ck_expr_as(c, s->init, declared);
-                    if ((s->type == 0)) {
+                    if (s->type == 0) {
                         declared = vt;
                         s->type = type_to_node(vt);
                     } else {
-                        if ((!ck_assignable(declared, vt))) {
+                        if (!ck_assignable(declared, vt)) {
                             ck_error(c, s->line, s->col, str_concat(str_concat(str_concat(str_concat(str_concat("cannot initialize '", s->name), "' of type "), t_str(declared)), " with a value of type "), t_str(vt)));
                         }
                     }
                 } else {
-                    if ((s->type == 0)) {
+                    if (s->type == 0) {
                         ck_error(c, s->line, s->col, "'var' requires an initializer");
                     }
                 }
@@ -4150,16 +4151,16 @@ void ck_stmt(Checker* c, Stmt* s) {
         case StReturn:
         {
             {
-                if ((s->expr != 0)) {
+                if (s->expr != 0) {
                     Type* vt = ck_expr_as(c, s->expr, c->cur_ret);
-                    if ((c->cur_ret->cat == TcVoid)) {
+                    if (c->cur_ret->cat == TcVoid) {
                         ck_error(c, s->line, s->col, "returning a value from a void function");
                     } else 
-                    if ((!ck_assignable(c->cur_ret, vt))) {
+                    if (!ck_assignable(c->cur_ret, vt)) {
                         ck_error(c, s->line, s->col, str_concat(str_concat(str_concat("returning ", t_str(vt)), " from a function declared to return "), t_str(c->cur_ret)));
                     }
                 } else {
-                    if ((c->cur_ret->cat != TcVoid)) {
+                    if (c->cur_ret->cat != TcVoid) {
                         ck_error(c, s->line, s->col, str_concat("missing return value; function returns ", t_str(c->cur_ret)));
                     }
                 }
@@ -4175,7 +4176,7 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 LvalueResult lv = ck_lvalue(c, s->target);
-                if ((!lv.ok)) {
+                if (!lv.ok) {
                     ck_error(c, s->line, s->col, str_concat(str_concat("left side of '", s->op), "' is not assignable"));
                 } else 
                 if (lv.is_const) {
@@ -4183,24 +4184,24 @@ void ck_stmt(Checker* c, Stmt* s) {
                 }
                 Type* tt = ck_expr(c, s->target);
                 Type* vt = ck_expr_as(c, s->value, tt);
-                if (((tt->cat == TcVec) && (!str_eq(s->op, "=")))) {
-                    if ((str_eq(s->op, "+=") || str_eq(s->op, "-="))) {
-                        if (((!((vt->cat == TcVec) && str_eq(vt->name, tt->name))) && (!t_is_unknown(vt)))) {
+                if ((tt->cat == TcVec) && (!str_eq(s->op, "="))) {
+                    if (str_eq(s->op, "+=") || str_eq(s->op, "-=")) {
+                        if ((!((vt->cat == TcVec) && str_eq(vt->name, tt->name))) && (!t_is_unknown(vt))) {
                             ck_error(c, s->line, s->col, str_concat(str_concat(str_concat(str_concat(str_concat("'", s->op), "' on "), tt->name), " requires a "), tt->name));
                         }
                     } else 
                     if (str_eq(s->op, "*=")) {
-                        if (((!(((vt->cat == TcVec) && str_eq(vt->name, tt->name)) || t_is_numeric(vt))) && (!t_is_unknown(vt)))) {
+                        if ((!(((vt->cat == TcVec) && str_eq(vt->name, tt->name)) || t_is_numeric(vt))) && (!t_is_unknown(vt))) {
                             ck_error(c, s->line, s->col, "'*=' on a vector requires a matching vector or a scalar");
                         }
                     } else {
                         ck_error(c, s->line, s->col, str_concat(str_concat("'", s->op), "' is not defined for vectors"));
                     }
                 } else {
-                    if ((((!str_eq(s->op, "=")) && (!t_is_numeric(tt))) && (!t_is_unknown(tt)))) {
+                    if (((!str_eq(s->op, "=")) && (!t_is_numeric(tt))) && (!t_is_unknown(tt))) {
                         ck_error(c, s->line, s->col, str_concat(str_concat(str_concat("'", s->op), "' requires a numeric operand, got "), t_str(tt)));
                     }
-                    if ((!ck_assignable(tt, vt))) {
+                    if (!ck_assignable(tt, vt)) {
                         ck_error(c, s->line, s->col, str_concat(str_concat(str_concat("cannot assign ", t_str(vt)), " to "), t_str(tt)));
                     }
                 }
@@ -4211,11 +4212,11 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 Type* cd = ck_expr(c, s->cond);
-                if (((cd->cat != TcBool) && (!t_is_unknown(cd)))) {
+                if ((cd->cat != TcBool) && (!t_is_unknown(cd))) {
                     ck_error(c, s->line, s->col, str_concat("if condition must be bool, got ", t_str(cd)));
                 }
                 ck_block(c, s->then_block);
-                if ((s->else_branch != 0)) {
+                if (s->else_branch != 0) {
                     ck_stmt(c, s->else_branch);
                 }
             }
@@ -4225,7 +4226,7 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 Type* cd = ck_expr(c, s->cond);
-                if (((cd->cat != TcBool) && (!t_is_unknown(cd)))) {
+                if ((cd->cat != TcBool) && (!t_is_unknown(cd))) {
                     ck_error(c, s->line, s->col, str_concat("while condition must be bool, got ", t_str(cd)));
                 }
                 c->loop_depth += 1;
@@ -4238,26 +4239,26 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 Type* elemT = c->t_int;
-                if ((((s->iter != 0) && (s->iter->kind == ExBinary)) && str_eq(s->iter->text, ".."))) {
+                if (((s->iter != 0) && (s->iter->kind == ExBinary)) && str_eq(s->iter->text, "..")) {
                     Type* lo = ck_expr(c, s->iter->a);
                     Type* hi = ck_expr(c, s->iter->b);
-                    if (((!t_is_integer(lo)) && (!t_is_unknown(lo)))) {
+                    if ((!t_is_integer(lo)) && (!t_is_unknown(lo))) {
                         ck_error(c, s->iter->line, s->iter->col, str_concat("range start must be an integer, got ", t_str(lo)));
                     }
-                    if (((!t_is_integer(hi)) && (!t_is_unknown(hi)))) {
+                    if ((!t_is_integer(hi)) && (!t_is_unknown(hi))) {
                         ck_error(c, s->iter->line, s->iter->col, str_concat("range end must be an integer, got ", t_str(hi)));
                     }
                 } else 
-                if ((s->iter != 0)) {
+                if (s->iter != 0) {
                     Type* it = ck_expr(c, s->iter);
-                    if (((it->cat == TcDynArray) || (it->cat == TcArray))) {
-                        if ((it->elem != 0)) {
+                    if ((it->cat == TcDynArray) || (it->cat == TcArray)) {
+                        if (it->elem != 0) {
                             elemT = it->elem;
                         } else {
                             elemT = c->t_unknown;
                         }
                     } else 
-                    if ((!t_is_unknown(it))) {
+                    if (!t_is_unknown(it)) {
                         ck_error(c, s->line, s->col, str_concat("for-in needs an integer range or an array, got ", t_str(it)));
                     } else {
                         elemT = c->t_unknown;
@@ -4278,7 +4279,7 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 ck_push(c);
-                if ((str_len(s->name) > 0)) {
+                if (str_len(s->name) > 0) {
                     ck_declare(c, s->name, ty(TcStruct, "Arena"), false, s->line, s->col);
                 }
                 ck_block(c, s->body);
@@ -4290,14 +4291,14 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 Type* st = ck_expr(c, s->subject);
-                if ((((!t_is_integer(st)) && (st->cat != TcChar)) && (!t_is_unknown(st)))) {
+                if (((!t_is_integer(st)) && (st->cat != TcChar)) && (!t_is_unknown(st))) {
                     ck_error(c, s->line, s->col, str_concat("switch subject must be an integer, char, or enum, got ", t_str(st)));
                 }
                 for (int64_t i = 0; i < s->cases.len; i++) {
                     SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
                     for (int64_t j = 0; j < sc.values.len; j++) {
                         Type* vt = ck_expr(c, ((Expr**)(sc.values).data)[j]);
-                        if ((((!t_is_integer(vt)) && (vt->cat != TcChar)) && (!t_is_unknown(vt)))) {
+                        if (((!t_is_integer(vt)) && (vt->cat != TcChar)) && (!t_is_unknown(vt))) {
                             ck_error(c, ((Expr**)(sc.values).data)[j]->line, ((Expr**)(sc.values).data)[j]->col, str_concat("switch case value must be an integer, char, or enum, got ", t_str(vt)));
                         }
                     }
@@ -4310,9 +4311,9 @@ void ck_stmt(Checker* c, Stmt* s) {
         case StContinue:
         {
             {
-                if ((c->loop_depth == 0)) {
+                if (c->loop_depth == 0) {
                     const char* word = "break";
-                    if ((s->kind == StContinue)) {
+                    if (s->kind == StContinue) {
                         word = "continue";
                     }
                     ck_error(c, s->line, s->col, str_concat(str_concat("'", word), "' is only allowed inside a loop"));
@@ -4342,8 +4343,8 @@ void ck_func(Checker* c, Decl* f, int64_t fi) {
 int64_t ck_own_struct(Checker* c, const char* name, int64_t module) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->struct_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((StructInfo*)(c->structs).data)[k].name, name) && (((StructInfo*)(c->structs).data)[k].module == module))) {
+    while (k >= 0) {
+        if (str_eq(((StructInfo*)(c->structs).data)[k].name, name) && (((StructInfo*)(c->structs).data)[k].module == module)) {
             found = k;
         }
         k = idx_next((&c->struct_idx), k);
@@ -4354,8 +4355,8 @@ int64_t ck_own_struct(Checker* c, const char* name, int64_t module) {
 int64_t ck_own_func(Checker* c, const char* name, int64_t module) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->func_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((FuncInfo*)(c->funcs).data)[k].name, name) && (((FuncInfo*)(c->funcs).data)[k].module == module))) {
+    while (k >= 0) {
+        if (str_eq(((FuncInfo*)(c->funcs).data)[k].name, name) && (((FuncInfo*)(c->funcs).data)[k].module == module)) {
             found = k;
         }
         k = idx_next((&c->func_idx), k);
@@ -4366,8 +4367,8 @@ int64_t ck_own_func(Checker* c, const char* name, int64_t module) {
 int64_t ck_own_enum(Checker* c, const char* name, int64_t module) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->enum_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((EnumInfo*)(c->enums).data)[k].name, name) && (((EnumInfo*)(c->enums).data)[k].module == module))) {
+    while (k >= 0) {
+        if (str_eq(((EnumInfo*)(c->enums).data)[k].name, name) && (((EnumInfo*)(c->enums).data)[k].module == module)) {
             found = k;
         }
         k = idx_next((&c->enum_idx), k);
@@ -4378,8 +4379,8 @@ int64_t ck_own_enum(Checker* c, const char* name, int64_t module) {
 int64_t ck_own_member(Checker* c, const char* name, int64_t module) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->member_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((EnumMember*)(c->enum_members).data)[k].member, name) && (((EnumMember*)(c->enum_members).data)[k].module == module))) {
+    while (k >= 0) {
+        if (str_eq(((EnumMember*)(c->enum_members).data)[k].member, name) && (((EnumMember*)(c->enum_members).data)[k].module == module)) {
             found = k;
         }
         k = idx_next((&c->member_idx), k);
@@ -4391,7 +4392,7 @@ const char* ck_c_ident(const char* s) {
     const char* r = "";
     for (int64_t i = 0; i < str_len(s); i++) {
         char ch = s[i];
-        if ((((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9'))) || (ch == '_'))) {
+        if (((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9'))) || (ch == '_')) {
             r = str_concat(r, str_sub(s, i, 1));
         } else {
             r = str_concat(r, "_");
@@ -4405,8 +4406,8 @@ const char* ck_cname(Checker* c, const char* name, int64_t module, bool exported
         return name;
     }
     int64_t k = idx_first((&c->name_idx), name);
-    while ((k >= 0)) {
-        if ((str_eq(((NameEntry*)(c->names).data)[k].name, name) && (((NameEntry*)(c->names).data)[k].module != module))) {
+    while (k >= 0) {
+        if (str_eq(((NameEntry*)(c->names).data)[k].name, name) && (((NameEntry*)(c->names).data)[k].module != module)) {
             return str_concat(str_concat(ck_c_ident(((Module*)(c->mods).data)[module].name), "__"), name);
         }
         k = idx_next((&c->name_idx), k);
@@ -4426,24 +4427,24 @@ void ck_name_conflicts(Checker* c) {
         Array dups = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
         int64_t conflict = (0 - 1);
         int64_t k = idx_first((&c->name_idx), b.name);
-        while ((k >= 0)) {
+        while (k >= 0) {
             NameEntry o = ((NameEntry*)(c->names).data)[k];
-            if (((str_eq(o.name, b.name) && (o.module != b.module)) && o.exported)) {
-                if (((k < j) && b.exported)) {
+            if ((str_eq(o.name, b.name) && (o.module != b.module)) && o.exported) {
+                if ((k < j) && b.exported) {
                     ({ int64_t _e = k; arr_push(&(dups), &_e); });
                 }
-                if (((!b.exported) && ck_sees(c, o.module, true))) {
+                if ((!b.exported) && ck_sees(c, o.module, true)) {
                     conflict = k;
                 }
             }
             k = idx_next((&c->name_idx), k);
         }
         int64_t d = (dups.len - 1);
-        while ((d >= 0)) {
+        while (d >= 0) {
             ck_error(c, b.line, b.col, str_concat(str_concat(str_concat(str_concat("'", b.name), "' is also exported by "), ((Module*)(c->mods).data)[((NameEntry*)(c->names).data)[((int64_t*)(dups).data)[d]].module].file), " (exported names must be unique across the program)"));
             d -= 1;
         }
-        if ((conflict >= 0)) {
+        if (conflict >= 0) {
             ck_error(c, b.line, b.col, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("'", b.name), "' conflicts with the '"), b.name), "' exported by "), ((Module*)(c->mods).data)[((NameEntry*)(c->names).data)[conflict].module].file), ", which this file imports"));
         }
     }
@@ -4451,12 +4452,12 @@ void ck_name_conflicts(Checker* c) {
 
 bool ck_check(Checker* c, Program prog) {
     c->mods = prog.modules;
-    if ((c->mods.len == 0)) {
+    if (c->mods.len == 0) {
         ({ Module _e = new_module(c->file, c->file, c->file); arr_push(&(c->mods), &_e); });
     }
     ck_visibility(c);
     for (int64_t i = 0; i < prog.decls.len; i++) {
-        if ((((Decl**)(prog.decls).data)[i]->kind == DcInclude)) {
+        if (((Decl**)(prog.decls).data)[i]->kind == DcInclude) {
             c->has_foreign = true;
         }
     }
@@ -4473,8 +4474,8 @@ bool ck_check(Checker* c, Program prog) {
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         c->cur = d->module;
-        if ((d->kind == DcEnum)) {
-            if ((ck_own_enum(c, d->name, d->module) >= 0)) {
+        if (d->kind == DcEnum) {
+            if (ck_own_enum(c, d->name, d->module) >= 0) {
                 ck_error(c, d->line, d->col, str_concat(str_concat("enum '", d->name), "' is already defined"));
             }
             idx_add((&c->enum_idx), d->name, c->enums.len);
@@ -4482,7 +4483,7 @@ bool ck_check(Checker* c, Program prog) {
             ck_note_name(c, d->name, d->module, d->is_exported, d->line, d->col);
             for (int64_t m = 0; m < d->members.len; m++) {
                 const char* mem = ((const char**)(d->members).data)[m];
-                if ((ck_own_member(c, mem, d->module) >= 0)) {
+                if (ck_own_member(c, mem, d->module) >= 0) {
                     ck_error(c, d->line, d->col, str_concat(str_concat("enum member '", mem), "' is already defined"));
                 }
                 idx_add((&c->member_idx), mem, c->enum_members.len);
@@ -4490,8 +4491,8 @@ bool ck_check(Checker* c, Program prog) {
                 ck_note_name(c, mem, d->module, d->is_exported, d->line, d->col);
             }
         } else 
-        if ((d->kind == DcStruct)) {
-            if ((ck_own_struct(c, d->name, d->module) >= 0)) {
+        if (d->kind == DcStruct) {
+            if (ck_own_struct(c, d->name, d->module) >= 0) {
                 ck_error(c, d->line, d->col, str_concat(str_concat("struct '", d->name), "' is already defined"));
             }
             Array ff = ({ Array _a = arr_make(sizeof(FieldInfo)); _a; });
@@ -4499,8 +4500,8 @@ bool ck_check(Checker* c, Program prog) {
             ({ StructInfo _e = (StructInfo){d->name, ff, d->module, d->is_exported, d->name}; arr_push(&(c->structs), &_e); });
             ck_note_name(c, d->name, d->module, d->is_exported, d->line, d->col);
         } else 
-        if ((d->kind == DcFunc)) {
-            if ((ck_own_func(c, d->name, d->module) >= 0)) {
+        if (d->kind == DcFunc) {
+            if (ck_own_func(c, d->name, d->module) >= 0) {
                 ck_error(c, d->line, d->col, str_concat(str_concat("function '", d->name), "' is already defined"));
             }
             Array ps = ({ Array _a = arr_make(sizeof(Type*)); _a; });
@@ -4530,7 +4531,7 @@ bool ck_check(Checker* c, Program prog) {
     ck_name_conflicts(c);
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcStruct)) {
+        if (d->kind == DcStruct) {
             c->cur = d->module;
             int64_t si = ck_own_struct(c, d->name, d->module);
             for (int64_t fld = 0; fld < d->fields.len; fld++) {
@@ -4540,7 +4541,7 @@ bool ck_check(Checker* c, Program prog) {
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcFunc)) {
+        if (d->kind == DcFunc) {
             c->cur = d->module;
             int64_t fi = ck_own_func(c, d->name, d->module);
             for (int64_t pi = 0; pi < d->params.len; pi++) {
@@ -4551,7 +4552,7 @@ bool ck_check(Checker* c, Program prog) {
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcFunc)) {
+        if (d->kind == DcFunc) {
             c->cur = d->module;
             ck_func(c, d, ck_own_func(c, d->name, d->module));
         }
@@ -4565,13 +4566,13 @@ bool ck_check(Checker* c, Program prog) {
     ck_pop(c);
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcFunc)) {
+        if (d->kind == DcFunc) {
             d->name = ((FuncInfo*)(c->funcs).data)[ck_own_func(c, d->name, d->module)].cname;
         }
-        if ((d->kind == DcStruct)) {
+        if (d->kind == DcStruct) {
             d->name = ((StructInfo*)(c->structs).data)[ck_own_struct(c, d->name, d->module)].cname;
         }
-        if ((d->kind == DcEnum)) {
+        if (d->kind == DcEnum) {
             for (int64_t m = 0; m < d->members.len; m++) {
                 ((const char**)(d->members).data)[m] = ((EnumMember*)(c->enum_members).data)[ck_own_member(c, ((const char**)(d->members).data)[m], d->module)].cname;
             }
@@ -4605,7 +4606,7 @@ Codegen new_codegen(void) {
 const char* region_frees(Codegen* cg, int64_t from, int64_t ind) {
     const char* r = "";
     int64_t k = (cg->regions.len - 1);
-    while ((k >= from)) {
+    while (k >= from) {
         r = str_concat(str_concat(str_concat(str_concat(r, cg_indent(ind)), "arena_free(&"), ((const char**)(cg->regions).data)[k]), ");\n");
         k -= 1;
     }
@@ -4623,7 +4624,7 @@ void loop_enter(Codegen* cg) {
 const char* loop_leave(Codegen* cg, int64_t ind) {
     int64_t top = (cg->loop_labels.len - 1);
     const char* label = "";
-    if ((((int64_t*)(cg->loop_label_used).data)[top] == 1)) {
+    if (((int64_t*)(cg->loop_label_used).data)[top] == 1) {
         label = str_concat(str_concat(str_concat(cg_indent(ind), "strata_break_"), str_from_int(((int64_t*)(cg->loop_labels).data)[top])), ": ;\n");
     }
     cg->loop_regions.len = top;
@@ -4641,10 +4642,46 @@ const char* join_pieces(Array pieces) {
     return strata_join((&pieces));
 }
 
+const char* paren_cond(const char* c) {
+    int64_t n = str_len(c);
+    if (((n < 2) || (c[0] != '(')) || (c[(n - 1)] != ')')) {
+        return str_concat(str_concat("(", c), ")");
+    }
+    int64_t depth = 0;
+    int64_t i = 0;
+    bool wraps = true;
+    while ((i < (n - 1)) && wraps) {
+        char ch = c[i];
+        if ((ch == '"') || (ch == '\'')) {
+            i += 1;
+            while ((i < (n - 1)) && (c[i] != ch)) {
+                if (c[i] == '\\') {
+                    i += 1;
+                }
+                i += 1;
+            }
+        } else 
+        if (ch == '(') {
+            depth += 1;
+        } else 
+        if (ch == ')') {
+            depth -= 1;
+            if (depth == 0) {
+                wraps = false;
+            }
+        }
+        i += 1;
+    }
+    if (wraps) {
+        return c;
+    }
+    return str_concat(str_concat("(", c), ")");
+}
+
 const char* join_with(Array pieces, const char* sep) {
     Array out = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 0; i < pieces.len; i++) {
-        if ((i > 0)) {
+        if (i > 0) {
             ({ const char* _e = sep; arr_push(&(out), &_e); });
         }
         ({ const char* _e = ((const char**)(pieces).data)[i]; arr_push(&(out), &_e); });
@@ -4653,7 +4690,7 @@ const char* join_with(Array pieces, const char* sep) {
 }
 
 const char* cg_indent(int64_t n) {
-    if ((n > 32)) {
+    if (n > 32) {
         n = 32;
     }
     Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
@@ -4667,16 +4704,16 @@ const char* cg_strip_us(const char* s) {
     int64_t n = str_len(s);
     bool any = false;
     for (int64_t i = 0; i < n; i++) {
-        if ((s[i] == '_')) {
+        if (s[i] == '_') {
             any = true;
         }
     }
-    if ((!any)) {
+    if (!any) {
         return s;
     }
     Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 0; i < n; i++) {
-        if ((s[i] != '_')) {
+        if (s[i] != '_') {
             ({ const char* _e = str_sub(s, i, 1); arr_push(&(p), &_e); });
         }
     }
@@ -4687,9 +4724,9 @@ const char* cg_escape(const char* s) {
     int64_t n = str_len(s);
     bool any = false;
     int64_t k = 0;
-    while (((k + 1) < n)) {
-        if ((s[k] == '\\')) {
-            if ((s[(k + 1)] == '0')) {
+    while ((k + 1) < n) {
+        if (s[k] == '\\') {
+            if (s[(k + 1)] == '0') {
                 any = true;
             }
             k += 2;
@@ -4697,14 +4734,14 @@ const char* cg_escape(const char* s) {
             k += 1;
         }
     }
-    if ((!any)) {
+    if (!any) {
         return s;
     }
     Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     int64_t i = 0;
-    while ((i < n)) {
-        if (((s[i] == '\\') && ((i + 1) < n))) {
-            if ((s[(i + 1)] == '0')) {
+    while (i < n) {
+        if ((s[i] == '\\') && ((i + 1) < n)) {
+            if (s[(i + 1)] == '0') {
                 ({ const char* _e = "\\000"; arr_push(&(p), &_e); });
             } else {
                 ({ const char* _e = str_sub(s, i, 2); arr_push(&(p), &_e); });
@@ -4758,7 +4795,7 @@ const char* cname(const char* n) {
     if (str_eq(n, "u32")) {
         return "uint32_t";
     }
-    if ((str_eq(n, "u64") || str_eq(n, "uint"))) {
+    if (str_eq(n, "u64") || str_eq(n, "uint")) {
         return "uint64_t";
     }
     if (str_eq(n, "f32")) {
@@ -4771,7 +4808,7 @@ const char* cname(const char* n) {
 }
 
 const char* ty_to_c(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return "void";
     }
     switch (t->kind) {
@@ -4822,10 +4859,10 @@ int64_t cg_vec_size(const char* n) {
 }
 
 bool cg_is_vec_rt(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return false;
     }
-    if ((t->kind != TyNamed)) {
+    if (t->kind != TyNamed) {
         return false;
     }
     return cg_is_vec_name(t->name);
@@ -4839,77 +4876,77 @@ const char* cg_vec_name_rt(TypeNode* t) {
 }
 
 bool cg_is_mat_rt(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return false;
     }
     return ((t->kind == TyNamed) && str_eq(t->name, "mat4"));
 }
 
 bool cg_is_quat_rt(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return false;
     }
     return ((t->kind == TyNamed) && str_eq(t->name, "quat"));
 }
 
 bool cg_is_str_rt(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return false;
     }
     return ((t->kind == TyNamed) && str_eq(t->name, "string"));
 }
 
 bool cg_is_dynarr_rt(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return false;
     }
     return (t->kind == TyDynArray);
 }
 
 const char* cg_dynarr_elem(TypeNode* t) {
-    if ((cg_is_dynarr_rt(t) && (t->elem != 0))) {
+    if (cg_is_dynarr_rt(t) && (t->elem != 0)) {
         return ty_to_c(t->elem);
     }
     return "char";
 }
 
 const char* gen_call(Codegen* cg, Expr* e) {
-    if ((((e->a->kind == ExName) && str_eq(e->a->text, "arena")) && (e->items.len == 0))) {
+    if (((e->a->kind == ExName) && str_eq(e->a->text, "arena")) && (e->items.len == 0)) {
         return "arena_make()";
     }
-    if (((((e->a->kind == ExField) && str_eq(e->a->field, "new")) && (e->items.len == 1)) && (((Expr**)(e->items).data)[0]->kind == ExName))) {
+    if ((((e->a->kind == ExField) && str_eq(e->a->field, "new")) && (e->items.len == 1)) && (((Expr**)(e->items).data)[0]->kind == ExName)) {
         const char* recv = gen_expr(cg, e->a->a);
         const char* tname = cname(((Expr**)(e->items).data)[0]->text);
         return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("(", tname), "*)arena_alloc(&"), recv), ", sizeof("), tname), "))");
     }
-    if (((((e->a->kind == ExField) && str_eq(e->a->field, "push")) && (e->items.len == 1)) && cg_is_dynarr_rt(e->a->a->rtype))) {
+    if ((((e->a->kind == ExField) && str_eq(e->a->field, "push")) && (e->items.len == 1)) && cg_is_dynarr_rt(e->a->a->rtype)) {
         const char* elemc = cg_dynarr_elem(e->a->a->rtype);
         const char* recv = gen_expr(cg, e->a->a);
         const char* val = gen_expr(cg, ((Expr**)(e->items).data)[0]);
         return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("({ ", elemc), " _e = "), val), "; arr_push(&("), recv), "), &_e); })");
     }
-    if ((((e->a->kind == ExName) && str_eq(e->a->text, "print")) && (e->items.len == 1))) {
+    if (((e->a->kind == ExName) && str_eq(e->a->text, "print")) && (e->items.len == 1)) {
         Expr* arg = ((Expr**)(e->items).data)[0];
-        if ((arg->kind == ExStringLit)) {
+        if (arg->kind == ExStringLit) {
             return str_concat(str_concat("printf(\"%s\\n\", ", gen_expr(cg, arg)), ")");
         }
         if (cg_is_str_rt(arg->rtype)) {
             return str_concat(str_concat("printf(\"%s\\n\", ", gen_expr(cg, arg)), ")");
         }
-        if ((((arg->rtype != 0) && (arg->rtype->kind == TyNamed)) && ((str_eq(arg->rtype->name, "float") || str_eq(arg->rtype->name, "f32")) || str_eq(arg->rtype->name, "f64")))) {
+        if (((arg->rtype != 0) && (arg->rtype->kind == TyNamed)) && ((str_eq(arg->rtype->name, "float") || str_eq(arg->rtype->name, "f32")) || str_eq(arg->rtype->name, "f64"))) {
             return str_concat(str_concat("printf(\"%g\\n\", (double)(", gen_expr(cg, arg)), "))");
         }
         return str_concat(str_concat("printf(\"%lld\\n\", (long long)(", gen_expr(cg, arg)), "))");
     }
-    if ((e->a->kind == ExName)) {
+    if (e->a->kind == ExName) {
         const char* nm = e->a->text;
         if (cg_is_vec_name(nm)) {
             int64_t n = cg_vec_size(nm);
             const char* s = str_concat(str_concat("(", nm), "){");
-            if (((e->items.len == 1) && (n > 1))) {
+            if ((e->items.len == 1) && (n > 1)) {
                 const char* v = gen_expr(cg, ((Expr**)(e->items).data)[0]);
                 for (int64_t i = 0; i < n; i++) {
-                    if ((i > 0)) {
+                    if (i > 0) {
                         s = str_concat(s, ", ");
                     }
                     s = str_concat(s, v);
@@ -4923,57 +4960,57 @@ const char* gen_call(Codegen* cg, Expr* e) {
             }
             return str_concat(s, "}");
         }
-        if ((str_eq(nm, "dot") && (e->items.len == 2))) {
+        if (str_eq(nm, "dot") && (e->items.len == 2)) {
             const char* vn = cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype);
-            if ((str_len(vn) == 0)) {
+            if (str_len(vn) == 0) {
                 vn = cg_vec_name_rt(((Expr**)(e->items).data)[1]->rtype);
             }
             return str_concat(str_concat(str_concat(str_concat(str_concat(vn, "_dot("), gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
         }
-        if ((str_eq(nm, "cross") && (e->items.len == 2))) {
+        if (str_eq(nm, "cross") && (e->items.len == 2)) {
             return str_concat(str_concat(str_concat(str_concat("vec3_cross(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
         }
-        if ((str_eq(nm, "length") && (e->items.len == 1))) {
+        if (str_eq(nm, "length") && (e->items.len == 1)) {
             return str_concat(str_concat(str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_length("), gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
-        if ((str_eq(nm, "normalize") && (e->items.len == 1))) {
+        if (str_eq(nm, "normalize") && (e->items.len == 1)) {
             return str_concat(str_concat(str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_normalize("), gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
-        if ((str_eq(nm, "alloc") && (e->items.len == 1))) {
+        if (str_eq(nm, "alloc") && (e->items.len == 1)) {
             const char* ct = "int64_t";
-            if ((((Expr**)(e->items).data)[0]->rtype != 0)) {
+            if (((Expr**)(e->items).data)[0]->rtype != 0) {
                 ct = ty_to_c(((Expr**)(e->items).data)[0]->rtype);
             }
             return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("({ ", ct), " _v = "), gen_expr(cg, ((Expr**)(e->items).data)[0])), "; "), ct), "* _p = ("), ct), "*)arena_alloc(strata_heap(), sizeof("), ct), ")); *_p = _v; _p; })");
         }
-        if ((str_eq(nm, "substr") && (e->items.len == 3))) {
+        if (str_eq(nm, "substr") && (e->items.len == 3)) {
             return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("str_sub(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[2])), ")");
         }
-        if ((str_eq(nm, "int_to_str") && (e->items.len == 1))) {
+        if (str_eq(nm, "int_to_str") && (e->items.len == 1)) {
             return str_concat(str_concat("str_from_int(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
-        if ((str_eq(nm, "read_file") && (e->items.len == 1))) {
+        if (str_eq(nm, "read_file") && (e->items.len == 1)) {
             return str_concat(str_concat("strata_read_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
-        if ((str_eq(nm, "write_file") && (e->items.len == 2))) {
+        if (str_eq(nm, "write_file") && (e->items.len == 2)) {
             return str_concat(str_concat(str_concat(str_concat("strata_write_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
         }
-        if ((str_eq(nm, "args") && (e->items.len == 0))) {
+        if (str_eq(nm, "args") && (e->items.len == 0)) {
             return "strata_args()";
         }
-        if ((str_eq(nm, "cstr") && (e->items.len == 1))) {
+        if (str_eq(nm, "cstr") && (e->items.len == 1)) {
             return str_concat(str_concat("(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
-        if ((str_eq(nm, "min") && (e->items.len == 2))) {
+        if (str_eq(nm, "min") && (e->items.len == 2)) {
             return str_concat(str_concat(str_concat(str_concat("sp_min(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
         }
-        if ((str_eq(nm, "max") && (e->items.len == 2))) {
+        if (str_eq(nm, "max") && (e->items.len == 2)) {
             return str_concat(str_concat(str_concat(str_concat("sp_max(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
         }
-        if ((str_eq(nm, "clamp") && (e->items.len == 3))) {
+        if (str_eq(nm, "clamp") && (e->items.len == 3)) {
             return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("sp_clamp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[2])), ")");
         }
-        if ((str_eq(nm, "lerp") && (e->items.len == 3))) {
+        if (str_eq(nm, "lerp") && (e->items.len == 3)) {
             return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("sp_lerp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[2])), ")");
         }
     }
@@ -4986,14 +5023,14 @@ const char* gen_call(Codegen* cg, Expr* e) {
 }
 
 BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
-    if ((((cg_is_mat_rt(e->a->rtype) || cg_is_quat_rt(e->a->rtype)) || cg_is_mat_rt(e->b->rtype)) || cg_is_quat_rt(e->b->rtype))) {
-        if ((cg_is_mat_rt(e->a->rtype) && cg_is_mat_rt(e->b->rtype))) {
+    if (((cg_is_mat_rt(e->a->rtype) || cg_is_quat_rt(e->a->rtype)) || cg_is_mat_rt(e->b->rtype)) || cg_is_quat_rt(e->b->rtype)) {
+        if (cg_is_mat_rt(e->a->rtype) && cg_is_mat_rt(e->b->rtype)) {
             return (BinParts){"mat4_mul(", str_concat(str_concat(", ", b), ")")};
         }
-        if ((cg_is_mat_rt(e->a->rtype) && cg_is_vec_rt(e->b->rtype))) {
+        if (cg_is_mat_rt(e->a->rtype) && cg_is_vec_rt(e->b->rtype)) {
             return (BinParts){"mat4_mul_vec4(", str_concat(str_concat(", ", b), ")")};
         }
-        if ((cg_is_quat_rt(e->a->rtype) && cg_is_quat_rt(e->b->rtype))) {
+        if (cg_is_quat_rt(e->a->rtype) && cg_is_quat_rt(e->b->rtype)) {
             return (BinParts){"quat_mul(", str_concat(str_concat(", ", b), ")")};
         }
         cg->had_error = true;
@@ -5001,9 +5038,9 @@ BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
     }
     bool av = cg_is_vec_rt(e->a->rtype);
     bool bv = cg_is_vec_rt(e->b->rtype);
-    if ((av || bv)) {
+    if (av || bv) {
         const char* vn = cg_vec_name_rt(e->a->rtype);
-        if ((str_len(vn) == 0)) {
+        if (str_len(vn) == 0) {
             vn = cg_vec_name_rt(e->b->rtype);
         }
         if (str_eq(e->text, "+")) {
@@ -5013,7 +5050,7 @@ BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
             return (BinParts){str_concat(vn, "_sub("), str_concat(str_concat(", ", b), ")")};
         }
         if (str_eq(e->text, "*")) {
-            if ((av && bv)) {
+            if (av && bv) {
                 return (BinParts){str_concat(vn, "_mul("), str_concat(str_concat(", ", b), ")")};
             }
             if (av) {
@@ -5024,7 +5061,7 @@ BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
         cg->had_error = true;
         return (BinParts){"", ""};
     }
-    if ((cg_is_str_rt(e->a->rtype) || cg_is_str_rt(e->b->rtype))) {
+    if (cg_is_str_rt(e->a->rtype) || cg_is_str_rt(e->b->rtype)) {
         if (str_eq(e->text, "+")) {
             return (BinParts){"str_concat(", str_concat(str_concat(", ", b), ")")};
         }
@@ -5041,7 +5078,7 @@ BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
 }
 
 const char* gen_expr(Codegen* cg, Expr* e) {
-    if ((e == 0)) {
+    if (e == 0) {
         return "0";
     }
     switch (e->kind) {
@@ -5098,7 +5135,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                 }
                 Array spine = ({ Array _a = arr_make(sizeof(Expr*)); _a; });
                 Expr* x = e;
-                while (((x->kind == ExBinary) && (!str_eq(x->text, "..")))) {
+                while ((x->kind == ExBinary) && (!str_eq(x->text, ".."))) {
                     ({ Expr* _e = x; arr_push(&(spine), &_e); });
                     x = x->a;
                 }
@@ -5106,7 +5143,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                 Array pre = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                 Array post = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                 int64_t k = (spine.len - 1);
-                while ((k >= 0)) {
+                while (k >= 0) {
                     BinParts bp = gen_binary(cg, ((Expr**)(spine).data)[k], gen_expr(cg, ((Expr**)(spine).data)[k]->b));
                     ({ const char* _e = bp.pre; arr_push(&(pre), &_e); });
                     ({ const char* _e = bp.post; arr_push(&(post), &_e); });
@@ -5114,7 +5151,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                 }
                 Array out = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                 int64_t m = (pre.len - 1);
-                while ((m >= 0)) {
+                while (m >= 0) {
                     ({ const char* _e = ((const char**)(pre).data)[m]; arr_push(&(out), &_e); });
                     m -= 1;
                 }
@@ -5134,21 +5171,21 @@ const char* gen_expr(Codegen* cg, Expr* e) {
         case ExField:
         {
             {
-                if ((cg_is_str_rt(e->a->rtype) && str_eq(e->field, "len"))) {
+                if (cg_is_str_rt(e->a->rtype) && str_eq(e->field, "len")) {
                     return str_concat(str_concat("str_len(", gen_expr(cg, e->a)), ")");
                 }
-                if ((cg_is_vec_rt(e->a->rtype) && (str_len(e->field) > 1))) {
+                if (cg_is_vec_rt(e->a->rtype) && (str_len(e->field) > 1)) {
                     const char* base = gen_expr(cg, e->a);
                     const char* vt = "vec2";
-                    if ((str_len(e->field) == 3)) {
+                    if (str_len(e->field) == 3) {
                         vt = "vec3";
                     }
-                    if ((str_len(e->field) == 4)) {
+                    if (str_len(e->field) == 4) {
                         vt = "vec4";
                     }
                     const char* s = str_concat(str_concat("(", vt), "){");
                     for (int64_t i = 0; i < str_len(e->field); i++) {
-                        if ((i > 0)) {
+                        if (i > 0) {
                             s = str_concat(s, ", ");
                         }
                         s = str_concat(str_concat(str_concat(str_concat(s, "("), base), ")."), str_sub(e->field, i, 1));
@@ -5156,7 +5193,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                     return str_concat(s, "}");
                 }
                 const char* op = ".";
-                if (((e->a->rtype != 0) && (e->a->rtype->kind == TyPointer))) {
+                if ((e->a->rtype != 0) && (e->a->rtype->kind == TyPointer)) {
                     op = "->";
                 }
                 return str_concat(str_concat(gen_expr(cg, e->a), op), e->field);
@@ -5178,7 +5215,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
         {
             {
                 const char* elemc = "int64_t";
-                if ((((e->rtype != 0) && (e->rtype->kind == TyDynArray)) && (e->rtype->elem != 0))) {
+                if (((e->rtype != 0) && (e->rtype->kind == TyDynArray)) && (e->rtype->elem != 0)) {
                     elemc = ty_to_c(e->rtype->elem);
                 }
                 const char* s = str_concat(str_concat("({ Array _a = arr_make(sizeof(", elemc), "));");
@@ -5225,7 +5262,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
 
 void gen_braced(Codegen* cg, int64_t ind, Stmt* blk) {
     cg_out(cg, "{\n");
-    if (((blk != 0) && (blk->kind == StBlock))) {
+    if ((blk != 0) && (blk->kind == StBlock)) {
         for (int64_t i = 0; i < blk->stmts.len; i++) {
             gen_stmt(cg, (ind + 1), ((Stmt**)(blk->stmts).data)[i]);
         }
@@ -5234,7 +5271,7 @@ void gen_braced(Codegen* cg, int64_t ind, Stmt* blk) {
 }
 
 void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
-    if ((s == 0)) {
+    if (s == 0) {
         return;
     }
     switch (s->kind) {
@@ -5249,17 +5286,17 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         {
             {
                 const char* ct = "__auto_type";
-                if ((s->type != 0)) {
+                if (s->type != 0) {
                     ct = ty_to_c(s->type);
                 }
                 const char* head = "";
                 if (s->is_const) {
                     head = "const ";
                 }
-                if ((s->init != 0)) {
+                if (s->init != 0) {
                     cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), " = "), gen_expr(cg, s->init)), ";\n"));
                 } else 
-                if (((s->type != 0) && (s->type->kind == TyDynArray))) {
+                if ((s->type != 0) && (s->type->kind == TyDynArray)) {
                     cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "Array "), s->name), " = arr_make(sizeof("), ty_to_c(s->type->elem)), "));\n"));
                 } else {
                     cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), ";\n"));
@@ -5269,14 +5306,14 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         }
         case StReturn:
         {
-            if ((cg->regions.len == 0)) {
-                if ((s->expr != 0)) {
+            if (cg->regions.len == 0) {
+                if (s->expr != 0) {
                     cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "return "), gen_expr(cg, s->expr)), ";\n"));
                 } else {
                     cg_out(cg, str_concat(cg_indent(ind), "return;\n"));
                 }
             } else 
-            if ((s->expr != 0)) {
+            if (s->expr != 0) {
                 cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "{ "), cg->ret_c), " _ret = "), gen_expr(cg, s->expr)), ";\n"));
                 cg_out(cg, region_frees(cg, 0, (ind + 1)));
                 cg_out(cg, str_concat(cg_indent((ind + 1)), "return _ret; }\n"));
@@ -5291,10 +5328,10 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
             {
                 int64_t top = (cg->loop_labels.len - 1);
                 cg_out(cg, region_frees(cg, ((int64_t*)(cg->loop_regions).data)[top], ind));
-                if ((s->kind == StContinue)) {
+                if (s->kind == StContinue) {
                     cg_out(cg, str_concat(cg_indent(ind), "continue;\n"));
                 } else 
-                if ((cg->switch_depth > ((int64_t*)(cg->loop_switches).data)[top])) {
+                if (cg->switch_depth > ((int64_t*)(cg->loop_switches).data)[top]) {
                     ((int64_t*)(cg->loop_label_used).data)[top] = 1;
                     cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "goto strata_break_"), str_from_int(((int64_t*)(cg->loop_labels).data)[top])), ";\n"));
                 } else {
@@ -5311,7 +5348,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         case StAssign:
         {
             {
-                if (((!str_eq(s->op, "=")) && cg_is_vec_rt(s->target->rtype))) {
+                if ((!str_eq(s->op, "=")) && cg_is_vec_rt(s->target->rtype)) {
                     const char* vn = cg_vec_name_rt(s->target->rtype);
                     const char* tgt = gen_expr(cg, s->target);
                     const char* val = gen_expr(cg, s->value);
@@ -5340,11 +5377,11 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         }
         case StIf:
         {
-            cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "if ("), gen_expr(cg, s->cond)), ") "));
+            cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "if "), paren_cond(gen_expr(cg, s->cond))), " "));
             gen_braced(cg, ind, s->then_block);
-            if ((s->else_branch != 0)) {
+            if (s->else_branch != 0) {
                 cg_out(cg, " else ");
-                if ((s->else_branch->kind == StIf)) {
+                if (s->else_branch->kind == StIf) {
                     cg_out(cg, "\n");
                     gen_stmt(cg, ind, s->else_branch);
                 } else {
@@ -5358,7 +5395,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         }
         case StWhile:
         {
-            cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "while ("), gen_expr(cg, s->cond)), ") "));
+            cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "while "), paren_cond(gen_expr(cg, s->cond))), " "));
             loop_enter(cg);
             gen_braced(cg, ind, s->body);
             cg_out(cg, "\n");
@@ -5367,7 +5404,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         }
         case StForIn:
         {
-            if ((((s->iter != 0) && (s->iter->kind == ExBinary)) && str_eq(s->iter->text, ".."))) {
+            if (((s->iter != 0) && (s->iter->kind == ExBinary)) && str_eq(s->iter->text, "..")) {
                 const char* lo = gen_expr(cg, s->iter->a);
                 const char* hi = gen_expr(cg, s->iter->b);
                 cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "for (int64_t "), s->name), " = "), lo), "; "), s->name), " < "), hi), "; "), s->name), "++) "));
@@ -5383,7 +5420,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                 cg_out(cg, str_concat(cg_indent((ind + 1)), "for (int64_t _i = 0; _i < _arr.len; _i++) {\n"));
                 cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent((ind + 2)), elemc), " "), s->name), " = (("), elemc), "*)_arr.data)[_i];\n"));
                 loop_enter(cg);
-                if (((s->body != 0) && (s->body->kind == StBlock))) {
+                if ((s->body != 0) && (s->body->kind == StBlock)) {
                     for (int64_t i = 0; i < s->body->stmts.len; i++) {
                         gen_stmt(cg, (ind + 2), ((Stmt**)(s->body->stmts).data)[i]);
                     }
@@ -5412,7 +5449,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     }
                     cg_out(cg, str_concat(cg_indent((ind + 1)), "{\n"));
                 }
-                if (((sc.body != 0) && (sc.body->kind == StBlock))) {
+                if ((sc.body != 0) && (sc.body->kind == StBlock)) {
                     for (int64_t j = 0; j < sc.body->stmts.len; j++) {
                         gen_stmt(cg, (ind + 2), ((Stmt**)(sc.body->stmts).data)[j]);
                     }
@@ -5428,16 +5465,16 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         {
             {
                 const char* rname = s->name;
-                if ((str_len(rname) == 0)) {
+                if (str_len(rname) == 0) {
                     rname = "_region";
-                    if ((cg->regions.len > 0)) {
+                    if (cg->regions.len > 0) {
                         rname = str_concat("_region", str_from_int((cg->regions.len + 1)));
                     }
                 }
                 cg_out(cg, str_concat(cg_indent(ind), "{\n"));
                 cg_out(cg, str_concat(str_concat(str_concat(cg_indent((ind + 1)), "Arena "), rname), " = arena_make();\n"));
                 ({ const char* _e = rname; arr_push(&(cg->regions), &_e); });
-                if (((s->body != 0) && (s->body->kind == StBlock))) {
+                if ((s->body != 0) && (s->body->kind == StBlock)) {
                     for (int64_t i = 0; i < s->body->stmts.len; i++) {
                         gen_stmt(cg, (ind + 1), ((Stmt**)(s->body->stmts).data)[i]);
                     }
@@ -5457,7 +5494,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
 
 const char* func_sig(Decl* d) {
     const char* s = str_concat(str_concat(str_concat(ty_to_c(d->ret), " "), d->name), "(");
-    if ((d->params.len == 0)) {
+    if (d->params.len == 0) {
         s = str_concat(s, "void");
     } else {
         Array ps = ({ Array _a = arr_make(sizeof(const char*)); _a; });
@@ -5492,7 +5529,7 @@ void gen_includes(Codegen* cg, Program prog) {
     cg_out(cg, "#include <sprelude.h>\n");
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcInclude)) {
+        if (d->kind == DcInclude) {
             if (d->is_system) {
                 cg_out(cg, str_concat(str_concat("#include <", d->path), ">\n"));
             } else {
@@ -5509,10 +5546,10 @@ void gen_includes(Codegen* cg, Program prog) {
 void gen_types(Codegen* cg, Program prog) {
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcEnum)) {
+        if (d->kind == DcEnum) {
             cg_out(cg, "typedef enum {");
             for (int64_t m = 0; m < d->members.len; m++) {
-                if ((m > 0)) {
+                if (m > 0) {
                     cg_out(cg, ",");
                 }
                 cg_out(cg, str_concat(" ", ((const char**)(d->members).data)[m]));
@@ -5522,13 +5559,13 @@ void gen_types(Codegen* cg, Program prog) {
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcStruct)) {
+        if (d->kind == DcStruct) {
             cg_out(cg, str_concat(str_concat(str_concat(str_concat("typedef struct ", d->name), " "), d->name), ";\n"));
         }
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcStruct)) {
+        if (d->kind == DcStruct) {
             cg_out(cg, str_concat(str_concat("struct ", d->name), " {\n"));
             for (int64_t f = 0; f < d->fields.len; f++) {
                 cg_out(cg, str_concat(str_concat(str_concat(str_concat("    ", ty_to_c(((FieldDef*)(d->fields).data)[f].type)), " "), ((FieldDef*)(d->fields).data)[f].name), ";\n"));
@@ -5547,7 +5584,7 @@ void gen_function(Codegen* cg, Decl* d, const char* prefix) {
 }
 
 void gen_main(Codegen* cg, Program prog) {
-    if ((!cg->no_main)) {
+    if (!cg->no_main) {
         cg->ret_c = "int";
         cg_out(cg, "int main(int strata_argc_, char** strata_argv_) {\n");
         cg_out(cg, "    strata_set_args(strata_argc_, strata_argv_);\n");
@@ -5565,14 +5602,14 @@ const char* generate(Codegen* cg, Program prog) {
     gen_types(cg, prog);
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcFunc)) {
+        if (d->kind == DcFunc) {
             cg_out(cg, str_concat(str_concat(export_prefix(cg, d), func_sig(d)), ";\n"));
         }
     }
     cg_out(cg, "\n");
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcFunc)) {
+        if (d->kind == DcFunc) {
             gen_function(cg, d, export_prefix(cg, d));
         }
     }
@@ -5585,7 +5622,7 @@ const char* unit_name(int64_t m, const char* name) {
     int64_t n = str_len(name);
     for (int64_t i = 0; i < n; i++) {
         char ch = name[i];
-        if (((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9')))) {
+        if ((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9'))) {
             r = str_concat(r, str_sub(name, i, 1));
         } else {
             r = str_concat(r, "_");
@@ -5608,33 +5645,33 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
     for (int64_t m = 0; m < prog.modules.len; m++) {
         bool any = (m == 0);
         for (int64_t i = 0; i < prog.decls.len; i++) {
-            if (((((Decl**)(prog.decls).data)[i]->module == m) && (((Decl**)(prog.decls).data)[i]->kind == DcFunc))) {
+            if ((((Decl**)(prog.decls).data)[i]->module == m) && (((Decl**)(prog.decls).data)[i]->kind == DcFunc)) {
                 any = true;
             }
         }
         if (any) {
             cg->parts = no_parts();
             cg_out(cg, str_concat(str_concat("// Generated by stratac from ", ((Module*)(prog.modules).data)[m].file), ". Do not edit.\n"));
-            if ((m == 0)) {
+            if (m == 0) {
                 cg_out(cg, "#define STRATA_MAIN_TU 1\n#define STRATA_PROGRAM 1\n");
             }
             cg_out(cg, str_concat(str_concat("#include \"", header_name), "\"\n\n"));
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if ((((d->kind == DcFunc) && d->is_exported) && ((d->module == m) || module_sees(prog, m, d->module)))) {
+                if (((d->kind == DcFunc) && d->is_exported) && ((d->module == m) || module_sees(prog, m, d->module))) {
                     cg_out(cg, str_concat(str_concat(export_prefix(cg, d), func_sig(d)), ";\n"));
                 }
             }
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if ((((d->module == m) && (d->kind == DcFunc)) && (!d->is_exported))) {
+                if (((d->module == m) && (d->kind == DcFunc)) && (!d->is_exported)) {
                     cg_out(cg, str_concat(str_concat("static ", func_sig(d)), ";\n"));
                 }
             }
             cg_out(cg, "\n");
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if (((d->module == m) && (d->kind == DcFunc))) {
+                if ((d->module == m) && (d->kind == DcFunc)) {
                     if (d->is_exported) {
                         gen_function(cg, d, export_prefix(cg, d));
                     } else {
@@ -5642,7 +5679,7 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
                     }
                 }
             }
-            if ((m == 0)) {
+            if (m == 0) {
                 gen_main(cg, prog);
             }
             ({ const char* _e = unit_name(m, ((Module*)(prog.modules).data)[m].name); arr_push(&(names), &_e); });
@@ -5655,7 +5692,7 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
 bool module_sees(Program prog, int64_t m, int64_t v) {
     Module mod = ((Module*)(prog.modules).data)[m];
     for (int64_t i = 0; i < mod.visible.len; i++) {
-        if ((((int64_t*)(mod.visible).data)[i] == v)) {
+        if (((int64_t*)(mod.visible).data)[i] == v) {
             return true;
         }
     }
@@ -5668,20 +5705,20 @@ Array no_parts(void) {
 }
 
 bool header_uses_math(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return false;
     }
-    if ((t->kind != TyNamed)) {
+    if (t->kind != TyNamed) {
         return header_uses_math(t->elem);
     }
     return ((((str_eq(t->name, "vec2") || str_eq(t->name, "vec3")) || str_eq(t->name, "vec4")) || str_eq(t->name, "mat4")) || str_eq(t->name, "quat"));
 }
 
 bool header_uses_array(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return false;
     }
-    if ((t->kind == TyDynArray)) {
+    if (t->kind == TyDynArray) {
         return true;
     }
     return header_uses_array(t->elem);
@@ -5695,8 +5732,8 @@ const char* generate_header(Program prog, const char* guard, const char* source)
     bool arrays = false;
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (((d->module == 0) && d->is_exported)) {
-            if ((d->kind == DcFunc)) {
+        if ((d->module == 0) && d->is_exported) {
+            if (d->kind == DcFunc) {
                 math = (math || header_uses_math(d->ret));
                 arrays = (arrays || header_uses_array(d->ret));
                 for (int64_t p = 0; p < d->params.len; p++) {
@@ -5704,7 +5741,7 @@ const char* generate_header(Program prog, const char* guard, const char* source)
                     arrays = (arrays || header_uses_array(((Param*)(d->params).data)[p].type));
                 }
             }
-            if ((d->kind == DcStruct)) {
+            if (d->kind == DcStruct) {
                 for (int64_t f = 0; f < d->fields.len; f++) {
                     math = (math || header_uses_math(((FieldDef*)(d->fields).data)[f].type));
                     arrays = (arrays || header_uses_array(((FieldDef*)(d->fields).data)[f].type));
@@ -5721,7 +5758,7 @@ const char* generate_header(Program prog, const char* guard, const char* source)
     ({ const char* _e = "\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n"; arr_push(&(out), &_e); });
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((((d->module == 0) && d->is_exported) && (d->kind == DcEnum))) {
+        if (((d->module == 0) && d->is_exported) && (d->kind == DcEnum)) {
             Array ms = ({ Array _a = arr_make(sizeof(const char*)); _a; });
             for (int64_t m = 0; m < d->members.len; m++) {
                 ({ const char* _e = str_concat(" ", ((const char**)(d->members).data)[m]); arr_push(&(ms), &_e); });
@@ -5731,7 +5768,7 @@ const char* generate_header(Program prog, const char* guard, const char* source)
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((((d->module == 0) && d->is_exported) && (d->kind == DcStruct))) {
+        if (((d->module == 0) && d->is_exported) && (d->kind == DcStruct)) {
             ({ const char* _e = str_concat(str_concat(str_concat(str_concat("typedef struct ", d->name), " "), d->name), ";\n"); arr_push(&(out), &_e); });
             ({ const char* _e = str_concat(str_concat("struct ", d->name), " {\n"); arr_push(&(out), &_e); });
             for (int64_t f = 0; f < d->fields.len; f++) {
@@ -5743,7 +5780,7 @@ const char* generate_header(Program prog, const char* guard, const char* source)
     ({ const char* _e = "\n"; arr_push(&(out), &_e); });
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((((d->module == 0) && d->is_exported) && (d->kind == DcFunc))) {
+        if (((d->module == 0) && d->is_exported) && (d->kind == DcFunc)) {
             ({ const char* _e = str_concat(func_sig(d), ";\n"); arr_push(&(out), &_e); });
         }
     }
@@ -5772,7 +5809,7 @@ bool is_text_kind(TokKind k) {
 
 const char* pad_left(const char* s, int64_t w) {
     const char* r = s;
-    while ((str_len(r) < w)) {
+    while (str_len(r) < w) {
         r = str_concat(" ", r);
     }
     return r;
@@ -5780,7 +5817,7 @@ const char* pad_left(const char* s, int64_t w) {
 
 const char* pad_right(const char* s, int64_t w) {
     const char* r = s;
-    while ((str_len(r) < w)) {
+    while (str_len(r) < w) {
         r = str_concat(r, " ");
     }
     return r;
@@ -5815,7 +5852,7 @@ void pr(int64_t ind, const char* s) {
 }
 
 const char* ast_type_str(TypeNode* t) {
-    if ((t == 0)) {
+    if (t == 0) {
         return "<none>";
     }
     switch (t->kind) {
@@ -5849,11 +5886,11 @@ const char* ast_type_str(TypeNode* t) {
 }
 
 void pr_expr(int64_t ind, Expr* e) {
-    if ((e == 0)) {
+    if (e == 0) {
         pr(ind, "<null>");
         return;
     }
-    if ((ind > 400)) {
+    if (ind > 400) {
         pr(ind, "... (nested more than 400 levels deep)");
         return;
     }
@@ -5910,7 +5947,7 @@ void pr_expr(int64_t ind, Expr* e) {
             pr(ind, "Call");
             pr((ind + 1), "callee:");
             pr_expr((ind + 2), e->a);
-            if ((e->items.len > 0)) {
+            if (e->items.len > 0) {
                 pr((ind + 1), "args:");
                 for (int64_t i = 0; i < e->items.len; i++) {
                     pr_expr((ind + 2), ((Expr**)(e->items).data)[i]);
@@ -5966,7 +6003,7 @@ void pr_expr(int64_t ind, Expr* e) {
 }
 
 void pr_stmt(int64_t ind, Stmt* s) {
-    if ((s == 0)) {
+    if (s == 0) {
         pr(ind, "<null>");
         return;
     }
@@ -5986,14 +6023,14 @@ void pr_stmt(int64_t ind, Stmt* s) {
                 if (s->is_const) {
                     head = str_concat(head, "const ");
                 }
-                if ((s->type == 0)) {
+                if (s->type == 0) {
                     head = str_concat(head, "var");
                 } else {
                     head = str_concat(head, ast_type_str(s->type));
                 }
                 head = str_concat(str_concat(head, " "), s->name);
                 pr(ind, head);
-                if ((s->init != 0)) {
+                if (s->init != 0) {
                     pr((ind + 1), "=");
                     pr_expr((ind + 2), s->init);
                 }
@@ -6003,7 +6040,7 @@ void pr_stmt(int64_t ind, Stmt* s) {
         case StReturn:
         {
             pr(ind, "Return");
-            if ((s->expr != 0)) {
+            if (s->expr != 0) {
                 pr_expr((ind + 1), s->expr);
             }
             break;
@@ -6040,7 +6077,7 @@ void pr_stmt(int64_t ind, Stmt* s) {
             pr_expr((ind + 2), s->cond);
             pr((ind + 1), "then:");
             pr_stmt((ind + 2), s->then_block);
-            if ((s->else_branch != 0)) {
+            if (s->else_branch != 0) {
                 pr((ind + 1), "else:");
                 pr_stmt((ind + 2), s->else_branch);
             }
@@ -6064,7 +6101,7 @@ void pr_stmt(int64_t ind, Stmt* s) {
         }
         case StRegion:
         {
-            if ((str_len(s->name) > 0)) {
+            if (str_len(s->name) > 0) {
                 pr(ind, str_concat("Region ", s->name));
             } else {
                 pr(ind, "Region");
@@ -6109,7 +6146,7 @@ void pr_decl(Decl* d) {
             {
                 const char* head = str_concat(str_concat(str_concat(str_concat(str_concat(ex, "Func "), ast_type_str(d->ret)), " "), d->name), "(");
                 for (int64_t i = 0; i < d->params.len; i++) {
-                    if ((i > 0)) {
+                    if (i > 0) {
                         head = str_concat(head, ", ");
                     }
                     head = str_concat(str_concat(str_concat(head, ast_type_str(((Param*)(d->params).data)[i].type)), " "), ((Param*)(d->params).data)[i].name);
@@ -6170,7 +6207,7 @@ void print_program(Program prog) {
     for (int64_t i = 0; i < prog.decls.len; i++) {
         pr_decl(((Decl**)(prog.decls).data)[i]);
     }
-    if ((prog.main.len > 0)) {
+    if (prog.main.len > 0) {
         pr(0, "Main");
         for (int64_t i = 0; i < prog.main.len; i++) {
             pr_stmt(1, ((Stmt**)(prog.main).data)[i]);
@@ -6189,10 +6226,10 @@ bool is_space(char c) {
 const char* trim(const char* s) {
     int64_t a = 0;
     int64_t b = str_len(s);
-    while (((a < b) && is_space(s[a]))) {
+    while ((a < b) && is_space(s[a])) {
         a += 1;
     }
-    while (((b > a) && is_space(s[(b - 1)]))) {
+    while ((b > a) && is_space(s[(b - 1)])) {
         b -= 1;
     }
     return str_sub(s, a, (b - a));
@@ -6201,10 +6238,10 @@ const char* trim(const char* s) {
 const char* strip_comment(const char* s) {
     bool in_str = false;
     for (int64_t i = 0; i < str_len(s); i++) {
-        if (((s[i] == '"') && ((i == 0) || (s[(i - 1)] != '\\')))) {
+        if ((s[i] == '"') && ((i == 0) || (s[(i - 1)] != '\\'))) {
             in_str = (!in_str);
         }
-        if (((s[i] == '#') && (!in_str))) {
+        if ((s[i] == '#') && (!in_str)) {
             return str_sub(s, 0, i);
         }
     }
@@ -6217,14 +6254,14 @@ void toml_error(Toml* t, const char* msg) {
 }
 
 const char* toml_string(Toml* t, const char* v) {
-    if ((((str_len(v) < 2) || (v[0] != '"')) || (v[(str_len(v) - 1)] != '"'))) {
+    if (((str_len(v) < 2) || (v[0] != '"')) || (v[(str_len(v) - 1)] != '"')) {
         toml_error(t, str_concat("expected a \"quoted string\", got ", v));
         return "";
     }
     const char* r = "";
     int64_t i = 1;
-    while ((i < (str_len(v) - 1))) {
-        if (((v[i] == '\\') && ((i + 1) < (str_len(v) - 1)))) {
+    while (i < (str_len(v) - 1)) {
+        if ((v[i] == '\\') && ((i + 1) < (str_len(v) - 1))) {
             r = str_concat(r, str_sub(v, (i + 1), 1));
             i += 2;
         } else {
@@ -6239,7 +6276,7 @@ bool toml_bool(Toml* t, const char* v) {
     if (str_eq(v, "true")) {
         return true;
     }
-    if ((!str_eq(v, "false"))) {
+    if (!str_eq(v, "false")) {
         toml_error(t, str_concat("expected true or false, got ", v));
     }
     return false;
@@ -6247,7 +6284,7 @@ bool toml_bool(Toml* t, const char* v) {
 
 Array toml_array(Toml* t, const char* v) {
     Array out = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    if ((((str_len(v) < 2) || (v[0] != '[')) || (v[(str_len(v) - 1)] != ']'))) {
+    if (((str_len(v) < 2) || (v[0] != '[')) || (v[(str_len(v) - 1)] != ']')) {
         toml_error(t, str_concat("expected a [\"list\", \"of strings\"], got ", v));
         return out;
     }
@@ -6256,11 +6293,11 @@ Array toml_array(Toml* t, const char* v) {
     bool in_str = false;
     for (int64_t i = 0; i < str_len(body); i++) {
         char c = body[i];
-        if (((c == '"') && ((i == 0) || (body[(i - 1)] != '\\')))) {
+        if ((c == '"') && ((i == 0) || (body[(i - 1)] != '\\'))) {
             in_str = (!in_str);
         }
-        if (((c == ',') && (!in_str))) {
-            if ((!str_eq(trim(item), ""))) {
+        if ((c == ',') && (!in_str)) {
+            if (!str_eq(trim(item), "")) {
                 ({ const char* _e = toml_string(t, trim(item)); arr_push(&(out), &_e); });
             }
             item = "";
@@ -6268,21 +6305,21 @@ Array toml_array(Toml* t, const char* v) {
             item = str_concat(item, str_sub(body, i, 1));
         }
     }
-    if ((!str_eq(trim(item), ""))) {
+    if (!str_eq(trim(item), "")) {
         ({ const char* _e = toml_string(t, trim(item)); arr_push(&(out), &_e); });
     }
     return out;
 }
 
 void toml_build_key(Toml* t, const char* key, const char* v, bool platform, bool apply) {
-    if ((str_eq(key, "release") && (!platform))) {
+    if (str_eq(key, "release") && (!platform)) {
         bool r = toml_bool(t, v);
         if (apply) {
             t->p.release = r;
         }
         return;
     }
-    if ((str_eq(key, "split") && (!platform))) {
+    if (str_eq(key, "split") && (!platform)) {
         bool sp = toml_bool(t, v);
         if (apply) {
             t->p.split = sp;
@@ -6290,15 +6327,15 @@ void toml_build_key(Toml* t, const char* key, const char* v, bool platform, bool
         return;
     }
     bool list_key = ((((str_eq(key, "defines") || str_eq(key, "include_dirs")) || str_eq(key, "lib_dirs")) || str_eq(key, "libs")) || str_eq(key, "c_sources"));
-    if ((str_eq(key, "frameworks") && str_eq(t->section, "macos"))) {
+    if (str_eq(key, "frameworks") && str_eq(t->section, "macos")) {
         list_key = true;
     }
-    if ((!list_key)) {
+    if (!list_key) {
         toml_error(t, str_concat(str_concat(str_concat(str_concat("unknown key '", key), "' in ["), t->section), "]"));
         return;
     }
     Array items = toml_array(t, v);
-    if ((!apply)) {
+    if (!apply) {
         return;
     }
     for (int64_t i = 0; i < items.len; i++) {
@@ -6339,7 +6376,7 @@ void toml_key(Toml* t, const char* key, const char* v) {
         } else 
         if (str_eq(key, "output")) {
             t->p.output = toml_string(t, v);
-            if (((!str_eq(t->p.output, "exe")) && (!str_eq(t->p.output, "dll")))) {
+            if ((!str_eq(t->p.output, "exe")) && (!str_eq(t->p.output, "dll"))) {
                 toml_error(t, "output must be \"exe\" or \"dll\"");
             }
         } else {
@@ -6349,7 +6386,7 @@ void toml_key(Toml* t, const char* key, const char* v) {
     if (str_eq(sec, "build")) {
         toml_build_key(t, key, v, false, true);
     } else 
-    if (((str_eq(sec, "windows") || str_eq(sec, "linux")) || str_eq(sec, "macos"))) {
+    if ((str_eq(sec, "windows") || str_eq(sec, "linux")) || str_eq(sec, "macos")) {
         toml_build_key(t, key, v, true, str_eq(sec, host_os()));
     } else 
     if (str_eq(sec, "")) {
@@ -6367,7 +6404,7 @@ Project load_project(const char* path) {
     Project p = (Project){true, path, dirname_of(path), "", "", "src/main.strata", "exe", "build", false, d, i, ld, l, cs, fw, true};
     Toml t = (Toml){p, "", 0, basename_of(path)};
     const char* src = strata_read_file(path);
-    if ((str_len(src) == 0)) {
+    if (str_len(src) == 0) {
         strata_report(str_concat(str_concat(str_concat(basename_of(path), ": error: cannot read the project file ("), path), ")"));
         t.p.ok = false;
         return t.p;
@@ -6375,7 +6412,7 @@ Project load_project(const char* path) {
     Array lines = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     const char* cur = "";
     for (int64_t k = 0; k < str_len(src); k++) {
-        if ((src[k] == '\n')) {
+        if (src[k] == '\n') {
             ({ const char* _e = cur; arr_push(&(lines), &_e); });
             cur = "";
         } else {
@@ -6384,36 +6421,36 @@ Project load_project(const char* path) {
     }
     ({ const char* _e = cur; arr_push(&(lines), &_e); });
     int64_t n = 0;
-    while ((n < lines.len)) {
+    while (n < lines.len) {
         t.line = (n + 1);
         const char* ln = trim(strip_comment(((const char**)(lines).data)[n]));
         n += 1;
         if (str_eq(ln, "")) {
         } else 
-        if ((ln[0] == '[')) {
-            if ((ln[(str_len(ln) - 1)] != ']')) {
+        if (ln[0] == '[') {
+            if (ln[(str_len(ln) - 1)] != ']') {
                 toml_error((&t), "a section header needs a closing ']'");
             } else {
                 t.section = trim(str_sub(ln, 1, (str_len(ln) - 2)));
                 const char* s = t.section;
-                if ((((((!str_eq(s, "project")) && (!str_eq(s, "build"))) && (!str_eq(s, "windows"))) && (!str_eq(s, "linux"))) && (!str_eq(s, "macos")))) {
+                if (((((!str_eq(s, "project")) && (!str_eq(s, "build"))) && (!str_eq(s, "windows"))) && (!str_eq(s, "linux"))) && (!str_eq(s, "macos"))) {
                     toml_error((&t), str_concat(str_concat("unknown section [", s), "] (expected [project], [build], [windows], [linux] or [macos])"));
                 }
             }
         } else {
             int64_t eq = (0 - 1);
             for (int64_t k = 0; k < str_len(ln); k++) {
-                if (((eq < 0) && (ln[k] == '='))) {
+                if ((eq < 0) && (ln[k] == '=')) {
                     eq = k;
                 }
             }
-            if ((eq < 0)) {
+            if (eq < 0) {
                 toml_error((&t), "expected 'key = value'");
             } else {
                 const char* key = trim(str_sub(ln, 0, eq));
                 const char* val = trim(str_sub(ln, (eq + 1), ((str_len(ln) - eq) - 1)));
-                if (((str_len(val) > 0) && (val[0] == '['))) {
-                    while (((val[(str_len(val) - 1)] != ']') && (n < lines.len))) {
+                if ((str_len(val) > 0) && (val[0] == '[')) {
+                    while ((val[(str_len(val) - 1)] != ']') && (n < lines.len)) {
                         val = str_concat(str_concat(val, " "), trim(strip_comment(((const char**)(lines).data)[n])));
                         n += 1;
                     }
@@ -6422,7 +6459,7 @@ Project load_project(const char* path) {
             }
         }
     }
-    if ((str_eq(t.p.name, "") && t.p.ok)) {
+    if (str_eq(t.p.name, "") && t.p.ok) {
         t.line = 1;
         toml_error((&t), "[project] needs a name (name = \"...\")");
     }
@@ -6481,7 +6518,7 @@ const char* win_path(const char* p) {
     const char* r = "";
     int64_t n = str_len(p);
     for (int64_t i = 0; i < n; i++) {
-        if ((p[i] == '/')) {
+        if (p[i] == '/') {
             r = str_concat(r, "\\");
         } else {
             r = str_concat(r, str_sub(p, i, 1));
@@ -6511,7 +6548,7 @@ bool file_present(const char* p) {
 const char* spaced(Array pieces) {
     Array parts = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 0; i < pieces.len; i++) {
-        if ((i > 0)) {
+        if (i > 0) {
             ({ const char* _e = " "; arr_push(&(parts), &_e); });
         }
         ({ const char* _e = ((const char**)(pieces).data)[i]; arr_push(&(parts), &_e); });
@@ -6549,10 +6586,10 @@ const char* guard_for(const char* name) {
     int64_t n = str_len(name);
     for (int64_t i = 0; i < n; i++) {
         char c = name[i];
-        if (((c >= 'a') && (c <= 'z'))) {
+        if ((c >= 'a') && (c <= 'z')) {
             g = str_concat(g, str_sub(upper, (((int64_t)(c)) - ((int64_t)('a'))), 1));
         } else 
-        if ((((c >= 'A') && (c <= 'Z')) || ((c >= '0') && (c <= '9')))) {
+        if (((c >= 'A') && (c <= 'Z')) || ((c >= '0') && (c <= '9'))) {
             g = str_concat(g, str_sub(name, i, 1));
         } else {
             g = str_concat(g, "_");
@@ -6563,7 +6600,7 @@ const char* guard_for(const char* name) {
 
 bool run_build(BuildSpec s, const char* libdir) {
     LoadResult lr = load_program(s.entry);
-    if ((!lr.ok)) {
+    if (!lr.ok) {
         return false;
     }
     Program prog = lr.prog;
@@ -6572,7 +6609,7 @@ bool run_build(BuildSpec s, const char* libdir) {
     if (ck->had_error) {
         return false;
     }
-    if ((s.dll && (prog.main.len > 0))) {
+    if (s.dll && (prog.main.len > 0)) {
         Stmt* st = ((Stmt**)(prog.main).data)[0];
         strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(basename_of(s.entry), ":"), str_from_int(st->line)), ":"), str_from_int(st->col)), ": error: a dll has no main, so its entry file can't contain top-level code"));
         return false;
@@ -6614,7 +6651,7 @@ bool run_build(BuildSpec s, const char* libdir) {
         ({ const char* _e = str_concat("-L", ((const char**)(s.lib_dirs).data)[i]); arr_push(&(argv), &_e); });
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
-        if ((((Decl**)(prog.decls).data)[i]->kind == DcLink)) {
+        if (((Decl**)(prog.decls).data)[i]->kind == DcLink) {
             ({ const char* _e = str_concat("-l", ((Decl**)(prog.decls).data)[i]->path); arr_push(&(argv), &_e); });
         }
     }
@@ -6640,23 +6677,23 @@ bool run_build(BuildSpec s, const char* libdir) {
         header = generate_header(prog, guard_for(basename_of(stem_of(s.out_bin))), basename_of(s.entry));
     }
     const char* key = "";
-    if ((!str_eq(s.cache_file, ""))) {
+    if (!str_eq(s.cache_file, "")) {
         const char* all = str_concat(str_concat(str_concat(str_concat(c, "\n"), cmd), "\n"), s.tool_version);
         for (int64_t i = 0; i < s.c_sources.len; i++) {
             all = str_concat(str_concat(all, "\n"), strata_read_file(((const char**)(s.c_sources).data)[i]));
         }
         key = fingerprint(all);
-        if ((((!s.force) && str_eq(strata_read_file(s.cache_file), key)) && file_present(s.out_bin))) {
-            if ((s.dll && (!str_eq(strata_read_file(str_concat(stem_of(s.out_bin), ".h")), header)))) {
+        if (((!s.force) && str_eq(strata_read_file(s.cache_file), key)) && file_present(s.out_bin)) {
+            if (s.dll && (!str_eq(strata_read_file(str_concat(stem_of(s.out_bin), ".h")), header))) {
                 strata_write_file(str_concat(stem_of(s.out_bin), ".h"), header);
             }
-            if ((!s.quiet)) {
+            if (!s.quiet) {
                 strata_report(str_concat("up to date: ", s.out_bin));
             }
             return true;
         }
         const char* dir = dirname_of(s.out_c);
-        if ((!str_eq(dir, "."))) {
+        if (!str_eq(dir, ".")) {
             strata_make_dirs(dir);
         }
     }
@@ -6665,20 +6702,20 @@ bool run_build(BuildSpec s, const char* libdir) {
         strata_write_file(str_concat(stem_of(s.out_bin), ".h"), header);
     }
     int64_t rc = strata_run_argv((&argv));
-    if ((rc != 0)) {
+    if (rc != 0) {
         return false;
     }
-    if ((!str_eq(s.cache_file, ""))) {
+    if (!str_eq(s.cache_file, "")) {
         strata_write_file(s.cache_file, key);
     }
-    if ((!s.quiet)) {
+    if (!s.quiet) {
         strata_report(str_concat("built ", s.out_bin));
     }
     return true;
 }
 
 void write_if_changed(const char* path, const char* text) {
-    if ((!str_eq(strata_read_file(path), text))) {
+    if (!str_eq(strata_read_file(path), text)) {
         strata_write_file(path, text);
     }
 }
@@ -6687,7 +6724,7 @@ const char* fwd_path(const char* p) {
     const char* r = "";
     int64_t n = str_len(p);
     for (int64_t i = 0; i < n; i++) {
-        if ((p[i] == '\\')) {
+        if (p[i] == '\\') {
             r = str_concat(r, "/");
         } else {
             r = str_concat(r, str_sub(p, i, 1));
@@ -6733,7 +6770,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     const char* salt = str_concat(str_concat(str_concat(flags, "\n"), s.tool_version), "\n");
     int64_t jobs = strata_cpu_count();
     int64_t per_chunk = (((so.units.len + (2 * jobs)) - 1) / (2 * jobs));
-    if ((per_chunk < 1)) {
+    if (per_chunk < 1) {
         per_chunk = 1;
     }
     Array objects = ({ Array _a = arr_make(sizeof(const char*)); _a; });
@@ -6742,10 +6779,10 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     Array rsps = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     int64_t total = 0;
     int64_t u = 0;
-    while ((u < so.units.len)) {
+    while (u < so.units.len) {
         Array parts = ({ Array _a = arr_make(sizeof(const char*)); _a; });
         int64_t end = (u + per_chunk);
-        if ((end > so.units.len)) {
+        if (end > so.units.len) {
             end = so.units.len;
         }
         for (int64_t k = u; k < end; k++) {
@@ -6753,14 +6790,14 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         }
         const char* text = strata_join((&parts));
         const char* cfile = str_concat(str_concat(obj, "/"), ((const char**)(so.names).data)[u]);
-        if (((end - u) > 1)) {
+        if ((end - u) > 1) {
             cfile = str_concat(str_concat(str_concat(str_concat(obj, "/chunk"), str_from_int(u)), "_"), ((const char**)(so.names).data)[u]);
         }
         const char* ofile = str_concat(stem_of(cfile), ".o");
         const char* key = fingerprint(str_concat(str_concat(str_concat(salt, so.header), "\n"), text));
         ({ const char* _e = ofile; arr_push(&(objects), &_e); });
         total += 1;
-        if (((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile)))) {
+        if ((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile))) {
             write_if_changed(cfile, text);
             const char* rsp = str_concat(stem_of(cfile), ".rsp");
             write_if_changed(rsp, str_concat(str_concat(str_concat(str_concat(str_concat(flags, " -c "), rsp_arg(cfile)), " -o "), rsp_arg(ofile)), "\n"));
@@ -6775,7 +6812,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         const char* key = fingerprint(str_concat(salt, strata_read_file(((const char**)(s.c_sources).data)[i])));
         ({ const char* _e = ofile; arr_push(&(objects), &_e); });
         total += 1;
-        if (((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile)))) {
+        if ((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile))) {
             const char* rsp = str_concat(stem_of(ofile), ".rsp");
             write_if_changed(rsp, str_concat(str_concat(str_concat(str_concat(str_concat(flags, " -c "), rsp_arg(((const char**)(s.c_sources).data)[i])), " -o "), rsp_arg(ofile)), "\n"));
             ({ const char* _e = rsp; arr_push(&(rsps), &_e); });
@@ -6786,8 +6823,8 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     if (s.dll) {
         write_if_changed(str_concat(stem_of(s.out_bin), ".h"), generate_header(prog, guard_for(name), basename_of(s.entry)));
     }
-    if ((rsps.len > 0)) {
-        if ((strata_run_cc_parallel((&rsps), jobs) > 0)) {
+    if (rsps.len > 0) {
+        if (strata_run_cc_parallel((&rsps), jobs) > 0) {
             return false;
         }
         for (int64_t i = 0; i < keys.len; i++) {
@@ -6803,7 +6840,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         ({ const char* _e = str_concat(str_concat("-L", rsp_arg(((const char**)(s.lib_dirs).data)[i])), "\n"); arr_push(&(args), &_e); });
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
-        if ((((Decl**)(prog.decls).data)[i]->kind == DcLink)) {
+        if (((Decl**)(prog.decls).data)[i]->kind == DcLink) {
             ({ const char* _e = str_concat(str_concat("-l", ((Decl**)(prog.decls).data)[i]->path), "\n"); arr_push(&(args), &_e); });
         }
     }
@@ -6824,19 +6861,19 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     const char* link_rsp = str_concat(obj, "/link.rsp");
     write_if_changed(link_rsp, link_text);
     const char* link_key = fingerprint(str_concat(link_text, s.tool_version));
-    if (((((rsps.len == 0) && (!s.force)) && str_eq(strata_read_file(s.cache_file), link_key)) && strata_file_exists(s.out_bin))) {
-        if ((!s.quiet)) {
+    if ((((rsps.len == 0) && (!s.force)) && str_eq(strata_read_file(s.cache_file), link_key)) && strata_file_exists(s.out_bin)) {
+        if (!s.quiet) {
             strata_report(str_concat("up to date: ", s.out_bin));
         }
         return true;
     }
     Array link_job = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     ({ const char* _e = link_rsp; arr_push(&(link_job), &_e); });
-    if ((strata_run_cc_parallel((&link_job), 1) > 0)) {
+    if (strata_run_cc_parallel((&link_job), 1) > 0) {
         return false;
     }
     strata_write_file(s.cache_file, link_key);
-    if ((!s.quiet)) {
+    if (!s.quiet) {
         strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("built ", s.out_bin), " ("), str_from_int(rsps.len)), " of "), str_from_int(total)), " C files compiled, "), str_from_int(so.units.len)), " modules)"));
     }
     return true;
@@ -6852,17 +6889,17 @@ Project no_project(void) {
 }
 
 Target resolve_target(const char* arg) {
-    if ((ends_with(arg, ".strata") || ends_with(arg, ".str"))) {
+    if (ends_with(arg, ".strata") || ends_with(arg, ".str")) {
         return (Target){true, false, arg, no_project()};
     }
     const char* toml = "strata.toml";
     if (ends_with(arg, "strata.toml")) {
         toml = arg;
     } else 
-    if ((!str_eq(arg, ""))) {
+    if (!str_eq(arg, "")) {
         toml = str_concat(arg, "/strata.toml");
     }
-    if ((!file_present(toml))) {
+    if (!file_present(toml)) {
         if (str_eq(arg, "")) {
             strata_report("error: no strata.toml in this folder (pass a .strata file or a project folder, or create one with 'stratac new <name>')");
         } else {
@@ -6891,7 +6928,7 @@ bool file_exists(const char* p) {
 
 const char* resolve_libdir(const char* argv0) {
     const char* exe = strata_exe_path();
-    if ((!str_eq(exe, ""))) {
+    if (!str_eq(exe, "")) {
         const char* edir = dirname_of(exe);
         if (file_exists(str_concat(edir, "/lib/arena.h"))) {
             return str_concat(edir, "/lib");
@@ -6934,7 +6971,7 @@ int64_t cmd_ast(const char* path) {
 
 int64_t cmd_check(const char* path) {
     LoadResult lr = load_program(path);
-    if ((!lr.ok)) {
+    if (!lr.ok) {
         return 1;
     }
     Program prog = lr.prog;
@@ -6949,7 +6986,7 @@ int64_t cmd_check(const char* path) {
 
 int64_t cmd_emit(const char* path) {
     LoadResult lr = load_program(path);
-    if ((!lr.ok)) {
+    if (!lr.ok) {
         return 1;
     }
     Program prog = lr.prog;
@@ -6985,7 +7022,7 @@ int64_t cmd_run(Target t, const char* libdir, bool release, bool force, Array pr
         printf("%s\n", "error: this project builds a dll; there's nothing to run");
         return 1;
     }
-    if ((!run_build(spec, libdir))) {
+    if (!run_build(spec, libdir)) {
         return 1;
     }
     const char* exe = spec.out_bin;
@@ -7008,7 +7045,7 @@ int64_t cmd_new(const char* name) {
         printf("%s\n", str_concat(str_concat("error: ", name), "/strata.toml already exists"));
         return 1;
     }
-    if ((!strata_make_dirs(str_concat(name, "/src")))) {
+    if (!strata_make_dirs(str_concat(name, "/src"))) {
         printf("%s\n", str_concat(str_concat("error: could not create ", name), "/src"));
         return 1;
     }
@@ -7017,7 +7054,7 @@ int64_t cmd_new(const char* name) {
     bool ok = strata_write_file(str_concat(name, "/strata.toml"), toml);
     ok = (ok && strata_write_file(str_concat(name, "/src/main.strata"), str_concat(str_concat(str_concat(str_concat("// ", pname), " - the entry point. Other files in this folder are modules: `import name`.\nprint(\"hello from "), pname), "\")\n")));
     ok = (ok && strata_write_file(str_concat(name, "/.gitignore"), "build/\n"));
-    if ((!ok)) {
+    if (!ok) {
         printf("%s\n", str_concat("error: could not write the project files in ", name));
         return 1;
     }
@@ -7043,11 +7080,11 @@ int64_t usage(void) {
 }
 
 int64_t dmm_main(Array args) {
-    if (((args.len == 2) && (str_eq(((const char**)(args).data)[1], "version") || str_eq(((const char**)(args).data)[1], "--version")))) {
+    if ((args.len == 2) && (str_eq(((const char**)(args).data)[1], "version") || str_eq(((const char**)(args).data)[1], "--version"))) {
         printf("%s\n", str_concat(str_concat("stratac ", stratac_version()), " - the Strata compiler"));
         return 0;
     }
-    if ((args.len < 2)) {
+    if (args.len < 2) {
         return usage();
     }
     const char* cmd = ((const char**)(args).data)[1];
@@ -7071,7 +7108,7 @@ int64_t dmm_main(Array args) {
         if (str_eq(a, "--force")) {
             force = true;
         } else 
-        if ((!have_target)) {
+        if (!have_target) {
             target = a;
             have_target = true;
         } else {
@@ -7080,14 +7117,14 @@ int64_t dmm_main(Array args) {
     }
     const char* libdir = resolve_libdir(((const char**)(args).data)[0]);
     if (str_eq(cmd, "new")) {
-        if ((!have_target)) {
+        if (!have_target) {
             printf("%s\n", "usage: stratac new <name>");
             return 2;
         }
         return cmd_new(target);
     }
-    if ((str_eq(cmd, "tokens") || str_eq(cmd, "ast"))) {
-        if ((!have_target)) {
+    if (str_eq(cmd, "tokens") || str_eq(cmd, "ast")) {
+        if (!have_target) {
             return usage();
         }
         if (str_eq(cmd, "tokens")) {
@@ -7095,11 +7132,11 @@ int64_t dmm_main(Array args) {
         }
         return cmd_ast(target);
     }
-    if (((((!str_eq(cmd, "check")) && (!str_eq(cmd, "emit"))) && (!str_eq(cmd, "build"))) && (!str_eq(cmd, "run")))) {
+    if ((((!str_eq(cmd, "check")) && (!str_eq(cmd, "emit"))) && (!str_eq(cmd, "build"))) && (!str_eq(cmd, "run"))) {
         return usage();
     }
     Target t = resolve_target(target);
-    if ((!t.ok)) {
+    if (!t.ok) {
         return 1;
     }
     if (str_eq(cmd, "check")) {
