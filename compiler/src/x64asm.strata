@@ -1,0 +1,697 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/x64asm.strata - Strata's x86-64 assembler: GNU-as AT&T text -> machine code. CORE.
+//
+// It assembles what x64.strata writes (and any hand-written assembly using the same
+// forms): two sections (.text, .rdata), labels, `.globl`, `.p2align`, `.asciz`, `.float`,
+// `.double`, and the instructions the backend uses - moves and sign/zero extensions,
+// integer ALU, multiply / divide, shifts, compares and setcc, jumps and calls, push / pop,
+// SSE scalar float arithmetic, compares and conversions. Anything else is an error that
+// names the line (the build then falls back, see build.strata).
+//
+// Encoding choices: jumps and calls always take a 32-bit displacement (no relaxation:
+// sizes never depend on label positions, so one pass + fixups suffices); immediates take
+// 8 bits when they fit.
+//
+// The result is an ObjFile - bytes, symbols and relocations - which coff.strata writes as
+// a Windows object file. Jumps within .text are resolved here; references to .rdata
+// and to functions defined elsewhere become relocations.
+
+import hashidx
+import "strata_host.h"   // strata_f32_bits, strata_f64_bits
+
+// A relocation in .text: a 32-bit PC-relative field at `offset`. `symbol`: an index into
+// ObjFile.symbols, or -1 for the .text section, -2 for the .rdata section. `after`: how
+// many bytes of the instruction follow the field (an immediate).
+export struct ObjReloc { int offset; int symbol; int after }
+// section: 0 undefined (defined elsewhere), 1 .text, 2 .rdata
+export struct ObjSymbol { string name; int section; int value; bool global }
+
+export struct ObjFile {
+    bool              ok
+    string            err
+    u8[dynamic]       text
+    u8[dynamic]       rdata
+    ObjReloc[dynamic] relocs     // all in .text
+    ObjSymbol[dynamic] symbols
+}
+
+// ---- operands -----------------------------------------------------------------------------
+
+// kind: 1 register, 2 immediate, 3 memory, 4 a bare symbol (a jump / call target)
+struct Opnd {
+    int    kind
+    int    reg       // register number 0-15
+    int    size      // register size in bytes (16 for xmm)
+    int    imm       // immediate / displacement
+    int    base      // memory: base register (-1: %rip)
+    string sym       // memory / bare: symbol name ("" if none)
+}
+
+Opnd no_opnd() { return Opnd{ 0, 0, 0, 0, 0, "" } }
+
+struct Fix { int pos; string label; int addend; int after }
+
+struct Asm {
+    ObjFile         o
+    int             sec        // 1 .text, 2 .rdata
+    string[dynamic] lnames
+    int[dynamic]    lsec
+    int[dynamic]    loff
+    NameIdx         lidx
+    string[dynamic] globals
+    Fix[dynamic]    fixes
+    NameIdx         sidx       // over o.symbols
+    int             line
+    string          text       // the current line (for errors)
+}
+
+void fail(Asm* a, string msg) {
+    if a.o.ok { a.o.err = "line " + int_to_str(a.line) + ": " + msg + " (" + a.text + ")" }
+    a.o.ok = false
+}
+
+// ---- registers --------------------------------------------------------------------------------
+
+// a legacy register name -> size * 16 + number (-1: not one)
+int legacy_reg(string s) {
+    if s == "rax" { return 128 } if s == "rcx" { return 129 } if s == "rdx" { return 130 } if s == "rbx" { return 131 }
+    if s == "rsp" { return 132 } if s == "rbp" { return 133 } if s == "rsi" { return 134 } if s == "rdi" { return 135 }
+    if s == "eax" { return 64 } if s == "ecx" { return 65 } if s == "edx" { return 66 } if s == "ebx" { return 67 }
+    if s == "esp" { return 68 } if s == "ebp" { return 69 } if s == "esi" { return 70 } if s == "edi" { return 71 }
+    if s == "ax" { return 32 } if s == "cx" { return 33 } if s == "dx" { return 34 } if s == "bx" { return 35 }
+    if s == "sp" { return 36 } if s == "bp" { return 37 } if s == "si" { return 38 } if s == "di" { return 39 }
+    if s == "al" { return 16 } if s == "cl" { return 17 } if s == "dl" { return 18 } if s == "bl" { return 19 }
+    if s == "spl" { return 20 } if s == "bpl" { return 21 } if s == "sil" { return 22 } if s == "dil" { return 23 }
+    return 0 - 1
+}
+
+// "rax" -> register 0, size 8; "r12d" -> 12, size 4; "xmm3" -> 3, size 16. False if unknown.
+bool parse_reg(string name, Opnd* o) {
+    int n = name.len
+    if n > 3 && substr(name, 0, 3) == "xmm" {
+        int v = 0
+        for i in 3..n { v = v * 10 + (cast<int>(name[i]) - cast<int>('0')) }
+        o.kind = 1
+        o.reg = v
+        o.size = 16
+        return v >= 0 && v < 16
+    }
+    if n >= 2 && name[0] == 'r' && is_digit(name[1]) {
+        int k = 1
+        int v = 0
+        while k < n && is_digit(name[k]) { v = v * 10 + (cast<int>(name[k]) - cast<int>('0')); k += 1 }
+        string suf = substr(name, k, n - k)
+        int size = 0
+        if suf == "" { size = 8 } else if suf == "d" { size = 4 } else if suf == "w" { size = 2 } else if suf == "b" { size = 1 }
+        o.kind = 1
+        o.reg = v
+        o.size = size
+        return size > 0 && v >= 8 && v <= 15
+    }
+    int c = legacy_reg(name)
+    if c < 0 { return false }
+    o.kind = 1
+    o.reg = c % 16
+    o.size = c / 16
+    return true
+}
+
+// ---- parsing ------------------------------------------------------------------------------------
+
+bool is_space(char c) { return c == ' ' || c == '\t' || c == '\r' }
+
+string trim(string s) {
+    int i = 0
+    int j = s.len
+    while i < j && is_space(s[i]) { i += 1 }
+    while j > i && is_space(s[j - 1]) { j -= 1 }
+    return substr(s, i, j - i)
+}
+
+bool is_digit(char c) { return c >= '0' && c <= '9' }
+
+// "-40", "0x80000000", "4096" -> the value
+int parse_num(Asm* a, string s) {
+    int i = 0
+    bool neg = false
+    if s.len > 0 && s[0] == '-' { neg = true; i = 1 }
+    else if s.len > 0 && s[0] == '+' { i = 1 }
+    u64 v = 0
+    if s.len > i + 2 && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X') {
+        i += 2
+        while i < s.len {
+            char c = s[i]
+            u64 d = 0
+            if c >= '0' && c <= '9' { d = cast<u64>(cast<int>(c) - cast<int>('0')) }
+            else if c >= 'a' && c <= 'f' { d = cast<u64>(cast<int>(c) - cast<int>('a') + 10) }
+            else if c >= 'A' && c <= 'F' { d = cast<u64>(cast<int>(c) - cast<int>('A') + 10) }
+            else { fail(a, "bad number " + s) }
+            v = v * 16 + d
+            i += 1
+        }
+    } else {
+        if i >= s.len { fail(a, "bad number " + s) }
+        while i < s.len {
+            if !is_digit(s[i]) { fail(a, "bad number " + s) }
+            v = v * 10 + cast<u64>(cast<int>(s[i]) - cast<int>('0'))
+            i += 1
+        }
+    }
+    int r = cast<int>(v)
+    if neg { return 0 - r }
+    return r
+}
+
+Opnd parse_opnd(Asm* a, string s) {
+    Opnd o = no_opnd()
+    if s.len == 0 { fail(a, "missing operand"); return o }
+    if s[0] == '%' {
+        if !parse_reg(substr(s, 1, s.len - 1), &o) { fail(a, "unknown register " + s) }
+        return o
+    }
+    if s[0] == '$' {
+        o.kind = 2
+        o.imm = parse_num(a, substr(s, 1, s.len - 1))
+        return o
+    }
+    int p = 0 - 1
+    for i in 0..s.len { if p < 0 && s[i] == '(' { p = i } }
+    if p < 0 {
+        o.kind = 4
+        o.sym = s
+        return o
+    }
+    // memory: [disp | sym[+-off]](%base)
+    o.kind = 3
+    if s[s.len - 1] != ')' { fail(a, "bad memory operand " + s); return o }
+    string inner = substr(s, p + 1, s.len - p - 2)
+    if inner == "%rip" { o.base = 0 - 1 }
+    else {
+        Opnd r = no_opnd()
+        if inner.len < 2 || !parse_reg(substr(inner, 1, inner.len - 1), &r) || r.size != 8 { fail(a, "bad base register " + inner); return o }
+        o.base = r.reg
+    }
+    string d = substr(s, 0, p)
+    if d.len > 0 {
+        if is_digit(d[0]) || d[0] == '-' || d[0] == '+' { o.imm = parse_num(a, d) }
+        else {
+            // sym, sym+off, sym-off
+            int q = 0 - 1
+            for i in 1..d.len { if q < 0 && (d[i] == '+' || d[i] == '-') { q = i } }
+            if q < 0 { o.sym = d }
+            else { o.sym = substr(d, 0, q); o.imm = parse_num(a, substr(d, q, d.len - q)) }
+        }
+    }
+    return o
+}
+
+// "a, b" -> ["a", "b"] (commas inside parentheses or quotes don't split)
+string[dynamic] split_operands(string s) {
+    string[dynamic] r = []
+    int depth = 0
+    bool quoted = false
+    int start = 0
+    for i in 0..s.len {
+        char c = s[i]
+        if c == '"' { quoted = !quoted }
+        else if !quoted && c == '(' { depth += 1 }
+        else if !quoted && c == ')' { depth -= 1 }
+        else if !quoted && depth == 0 && c == ',' {
+            r.push(trim(substr(s, start, i - start)))
+            start = i + 1
+        }
+    }
+    string last = trim(substr(s, start, s.len - start))
+    if last.len > 0 { r.push(last) }
+    return r
+}
+
+// ---- emitting bytes --------------------------------------------------------------------------------
+
+int pos(Asm* a) {
+    if a.sec == 2 { return a.o.rdata.len }
+    return a.o.text.len
+}
+
+void byte(Asm* a, int v) {
+    if a.sec == 2 { a.o.rdata.push(cast<u8>(v & 255)) } else { a.o.text.push(cast<u8>(v & 255)) }
+}
+
+void bytes_le(Asm* a, int v, int n) {
+    u64 x = cast<u64>(v)
+    for i in 0..n {
+        byte(a, cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+
+bool fits8(int v) { return v >= 0 - 128 && v <= 127 }
+bool fits32s(int v) { return v >= 0 - 2147483648 && v <= 2147483647 }
+
+// A register needs REX to be its 8-bit self (spl, bpl, sil, dil - else they'd be ah..bh)
+bool byte_needs_rex(Opnd o) { return o.kind == 1 && o.size == 1 && o.reg >= 4 && o.reg < 8 }
+
+// One instruction with a ModRM byte:
+//   [legacy prefix] [REX] opcode... ModRM [SIB] [disp] [immediate]
+// `prefix`: 0, or 0x66 / 0xF2 / 0xF3 (it must precede REX); `op1`..`op3`: the opcode
+// bytes (-1: none); `regf`: the ModRM reg field (a register number or an opcode digit);
+// `regb`: whether regf is an 8-bit register; `rm`: the register or memory operand;
+// `isz` / `imm`: the immediate's size in bytes (0: none) and value.
+void enc(Asm* a, int prefix, bool w, int op1, int op2, int op3, int regf, bool regb, Opnd rm, int isz, int imm) {
+    if a.sec != 1 { fail(a, "instruction outside .text"); return }
+    if prefix != 0 { byte(a, prefix) }
+    int rex = 0
+    if w { rex = rex | 8 }
+    if regf >= 8 { rex = rex | 4 }
+    if rm.kind == 1 && rm.reg >= 8 { rex = rex | 1 }
+    if rm.kind == 3 && rm.base >= 8 { rex = rex | 1 }
+    bool need = rex != 0 || byte_needs_rex(rm) || (regb && regf >= 4 && regf < 8)
+    if need { byte(a, 64 | rex) }
+    byte(a, op1)
+    if op2 >= 0 { byte(a, op2) }
+    if op3 >= 0 { byte(a, op3) }
+    int r = (regf & 7) * 8
+    if rm.kind == 1 {
+        byte(a, 192 | r | (rm.reg & 7))
+    } else if rm.kind == 3 && rm.base < 0 {
+        // RIP-relative: disp32, against a symbol (a fixup) or plain
+        byte(a, 5 | r)
+        if rm.sym != "" {
+            a.fixes.push(Fix{ a.o.text.len, rm.sym, rm.imm, isz })
+            bytes_le(a, 0, 4)
+        } else {
+            bytes_le(a, rm.imm, 4)
+        }
+    } else if rm.kind == 3 {
+        if rm.sym != "" { fail(a, "a symbol needs %rip") }
+        int b7 = rm.base & 7
+        int d = rm.imm
+        int mode = 2
+        if d == 0 && b7 != 5 { mode = 0 } else if fits8(d) { mode = 1 }
+        int low = b7
+        if b7 == 4 { low = 4 }
+        byte(a, mode * 64 | r | low)
+        if b7 == 4 { byte(a, 36) }   // SIB: no index, base rsp / r12
+        if mode == 1 { byte(a, d) } else if mode == 2 { bytes_le(a, d, 4) }
+    } else {
+        fail(a, "expected a register or memory operand")
+    }
+    if isz > 0 { bytes_le(a, imm, isz) }
+}
+
+// a rel32 to `label`, after the opcode bytes already emitted
+void rel32(Asm* a, string label) {
+    a.fixes.push(Fix{ a.o.text.len, label, 0, 0 })
+    bytes_le(a, 0, 4)
+}
+
+// ---- instructions ------------------------------------------------------------------------------------
+
+int cc_code(string c) {
+    if c == "o" { return 0 }
+    if c == "no" { return 1 }
+    if c == "b" || c == "c" || c == "nae" { return 2 }
+    if c == "ae" || c == "nb" || c == "nc" { return 3 }
+    if c == "e" || c == "z" { return 4 }
+    if c == "ne" || c == "nz" { return 5 }
+    if c == "be" || c == "na" { return 6 }
+    if c == "a" || c == "nbe" { return 7 }
+    if c == "s" { return 8 }
+    if c == "ns" { return 9 }
+    if c == "p" || c == "pe" { return 10 }
+    if c == "np" || c == "po" { return 11 }
+    if c == "l" || c == "nge" { return 12 }
+    if c == "ge" || c == "nl" { return 13 }
+    if c == "le" || c == "ng" { return 14 }
+    if c == "g" || c == "nle" { return 15 }
+    return 0 - 1
+}
+
+int size_of(char c) {
+    if c == 'q' { return 8 }
+    if c == 'l' { return 4 }
+    if c == 'w' { return 2 }
+    if c == 'b' { return 1 }
+    return 0
+}
+
+// add/or/and/sub/xor/cmp (opcode digit d) of `size` bytes: src -> dst
+void alu(Asm* a, int d, int size, Opnd src, Opnd dst) {
+    bool w = size == 8
+    int pre = 0
+    if size == 2 { pre = 102 }
+    if src.kind == 2 {
+        if size == 1 { enc(a, pre, false, 128, 0 - 1, 0 - 1, d, false, dst, 1, src.imm) }
+        else if fits8(src.imm) { enc(a, pre, w, 131, 0 - 1, 0 - 1, d, false, dst, 1, src.imm) }
+        else {
+            int isz = 4
+            if size == 2 { isz = 2 }
+            if size == 8 && !fits32s(src.imm) { fail(a, "immediate too large") }
+            enc(a, pre, w, 129, 0 - 1, 0 - 1, d, false, dst, isz, src.imm)
+        }
+    } else if src.kind == 1 {
+        int op = d * 8 + 1
+        if size == 1 { op = d * 8 }
+        enc(a, pre, w, op, 0 - 1, 0 - 1, src.reg, size == 1, dst, 0, 0)
+    } else if src.kind == 3 && dst.kind == 1 {
+        int op = d * 8 + 3
+        if size == 1 { op = d * 8 + 2 }
+        enc(a, pre, w, op, 0 - 1, 0 - 1, dst.reg, size == 1, src, 0, 0)
+    } else {
+        fail(a, "unsupported operands")
+    }
+}
+
+// mov of `size` bytes (integer registers / memory / immediates)
+void mov(Asm* a, int size, Opnd src, Opnd dst) {
+    bool w = size == 8
+    int pre = 0
+    if size == 2 { pre = 102 }
+    // movq between an xmm register and a general one
+    if size == 8 && src.kind == 1 && src.size == 16 { enc(a, 102, true, 15, 126, 0 - 1, src.reg, false, dst, 0, 0); return }
+    if size == 8 && dst.kind == 1 && dst.size == 16 { enc(a, 102, true, 15, 110, 0 - 1, dst.reg, false, src, 0, 0); return }
+    if src.kind == 2 {
+        int isz = 4
+        if size == 2 { isz = 2 } else if size == 1 { isz = 1 }
+        if size == 8 && !fits32s(src.imm) { fail(a, "immediate too large (movabsq)") }
+        int op = 199
+        if size == 1 { op = 198 }
+        enc(a, pre, w, op, 0 - 1, 0 - 1, 0, false, dst, isz, src.imm)
+    } else if src.kind == 1 {
+        int op = 137
+        if size == 1 { op = 136 }
+        enc(a, pre, w, op, 0 - 1, 0 - 1, src.reg, size == 1, dst, 0, 0)
+    } else if src.kind == 3 && dst.kind == 1 {
+        int op = 139
+        if size == 1 { op = 138 }
+        enc(a, pre, w, op, 0 - 1, 0 - 1, dst.reg, size == 1, src, 0, 0)
+    } else {
+        fail(a, "unsupported mov")
+    }
+}
+
+void need(Asm* a, string[dynamic] ops, int n) {
+    if ops.len != n { fail(a, "expected " + int_to_str(n) + " operand(s)") }
+}
+
+void instruction(Asm* a, string mn, string[dynamic] ops) {
+    int n = ops.len
+    Opnd x = no_opnd()
+    Opnd y = no_opnd()
+    if n > 0 { x = parse_opnd(a, ops[0]) }
+    if n > 1 { y = parse_opnd(a, ops[1]) }
+    if !a.o.ok { return }
+    int ml = mn.len
+    char last = mn[ml - 1]
+
+    // no operands
+    if mn == "ret" { byte(a, 195); return }
+    if mn == "leave" { byte(a, 201); return }
+    if mn == "cqto" { byte(a, 72); byte(a, 153); return }
+
+    // jumps and calls
+    if mn == "jmp" { need(a, ops, 1); byte(a, 233); rel32(a, x.sym); return }
+    if mn == "call" { need(a, ops, 1); byte(a, 232); rel32(a, x.sym); return }
+    if ml >= 2 && mn[0] == 'j' {
+        int cc = cc_code(substr(mn, 1, ml - 1))
+        if cc >= 0 && n == 1 && x.kind == 4 { byte(a, 15); byte(a, 128 + cc); rel32(a, x.sym); return }
+    }
+    if ml >= 4 && substr(mn, 0, 3) == "set" {
+        int cc = cc_code(substr(mn, 3, ml - 3))
+        if cc >= 0 && n == 1 { enc(a, 0, false, 15, 144 + cc, 0 - 1, 0, false, x, 0, 0); return }
+    }
+
+    // push / pop
+    if mn == "pushq" || mn == "popq" {
+        need(a, ops, 1)
+        if x.reg >= 8 { byte(a, 65) }
+        if mn == "pushq" { byte(a, 80 + (x.reg & 7)) } else { byte(a, 88 + (x.reg & 7)) }
+        return
+    }
+
+    // integer ALU: add / or / and / sub / xor / cmp + size
+    if ml >= 3 && ml <= 5 {
+        string base = substr(mn, 0, ml - 1)
+        int sz = size_of(last)
+        int d = 0 - 1
+        if base == "add" { d = 0 } else if base == "or" { d = 1 } else if base == "and" { d = 4 }
+        else if base == "sub" { d = 5 } else if base == "xor" { d = 6 } else if base == "cmp" { d = 7 }
+        if d >= 0 && sz > 0 { need(a, ops, 2); alu(a, d, sz, x, y); return }
+    }
+
+    // moves
+    if mn == "movq" || mn == "movl" || mn == "movw" || mn == "movb" { need(a, ops, 2); mov(a, size_of(last), x, y); return }
+    if mn == "movabsq" {
+        need(a, ops, 2)
+        if y.reg >= 8 { byte(a, 73) } else { byte(a, 72) }
+        byte(a, 184 + (y.reg & 7))
+        bytes_le(a, x.imm, 8)
+        return
+    }
+    if mn == "movsbq" { enc(a, 0, true, 15, 190, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movswq" { enc(a, 0, true, 15, 191, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movzbq" { enc(a, 0, true, 15, 182, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movzwq" { enc(a, 0, true, 15, 183, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movzbl" { enc(a, 0, false, 15, 182, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movzwl" { enc(a, 0, false, 15, 183, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movslq" { enc(a, 0, true, 99, 0 - 1, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "leaq" { need(a, ops, 2); enc(a, 0, true, 141, 0 - 1, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movd" {
+        need(a, ops, 2)
+        if x.size == 16 { enc(a, 102, false, 15, 126, 0 - 1, x.reg, false, y, 0, 0) }   // xmm -> r32
+        else { enc(a, 102, false, 15, 110, 0 - 1, y.reg, false, x, 0, 0) }               // r32 -> xmm
+        return
+    }
+
+    // multiply, divide, unary
+    if mn == "imulq" {
+        need(a, ops, 2)
+        if x.kind == 2 {
+            if fits8(x.imm) { enc(a, 0, true, 107, 0 - 1, 0 - 1, y.reg, false, y, 1, x.imm) }
+            else { enc(a, 0, true, 105, 0 - 1, 0 - 1, y.reg, false, y, 4, x.imm) }
+        } else {
+            enc(a, 0, true, 15, 175, 0 - 1, y.reg, false, x, 0, 0)
+        }
+        return
+    }
+    if mn == "idivq" { enc(a, 0, true, 247, 0 - 1, 0 - 1, 7, false, x, 0, 0); return }
+    if mn == "divq" { enc(a, 0, true, 247, 0 - 1, 0 - 1, 6, false, x, 0, 0); return }
+    if mn == "negq" { enc(a, 0, true, 247, 0 - 1, 0 - 1, 3, false, x, 0, 0); return }
+    if mn == "notq" { enc(a, 0, true, 247, 0 - 1, 0 - 1, 2, false, x, 0, 0); return }
+    if mn == "decq" { enc(a, 0, true, 255, 0 - 1, 0 - 1, 1, false, x, 0, 0); return }
+    if mn == "shlq" || mn == "shrq" || mn == "sarq" {
+        need(a, ops, 2)
+        int d = 4
+        if mn == "shrq" { d = 5 } else if mn == "sarq" { d = 7 }
+        if x.kind == 2 { enc(a, 0, true, 193, 0 - 1, 0 - 1, d, false, y, 1, x.imm) }
+        else if x.kind == 1 && x.reg == 1 && x.size == 1 { enc(a, 0, true, 211, 0 - 1, 0 - 1, d, false, y, 0, 0) }
+        else { fail(a, "a shift count must be $imm or %cl") }
+        return
+    }
+    if mn == "btcq" { need(a, ops, 2); enc(a, 0, true, 15, 186, 0 - 1, 7, false, y, 1, x.imm); return }
+
+    // SSE scalar
+    int pre = 0
+    if ml > 2 && substr(mn, ml - 2, 2) == "ss" { pre = 243 }
+    if ml > 2 && substr(mn, ml - 2, 2) == "sd" { pre = 242 }
+    if mn == "movss" || mn == "movsd" {
+        need(a, ops, 2)
+        if y.kind == 1 { enc(a, pre, false, 15, 16, 0 - 1, y.reg, false, x, 0, 0) }
+        else { enc(a, pre, false, 15, 17, 0 - 1, x.reg, false, y, 0, 0) }
+        return
+    }
+    if mn == "movaps" { need(a, ops, 2); enc(a, 0, false, 15, 40, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "movups" {
+        need(a, ops, 2)
+        if y.kind == 1 { enc(a, 0, false, 15, 16, 0 - 1, y.reg, false, x, 0, 0) }
+        else { enc(a, 0, false, 15, 17, 0 - 1, x.reg, false, y, 0, 0) }
+        return
+    }
+    if pre != 0 && ml == 5 {
+        string base = substr(mn, 0, 3)
+        int op = 0 - 1
+        if base == "add" { op = 88 } else if base == "mul" { op = 89 } else if base == "sub" { op = 92 } else if base == "div" { op = 94 }
+        if op >= 0 { need(a, ops, 2); enc(a, pre, false, 15, op, 0 - 1, y.reg, false, x, 0, 0); return }
+    }
+    if mn == "sqrtss" || mn == "sqrtsd" { need(a, ops, 2); enc(a, pre, false, 15, 81, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "ucomiss" { need(a, ops, 2); enc(a, 0, false, 15, 46, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "ucomisd" { need(a, ops, 2); enc(a, 102, false, 15, 46, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "cvtsi2ssq" { need(a, ops, 2); enc(a, 243, true, 15, 42, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "cvtsi2sdq" { need(a, ops, 2); enc(a, 242, true, 15, 42, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "cvttss2siq" { need(a, ops, 2); enc(a, 243, true, 15, 44, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "cvttsd2siq" { need(a, ops, 2); enc(a, 242, true, 15, 44, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "cvtss2sd" { need(a, ops, 2); enc(a, 243, false, 15, 90, 0 - 1, y.reg, false, x, 0, 0); return }
+    if mn == "cvtsd2ss" { need(a, ops, 2); enc(a, 242, false, 15, 90, 0 - 1, y.reg, false, x, 0, 0); return }
+
+    fail(a, "unknown instruction " + mn)
+}
+
+// ---- directives ------------------------------------------------------------------------------------
+
+void align_to(Asm* a, int n) {
+    int fill = 0
+    if a.sec == 1 { fill = 144 }   // nop
+    while pos(a) % n != 0 { byte(a, fill) }
+}
+
+// the bytes of an .asciz string (quoted, GNU escapes), then a NUL
+void asciz(Asm* a, string q) {
+    if q.len < 2 || q[0] != '"' || q[q.len - 1] != '"' { fail(a, "expected a quoted string"); return }
+    int i = 1
+    int end = q.len - 1
+    while i < end {
+        char c = q[i]
+        if c == '\\' && i + 1 < end {
+            char e = q[i + 1]
+            i += 2
+            if e == 'n' { byte(a, 10) }
+            else if e == 't' { byte(a, 9) }
+            else if e == 'r' { byte(a, 13) }
+            else if e == 'b' { byte(a, 8) }
+            else if e == 'f' { byte(a, 12) }
+            else if e >= '0' && e <= '7' {
+                int v = cast<int>(e) - cast<int>('0')
+                int k = 0
+                while k < 2 && i < end && q[i] >= '0' && q[i] <= '7' {
+                    v = v * 8 + (cast<int>(q[i]) - cast<int>('0'))
+                    i += 1
+                    k += 1
+                }
+                byte(a, v)
+            } else { byte(a, cast<int>(e)) }   // \\ \" \'
+        } else {
+            byte(a, cast<int>(c))
+            i += 1
+        }
+    }
+    byte(a, 0)
+}
+
+void directive(Asm* a, string s) {
+    int sp = 0 - 1
+    for i in 0..s.len { if sp < 0 && is_space(s[i]) { sp = i } }
+    string name = s
+    string arg = ""
+    if sp >= 0 { name = substr(s, 0, sp); arg = trim(substr(s, sp, s.len - sp)) }
+    if name == ".text" { a.sec = 1 }
+    else if name == ".section" {
+        if arg.len >= 6 && substr(arg, 0, 6) == ".rdata" { a.sec = 2 }
+        else if arg.len >= 5 && substr(arg, 0, 5) == ".text" { a.sec = 1 }
+        else { fail(a, "unknown section " + arg) }
+    }
+    else if name == ".globl" { a.globals.push(arg) }
+    else if name == ".p2align" {
+        int p = parse_num(a, arg)
+        int n = 1
+        for k in 0..p { n = n * 2 }
+        align_to(a, n)
+    }
+    else if name == ".asciz" { asciz(a, arg) }
+    else if name == ".float" { bytes_le(a, strata_f32_bits(arg), 4) }
+    else if name == ".double" { bytes_le(a, strata_f64_bits(arg), 8) }
+    else { fail(a, "unknown directive " + name) }
+}
+
+void define_label(Asm* a, string name) {
+    idx_add(&a.lidx, name, a.lnames.len)
+    a.lnames.push(name)
+    a.lsec.push(a.sec)
+    a.loff.push(pos(a))
+}
+
+int find_label(Asm* a, string name) {
+    int found = 0 - 1
+    int k = idx_first(&a.lidx, name)
+    while k >= 0 && found < 0 {
+        if a.lnames[k] == name { found = k }
+        k = idx_next(&a.lidx, k)
+    }
+    return found
+}
+
+int symbol_index(Asm* a, string name, int section, int value) {
+    int found = 0 - 1
+    int k = idx_first(&a.sidx, name)
+    while k >= 0 && found < 0 {
+        if a.o.symbols[k].name == name { found = k }
+        k = idx_next(&a.sidx, k)
+    }
+    if found >= 0 { return found }
+    idx_add(&a.sidx, name, a.o.symbols.len)
+    bool global = section == 0
+    for i in 0..a.globals.len { if a.globals[i] == name { global = true } }
+    a.o.symbols.push(ObjSymbol{ name, section, value, global })
+    return a.o.symbols.len - 1
+}
+
+void patch32(Asm* a, int at, int v) {
+    u64 x = cast<u64>(v)
+    for i in 0..4 {
+        a.o.text[at + i] = cast<u8>(cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+
+// ---- the whole text ------------------------------------------------------------------------------------
+
+export ObjFile assemble_x64(string src) {
+    int lines = 1
+    int n = src.len
+    for i in 0..n { if src[i] == '\n' { lines += 1 } }
+    u8[dynamic] t = []
+    u8[dynamic] r = []
+    ObjReloc[dynamic] rl = []
+    ObjSymbol[dynamic] sy = []
+    string[dynamic] ln = []
+    int[dynamic] ls = []
+    int[dynamic] lo = []
+    string[dynamic] gl = []
+    Fix[dynamic] fx = []
+    Asm a = Asm{ ObjFile{ true, "", t, r, rl, sy }, 1, ln, ls, lo, new_idx(lines / 2 + 16), gl, fx, new_idx(lines / 8 + 16), 0, "" }
+
+    int start = 0
+    int i = 0
+    while i <= n && a.o.ok {
+        if i == n || src[i] == '\n' {
+            a.line += 1
+            string s = trim(substr(src, start, i - start))
+            a.text = s
+            if s.len > 0 && s[0] != '#' {
+                if s[s.len - 1] == ':' { define_label(&a, substr(s, 0, s.len - 1)) }
+                else if s[0] == '.' { directive(&a, s) }
+                else {
+                    int sp = 0 - 1
+                    for k in 0..s.len { if sp < 0 && is_space(s[k]) { sp = k } }
+                    if sp < 0 { instruction(&a, s, split_operands("")) }
+                    else { instruction(&a, substr(s, 0, sp), split_operands(substr(s, sp, s.len - sp))) }
+                }
+            }
+            start = i + 1
+        }
+        i += 1
+    }
+    if !a.o.ok { return a.o }
+
+    // symbols for the functions (non-local .text labels)
+    for k in 0..a.lnames.len {
+        string nm = a.lnames[k]
+        if a.lsec[k] == 1 && !(nm.len > 1 && nm[0] == '.' && nm[1] == 'L') { symbol_index(&a, nm, 1, a.loff[k]) }
+    }
+    // fixups: jumps within .text resolve here; the rest become relocations
+    for k in 0..a.fixes.len {
+        Fix f = a.fixes[k]
+        int li = find_label(&a, f.label)
+        if li >= 0 && a.lsec[li] == 1 {
+            patch32(&a, f.pos, a.loff[li] + f.addend - (f.pos + 4 + f.after))
+        } else if li >= 0 {
+            patch32(&a, f.pos, a.loff[li] + f.addend)
+            a.o.relocs.push(ObjReloc{ f.pos, 0 - 2, f.after })
+        } else {
+            patch32(&a, f.pos, f.addend)
+            a.o.relocs.push(ObjReloc{ f.pos, symbol_index(&a, f.label, 0, 0), f.after })
+        }
+    }
+    return a.o
+}

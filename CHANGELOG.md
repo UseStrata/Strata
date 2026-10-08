@@ -4,6 +4,29 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
+## [Unreleased]
+### Added
+- **Strata's own x86-64 assembler** (`src/x64asm.strata`) and **COFF object writer**
+  (`src/coff.strata`): native builds no longer run an assembler. The backend's assembly
+  becomes machine code inside `stratac` and is written as a Windows object file
+  (`<name>.o`); the C toolchain only links it with the runtime. It encodes every
+  instruction form the backend uses (moves and extensions, integer ALU, multiply /
+  divide, shifts, setcc, jumps / calls with 32-bit displacements, push / pop, SSE scalar
+  arithmetic, compares and conversions), `.text` / `.rdata`, `.globl`, `.p2align`,
+  `.asciz`, `.float` / `.double`, and relocations (REL32, against sections or external
+  symbols, with the >65535-relocation overflow form).
+  - Verified against GNU as: across every example (debug and optimized) plus a
+    20k-line program - 414,234 instructions - the object files disassemble to the same
+    instructions with the same relocations. It assembles that 3.4 MB of assembly in
+    157 ms (GNU as: 232 ms); the 20k-line native build went from 0.97 to 0.87 s.
+- `stratac assemble <file.s> [out.o]`: the assembler on its own.
+- Test (64): the assembler's output vs GNU as's, instruction by instruction, for ten
+  examples in both modes (needs objdump; skipped without it).
+
+### Changed
+- If the assembler ever rejects the backend's output, `--backend auto` builds with C
+  instead (and `--backend native` reports it as an internal error).
+
 ## [2.0.0] - 2026-10-08
 The first step toward a Strata that depends on nothing but the operating system: it now
 compiles programs to **x86-64 machine code itself**, with its own optimizer. C stays

@@ -35,7 +35,7 @@ typed AST
    ▼  opt      IR → better IR,     ▼  gcc / cc / clang
    │           registers          native executable
    ▼  x64      IR → assembly       (the native backend, the default where it can)
- foo.s  →  assembler + linker  →  native executable
+ foo.s  →  x64asm (Strata's assembler) → coff → foo.o  →  linker  →  native executable
 ```
 
 Two backends share everything up to the typed AST. The native one is Strata's own:
@@ -154,6 +154,10 @@ compiler/
 - **`x64.strata`**: IR → GNU-as AT&T assembly for Windows x64: frame layout, the calling
   convention, immediates and folded addresses ("lazy" vregs never get a home),
   compare+branch fusion, stack probes. **`native.strata`** drives lower → opt → x64.
+- **`x64asm.strata`**: Strata's assembler — the GNU-as AT&T subset `x64` writes → bytes,
+  symbols, relocations (`ObjFile`). Jumps always rel32 (sizes never depend on label
+  positions: one pass + fixups). **`coff.strata`** writes it as a Windows COFF object.
+  Test: its objects disassemble to exactly GNU as's instructions.
 - **Must NOT**: lower must not know the CPU (beyond the ABI rules); the target must not
   know the language. Test: every run golden, through each backend, must print the same.
 
@@ -325,20 +329,20 @@ Two takeaways:
 ## 10. Toolchain & on-disk layout
 
 A C/C++ compiler is a **driver** that runs a chain of programs — preprocessor → compiler
-→ assembler → linker. Strata does the compiling itself and, for now, borrows the C
-toolchain's assembler and linker:
+→ assembler → linker. Strata compiles and assembles itself and, for now, borrows the C
+toolchain's linker:
 
 ```
 stratac run foo.strata                         (native backend: x86-64 Windows, no C headers)
-  → (in-process) lexer → parser → checker → lower → opt → x64  → foo.s
-  → gcc foo.s <install>/lib/srt.c -o foo.exe     (assemble + link with the runtime)
+  → (in-process) lexer → parser → checker → lower → opt → x64 → x64asm → coff → foo.o
+  → gcc foo.o <install>/lib/srt.c -o foo.exe     (link with the runtime)
 
 stratac run foo.strata --backend c             (C backend: any platform, C interop)
   → ... → checker → codegen → foo.c → gcc/cc -O2 foo.c -I <install>/lib -o foo
 ```
 
 **The road to depending on nothing but the OS** (each step keeps the C path working):
-write object files directly (no assembler) → Strata's own linker (no gcc for native
+~~write object files directly (no assembler)~~ (done) → Strata's own linker (no gcc for native
 builds) → the runtime (`srt.c`, `lib/*.h`) rewritten in Strata on OS calls (no libc) →
 C header import (C libraries / engines natively) → ARM64 and Linux / macOS targets →
 the compiler built by its own native backend (the C seed becomes optional).

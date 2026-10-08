@@ -206,8 +206,13 @@ export bool run_build(BuildSpec s, string libdir) {
         if why == "" && s.dll { why = "the native backend doesn't build dlls yet" }
         if why == "" {
             NativeResult nr = native_compile(prog, true, s.release)
-            if nr.ok { return native_build(s, libdir, prog, nr.asm_text) }
-            why = nr.why
+            if nr.ok {
+                ObjFile ob = assemble_x64(nr.asm_text)   // Strata's own assembler
+                if ob.ok { return native_build(s, libdir, prog, nr.asm_text, &ob) }
+                why = "internal error in the assembler: " + ob.err
+            } else {
+                why = nr.why
+            }
         }
         if s.backend == "native" {
             strata_report(basename_of(s.entry) + ": error: can't build natively: " + why + " (use --backend c)")
@@ -277,16 +282,17 @@ export bool run_build(BuildSpec s, string libdir) {
 }
 
 // ---- native builds ------------------------------------------------------------------
-// The program as assembly (<name>.s beside where the C would go), assembled and linked
-// with the runtime (lib/srt.c) by the C toolchain - for now: Strata's own assembler and
-// linker come next.
+// The program as machine code: Strata's assembler (x64asm.strata) turns the backend's
+// assembly into an object file (<name>.o beside where the C would go, coff.strata), and
+// the C toolchain links it with the runtime (lib/srt.c) - for now: Strata's own linker
+// comes next.
 
-bool native_build(BuildSpec s, string libdir, Program prog, string asm_text) {
-    string asm_file = stem_of(s.out_c) + ".s"
+bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, ObjFile* ob) {
+    string obj_file = stem_of(s.out_c) + ".o"
     string[dynamic] argv = []
     argv.push(strata_cc())
     argv.push("-O2")
-    argv.push(asm_file)
+    argv.push(obj_file)
     argv.push(libdir + "/srt.c")
     argv.push("-I" + libdir)
     for i in 0..s.c_sources.len    { argv.push(s.c_sources[i]) }
@@ -312,10 +318,10 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text) {
             if !s.quiet { strata_report("up to date: " + s.out_bin) }
             return true
         }
-        string dir = dirname_of(asm_file)
+        string dir = dirname_of(obj_file)
         if dir != "." { strata_make_dirs(dir) }
     }
-    write_file(asm_file, asm_text)
+    if !write_coff(obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
     if strata_run_argv(&argv) != 0 { return false }
     if s.cache_file != "" { write_file(s.cache_file, key) }
     if !s.quiet { strata_report("built " + s.out_bin + " (native)") }

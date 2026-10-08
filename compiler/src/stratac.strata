@@ -101,6 +101,18 @@ int cmd_native(string path, bool show_ir, bool opt) {
     return 0
 }
 
+// `stratac assemble file.s [out.o]`: Strata's x86-64 assembler on its own (GNU-as AT&T
+// syntax, the subset the native backend writes) -> a Windows COFF object file.
+int cmd_assemble(string path, string out) {
+    string src = read_file(path)
+    if src.len == 0 { print("error: cannot read " + path); return 1 }
+    ObjFile ob = assemble_x64(src)
+    if !ob.ok { print(basename_of(path) + ": error: " + ob.err); return 1 }
+    if out == "" { out = stem_of(path) + ".o" }
+    if !write_coff(out, &ob) { print("error: cannot write " + out); return 1 }
+    return 0
+}
+
 BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, string backend) {
     BuildSpec s = target_spec(t, stratac_version(), release, force, quiet)
     s.backend = backend
@@ -170,6 +182,7 @@ int usage() {
     print("  stratac emit   [target]          print the generated C")
     print("  stratac asm    [target] [--release]   print the generated assembly (native backend)")
     print("  stratac ir     [target] [--release]   print the native backend's IR")
+    print("  stratac assemble <file.s> [out.o]     assemble x86-64 (AT&T) into an object file")
     print("  stratac ast    <file.strata>     parse and print the AST")
     print("  stratac tokens <file.strata>     print the token stream")
     print("")
@@ -218,6 +231,12 @@ int dmm_main(string[dynamic] args) {
     if cmd == "new" {
         if !have_target { print("usage: stratac new <name>"); return 2 }
         return cmd_new(target)
+    }
+    if cmd == "assemble" {
+        if !have_target { print("usage: stratac assemble <file.s> [out.o]"); return 2 }
+        string out = ""
+        if prog_args.len > 0 { out = prog_args[0] }
+        return cmd_assemble(target, out)
     }
     if cmd == "tokens" || cmd == "ast" {
         if !have_target { return usage() }

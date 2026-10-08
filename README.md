@@ -73,8 +73,8 @@ Strata.md   the founding project plan
 ## Build & run
 
 Requires a C compiler: `gcc` (MinGW) on Windows; `cc` (clang or gcc) on macOS and Linux,
-or set `STRATA_CC`. (On x86-64 Windows, Strata generates the machine code itself and uses
-the toolchain only to assemble and link — `--backend c` goes through C instead.) To just
+or set `STRATA_CC`. (On x86-64 Windows, Strata generates and assembles the machine code itself and uses
+the toolchain only to link — `--backend c` goes through C instead.) To just
 *use* Strata, grab a release, or run the installer below.
 
 The compiler is written in Strata, so the build bootstraps it. On **Windows** it downloads

@@ -187,6 +187,33 @@ static inline long long strata_run_cc_parallel(const Array* rsp_files, long long
     return failed;
 }
 
+/* ---- binary files and float bits (the native backend's assembler) ------------------- */
+
+/* Write a u8[dynamic] to a file, exactly. True if it all got written. */
+static inline bool strata_write_bytes(const char* path, const Array* bytes) {
+    FILE* f = fopen(path, "wb");
+    if (!f) return false;
+    size_t n = (size_t)bytes->len;
+    size_t w = n ? fwrite(bytes->data, 1, n, f) : 0;
+    fclose(f);
+    return w == n;
+}
+
+/* A decimal float literal's IEEE bits, correctly rounded (as an assembler's .float /
+ * .double would store them). */
+static inline long long strata_f32_bits(const char* text) {
+    float v = strtof(text, NULL);
+    unsigned int b;
+    memcpy(&b, &v, 4);
+    return (long long)b;
+}
+static inline long long strata_f64_bits(const char* text) {
+    double v = strtod(text, NULL);
+    long long b;
+    memcpy(&b, &v, 8);
+    return b;
+}
+
 /* ---- memory --------------------------------------------------------------- */
 
 /* Free one dynamic array's buffer now (e.g. a module's tokens once it's parsed) and leave

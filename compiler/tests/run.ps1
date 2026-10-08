@@ -111,6 +111,41 @@ foreach ($backend in @("native", "c")) {
     if ($bad.Count -eq 0) { Write-Host "PASS  backend/$backend (every run golden)" -ForegroundColor Green; $pass++ }
     else { Write-Host "FAIL  backend/$backend ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
 }
+# Strata's assembler: for each example (debug and optimized), its object file must
+# disassemble to exactly the instructions GNU as makes of the same assembly (jump targets,
+# padding and objdump's address comments aside: GNU as picks short jumps).
+if (Get-Command objdump -ErrorAction SilentlyContinue) {
+    $tmp = Join-Path $here "embed\build"
+    if (-not (Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp | Out-Null }
+    $sFile = Join-Path $tmp "asmcheck.s"; $gasObj = Join-Path $tmp "asmcheck_gas.o"; $ourObj = Join-Path $tmp "asmcheck_ours.o"
+    function Get-Insns([string]$obj) {
+        & objdump -d --no-show-raw-insn $obj | ForEach-Object {
+            if ($_ -match '^\s+[0-9a-f]+:\t(.*)$') {
+                $i = $Matches[1] -replace '\s*#.*$','' -replace '^(j[a-z]+|call)\s+.*$','$1' -replace '\s+',' '
+                $i = $i.Trim()
+                if ($i -notmatch 'nop' -and $i -ne 'xchg %ax,%ax') { $i }
+            }
+        }
+    }
+    $bad = @(); $count = 0
+    foreach ($name in @("abi", "hello", "loops", "matrix", "run1", "strings", "switch", "arrays", "casts", "list")) {
+        foreach ($mode in @(@(), @("--release"))) {
+            $asmText = (& $strata asm (Join-Path $examples "$name.strata") @mode) -join "`n"
+            [IO.File]::WriteAllText($sFile, $asmText + "`n")
+            & gcc -c $sFile -o $gasObj 2>&1 | Out-Null
+            & $strata assemble $sFile $ourObj | Out-Null
+            if ($LASTEXITCODE -ne 0) { $bad += "$name $mode (assembler failed)"; continue }
+            $g = @(Get-Insns $gasObj); $o = @(Get-Insns $ourObj)
+            $count += $g.Count
+            if (($g -join "`n") -ne ($o -join "`n")) { $bad += "$name $mode" }
+        }
+    }
+    if ($bad.Count -eq 0) { Write-Host "PASS  backend/assembler ($count instructions identical to GNU as)" -ForegroundColor Green; $pass++ }
+    else { Write-Host "FAIL  backend/assembler ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
+} else {
+    Write-Host "SKIP  backend/assembler (no objdump)" -ForegroundColor Yellow
+}
+
 # the native backend's own assembly (a smoke test of `stratac asm`)
 $asm = (& $strata asm (Join-Path $examples "run1.strata")) -join "`n"
 if ($LASTEXITCODE -eq 0 -and $asm -match "call fib" -and $asm -match "(?m)^fib:") {
