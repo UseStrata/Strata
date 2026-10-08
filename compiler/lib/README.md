@@ -14,11 +14,13 @@ installed beside `stratac` (`<install>/lib/`), which finds it there.
 | `sstate.h` | how runtime state is declared (one C file, or shared by a split build) |
 | `crossplatform.h` | a single-header platform layer (Window, System, Files, Process) |
 | `srt.c` | the entry points (`srt_*`) that natively compiled programs call into |
+| `srt.o` | `srt.c` compiled (by `build.ps1`; not in git) — what Strata's linker links |
 
 The **C backend** passes `-I <install>/lib` so generated C can `#include` the headers.
 The **native backend** (Strata's own x86-64 code) calls the `srt_*` functions in `srt.c`,
-which wrap the same headers, so both backends behave alike. For now `srt.c` is compiled
-by the C toolchain; it is the next piece to be written in Strata itself.
+which wrap the same headers, so both backends behave alike. Strata's linker links the
+prebuilt `srt.o`, so native builds need no C compiler; `srt.c` may therefore only call
+what Windows' `msvcrt.dll` exports. It is the next piece to be written in Strata itself.
 
 License: GPL-3.0 with the runtime linking exception (`../../LICENSE-RUNTIME.md`):
 programs built with Strata are not covered by the GPL.

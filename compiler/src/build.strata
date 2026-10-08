@@ -309,6 +309,14 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     argv.push(s.out_bin)
     string cmd = spaced(argv)
 
+    // Strata's own linker, when the program needs nothing but the runtime (lib/srt.o,
+    // made by build.ps1) and the system DLLs; else the C toolchain links
+    string[dynamic] oa2 = os_link_args(prog, s)
+    bool links_c = s.c_sources.len > 0 || s.libs.len > 0 || s.lib_dirs.len > 0 || s.frameworks.len > 0 || oa2.len > 0
+    for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { links_c = true } }
+    bool own = !links_c && strata_file_exists(libdir + "/srt.o")
+    if own { cmd = "strata-link " + libdir + "/srt.o" }
+
     string key = ""
     if s.cache_file != "" {
         string all = asm_text + "\n" + cmd + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.c")
@@ -322,7 +330,18 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
         if dir != "." { strata_make_dirs(dir) }
     }
     if !write_coff(obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
-    if strata_run_argv(&argv) != 0 { return false }
+    bool linked = false
+    if own {
+        Linker* lk = new_linker()
+        link_add(lk, obj_file, coff_bytes(ob))
+        link_add(lk, "srt.o", strata_read_bytes(libdir + "/srt.o"))
+        linked = lk.ok && link_exe(lk, s.out_bin)
+        if !linked && s.backend == "native" {
+            strata_report(basename_of(s.entry) + ": error: internal error in the linker: " + lk.err)
+            return false
+        }
+    }
+    if !linked && strata_run_argv(&argv) != 0 { return false }
     if s.cache_file != "" { write_file(s.cache_file, key) }
     if !s.quiet { strata_report("built " + s.out_bin + " (native)") }
     return true

@@ -29,6 +29,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage 'include') | Out-Nul
 foreach ($f in 'stratac.exe','console.exe','libstrata.dll','libstrata.dll.a') { Copy-Item (Join-Path $bin $f) (Join-Path $stage $f) }
 Copy-Item (Join-Path $lib '*.h') (Join-Path $stage 'lib')
 Copy-Item (Join-Path $lib 'srt.c') (Join-Path $stage 'lib')   # the native backend's runtime
+Copy-Item (Join-Path $lib 'srt.o') (Join-Path $stage 'lib')   # ... compiled: Strata's linker links it
 # the embedding API: C header, C++ wrapper, C# bindings
 foreach ($f in 'strata.h','strata.hpp','Strata.cs') { Copy-Item (Join-Path $here "api\$f") (Join-Path $stage "include\$f") }
 foreach ($f in 'LICENSE','LICENSE-RUNTIME.md','LICENSE-EMBEDDING.md','README.md','CHANGELOG.md') {
@@ -43,5 +44,5 @@ Compress-Archive -Path $stage -DestinationPath $zip
 
 Write-Host ""
 Write-Host "packaged: $zip" -ForegroundColor Green
-Write-Host "note: programs build with Strata's own x86-64 backend, assembled and linked by gcc"
-Write-Host "      (which the C backend also uses); Strata's own assembler and linker come next."
+Write-Host "note: native builds need no C compiler (Strata compiles, assembles and links them);"
+Write-Host "      the C backend (programs importing C headers, other platforms) uses gcc / cc."

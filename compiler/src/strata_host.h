@@ -199,6 +199,37 @@ static inline bool strata_write_bytes(const char* path, const Array* bytes) {
     return w == n;
 }
 
+/* A whole file as a u8[dynamic] (empty if it can't be read). */
+static inline Array strata_read_bytes(const char* path) {
+    Array a = arr_make(1);
+    FILE* f = fopen(path, "rb");
+    if (!f) return a;
+    unsigned char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
+        for (size_t i = 0; i < n; i++) arr_push(&a, &buf[i]);
+    }
+    fclose(f);
+    return a;
+}
+
+/* The NUL-terminated string at bytes[at..] (at most `max` bytes), as a compiler string. */
+static inline const char* strata_bytes_cstr(const Array* b, long long at, long long max) {
+    const unsigned char* p = (const unsigned char*)b->data;
+    long long n = 0;
+    while (n < max && at + n < b->len && p[at + n]) n++;
+    char* r = (char*)arena_alloc(strata_str_arena(), (size_t)n + 1);
+    if (n > 0) memcpy(r, p + at, (size_t)n);
+    r[n] = 0;
+    return r;
+}
+
+/* An environment variable's value ("" if unset). */
+static inline const char* strata_getenv(const char* name) {
+    const char* v = getenv(name);
+    return v ? v : "";
+}
+
 /* A decimal float literal's IEEE bits, correctly rounded (as an assembler's .float /
  * .double would store them). */
 static inline long long strata_f32_bits(const char* text) {

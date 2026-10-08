@@ -35,7 +35,7 @@ typed AST
    ▼  opt      IR → better IR,     ▼  gcc / cc / clang
    │           registers          native executable
    ▼  x64      IR → assembly       (the native backend, the default where it can)
- foo.s  →  x64asm (Strata's assembler) → coff → foo.o  →  linker  →  native executable
+ foo.s  →  x64asm (assembler) → coff → foo.o  →  pelink (linker, + srt.o)  →  foo.exe
 ```
 
 Two backends share everything up to the typed AST. The native one is Strata's own:
@@ -158,6 +158,11 @@ compiler/
   symbols, relocations (`ObjFile`). Jumps always rel32 (sizes never depend on label
   positions: one pass + fixups). **`coff.strata`** writes it as a Windows COFF object.
   Test: its objects disassemble to exactly GNU as's instructions.
+- **`pelink.strata`**: Strata's linker — COFF objects (the program's, the runtime's
+  prebuilt `lib/srt.o`, a startup stub) → a PE executable. Merges sections, resolves
+  symbols, applies relocations, and resolves the rest from the **system DLLs' export
+  tables** (msvcrt.dll, kernel32.dll) — no import libraries. Fixed image base, no ASLR
+  relocations yet. Test: native builds with no gcc on PATH.
 - **Must NOT**: lower must not know the CPU (beyond the ABI rules); the target must not
   know the language. Test: every run golden, through each backend, must print the same.
 
@@ -329,21 +334,21 @@ Two takeaways:
 ## 10. Toolchain & on-disk layout
 
 A C/C++ compiler is a **driver** that runs a chain of programs — preprocessor → compiler
-→ assembler → linker. Strata compiles and assembles itself and, for now, borrows the C
-toolchain's linker:
+→ assembler → linker. For native builds Strata is all of those itself:
 
 ```
 stratac run foo.strata                         (native backend: x86-64 Windows, no C headers)
   → (in-process) lexer → parser → checker → lower → opt → x64 → x64asm → coff → foo.o
-  → gcc foo.o <install>/lib/srt.c -o foo.exe     (link with the runtime)
+  → (in-process) pelink: foo.o + <install>/lib/srt.o + msvcrt.dll imports → foo.exe
+    (a program linking C libraries: gcc links it, with lib/srt.c)
 
 stratac run foo.strata --backend c             (C backend: any platform, C interop)
   → ... → checker → codegen → foo.c → gcc/cc -O2 foo.c -I <install>/lib -o foo
 ```
 
 **The road to depending on nothing but the OS** (each step keeps the C path working):
-~~write object files directly (no assembler)~~ (done) → Strata's own linker (no gcc for native
-builds) → the runtime (`srt.c`, `lib/*.h`) rewritten in Strata on OS calls (no libc) →
+~~write object files directly (no assembler)~~ (done, 2.1) → ~~Strata's own linker (no gcc
+for native builds)~~ (done, 2.1) → the runtime (`srt.c`, `lib/*.h`) rewritten in Strata on OS calls (no libc) →
 C header import (C libraries / engines natively) → ARM64 and Linux / macOS targets →
 the compiler built by its own native backend (the C seed becomes optional).
 

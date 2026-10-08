@@ -1,0 +1,659 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/pelink.strata - Strata's linker: COFF object files -> a Windows x64 executable (PE).
+// CORE.
+//
+// What it takes: x86-64 COFF objects (Strata's own, from coff.strata, and the runtime's
+// lib/srt.o compiled ahead of time). What it does:
+//   * merges their sections into .text / .rdata / .data / .bss (by name, `$` suffixes
+//     grouped; .drectve, debug info and unwind tables are dropped);
+//   * resolves their global symbols; whatever stays undefined is IMPORTED - looked up in
+//     the export tables of the system DLLs themselves (msvcrt.dll, kernel32.dll in
+//     System32), so no import libraries are needed. A call to an import goes through a
+//     6-byte jump stub; `__imp_name` is the import's address slot (IAT) itself;
+//   * applies the relocations (REL32 and its +1..5 forms, ADDR64, ADDR32NB, ADDR32);
+//   * lays the image out at a fixed base (0x140000000: no relocation table) and writes
+//     the PE file with its import directory.
+// The entry point is `_strata_start` (see startup_asm): it gets argc / argv from
+// msvcrt's __getmainargs, calls main and exits through msvcrt's exit (flushing stdio).
+
+import x64asm   // ObjFile, assemble_x64 (the startup stub)
+import coff     // coff_bytes
+import hashidx
+import "strata_host.h"   // strata_read_bytes, strata_write_bytes, strata_getenv
+
+// ---- the inputs -----------------------------------------------------------------------------
+
+struct LSec {
+    int    obj
+    string name
+    int    flags
+    int    size
+    int    raw        // file offset of its bytes (0: none, e.g. .bss)
+    int    nrel
+    int    relat      // file offset of its relocations
+    int    out        // output section: 0 .text, 1 .rdata, 2 .data, 3 .bss; -1 dropped
+    int    at         // offset within the output section
+}
+
+// per symbol-table index (an auxiliary record is a slot with section -99)
+struct LSym { string name; int value; int section; int cls }
+
+struct LObj { string name; u8[dynamic] b; int first; int nsec; LSym[dynamic] syms }
+
+export struct Linker {
+    bool             ok
+    string           err
+    LObj[dynamic]    objs
+    LSec[dynamic]    secs
+    // global definitions: name -> section (index into secs) + value
+    string[dynamic]  gname
+    int[dynamic]     gsec
+    int[dynamic]     gval
+    NameIdx          gidx
+    // imports
+    string[dynamic]  imp          // function names
+    int[dynamic]     imp_dll
+    NameIdx          impidx
+    // the DLLs and their exports
+    string[dynamic]  dlls
+    string[dynamic]  exp_name
+    int[dynamic]     exp_dll
+    NameIdx          expidx
+    bool             exports_loaded
+    // layout: per output section
+    int[dynamic]     osize
+    int[dynamic]     orva
+    int[dynamic]     ofile
+    int[dynamic]     oraw
+    u8[dynamic]      text
+    u8[dynamic]      rdata
+    u8[dynamic]      data
+    int              thunks_at    // offset of the import stubs in .text
+    int              imports_at   // offset of the import tables in .rdata
+    int              iat_at       // offset of the IAT block in .rdata
+    int              iat_size
+    int              idt_at
+    int              idt_size
+}
+
+void lk_fail(Linker* l, string msg) {
+    if l.ok { l.err = msg }
+    l.ok = false
+}
+
+int rd16(u8[dynamic] b, int at) { return cast<int>(b[at]) | (cast<int>(b[at + 1]) << 8) }
+int rd32(u8[dynamic] b, int at) { return rd16(b, at) | (rd16(b, at + 2) << 16) }
+string rdstr(u8[dynamic] b, int at, int max) { return strata_bytes_cstr(&b, at, max) }
+
+export Linker* new_linker() {
+    LObj[dynamic] o = []
+    LSec[dynamic] s = []
+    string[dynamic] gn = []
+    int[dynamic] gs = []
+    int[dynamic] gv = []
+    string[dynamic] im = []
+    int[dynamic] id = []
+    string[dynamic] dl = []
+    string[dynamic] en = []
+    int[dynamic] ed = []
+    int[dynamic] a = []
+    int[dynamic] b = []
+    int[dynamic] c = []
+    int[dynamic] d = []
+    u8[dynamic] t = []
+    u8[dynamic] r = []
+    u8[dynamic] dt = []
+    dl.push("msvcrt.dll")
+    dl.push("kernel32.dll")
+    return alloc(Linker{ true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, en, ed, new_idx(8192), false,
+                         a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0 })
+}
+
+// Which output section an input section goes to (-1: dropped).
+int out_of(Linker* l, string name, int flags) {
+    string base = name
+    for i in 0..name.len { if name[i] == '$' && base == name { base = substr(name, 0, i) } }
+    if (flags & 2048) != 0 { return 0 - 1 }                 // IMAGE_SCN_LNK_REMOVE
+    if base == ".text" { return 0 }
+    if base == ".rdata" || base == ".rodata" { return 1 }
+    if base == ".data" { return 2 }
+    if base == ".bss" { return 3 }
+    if base == ".drectve" || base == ".pdata" || base == ".xdata" || base == ".comment" { return 0 - 1 }
+    if base.len >= 6 && substr(base, 0, 6) == ".debug" { return 0 - 1 }
+    lk_fail(l, "unsupported section " + name)
+    return 0 - 1
+}
+
+// Add an object file (its bytes).
+export void link_add(Linker* l, string name, u8[dynamic] b) {
+    if b.len < 20 || rd16(b, 0) != 34404 { lk_fail(l, name + " is not an x86-64 COFF object"); return }
+    int nsec = rd16(b, 2)
+    int symat = rd32(b, 8)
+    int nsym = rd32(b, 12)
+    int shat = 20 + rd16(b, 16)
+    int strat = symat + 18 * nsym
+    int first = l.secs.len
+    int oi = l.objs.len
+    for k in 0..nsec {
+        int h = shat + 40 * k
+        string nm = rdstr(b, h, 8)
+        if nm.len > 1 && nm[0] == '/' {
+            int off = 0
+            for q in 1..nm.len { off = off * 10 + (cast<int>(nm[q]) - cast<int>('0')) }
+            nm = rdstr(b, strat + off, 4096)
+        }
+        int flags = rd32(b, h + 36)
+        l.secs.push(LSec{ oi, nm, flags, rd32(b, h + 16), rd32(b, h + 20), rd16(b, h + 32), rd32(b, h + 24), out_of(l, nm, flags), 0 })
+    }
+    LSym[dynamic] syms = []
+    int k = 0
+    while k < nsym {
+        int at = symat + 18 * k
+        string nm = ""
+        if rd32(b, at) == 0 { nm = rdstr(b, strat + rd32(b, at + 4), 4096) } else { nm = rdstr(b, at, 8) }
+        int sec = rd16(b, at + 12)
+        if sec >= 32768 { sec = sec - 65536 }
+        int naux = cast<int>(b[at + 17])
+        syms.push(LSym{ nm, rd32(b, at + 8), sec, cast<int>(b[at + 16]) })
+        for q in 0..naux { syms.push(LSym{ "", 0, 0 - 99, 0 }) }
+        k = k + 1 + naux
+    }
+    l.objs.push(LObj{ name, b, first, nsec, syms })
+    // its global definitions
+    for i in 0..syms.len {
+        LSym s = syms[i]
+        if s.cls == 2 && s.section > 0 {
+            if find_global(l, s.name) >= 0 { lk_fail(l, "'" + s.name + "' is defined twice (" + name + ")") }
+            idx_add(&l.gidx, s.name, l.gname.len)
+            l.gname.push(s.name)
+            l.gsec.push(first + s.section - 1)
+            l.gval.push(s.value)
+        } else if s.cls == 2 && s.section == 0 && s.value > 0 {
+            lk_fail(l, "'" + s.name + "' is a common symbol (compile C with -fno-common)")
+        }
+    }
+}
+
+int find_global(Linker* l, string name) {
+    int found = 0 - 1
+    int k = idx_first(&l.gidx, name)
+    while k >= 0 && found < 0 {
+        if l.gname[k] == name { found = k }
+        k = idx_next(&l.gidx, k)
+    }
+    return found
+}
+
+int find_import(Linker* l, string name) {
+    int found = 0 - 1
+    int k = idx_first(&l.impidx, name)
+    while k >= 0 && found < 0 {
+        if l.imp[k] == name { found = k }
+        k = idx_next(&l.impidx, k)
+    }
+    return found
+}
+
+// ---- the system DLLs' exports -------------------------------------------------------------------
+
+// RVA -> file offset in a PE file
+int rva_to_file(u8[dynamic] b, int rva) {
+    int pe = rd32(b, 60)
+    int nsec = rd16(b, pe + 6)
+    int sh = pe + 24 + rd16(b, pe + 20)
+    int r = 0 - 1
+    for k in 0..nsec {
+        int h = sh + 40 * k
+        int va = rd32(b, h + 12)
+        int vs = rd32(b, h + 8)
+        if vs < rd32(b, h + 16) { vs = rd32(b, h + 16) }
+        if rva >= va && rva < va + vs { r = rva - va + rd32(b, h + 20) }
+    }
+    return r
+}
+
+void load_exports(Linker* l) {
+    if l.exports_loaded { return }
+    l.exports_loaded = true
+    string sys = strata_getenv("SystemRoot")
+    if sys == "" { sys = "C:\\Windows" }
+    for d in 0..l.dlls.len {
+        u8[dynamic] b = strata_read_bytes(sys + "\\System32\\" + l.dlls[d])
+        if b.len < 64 { lk_fail(l, "cannot read " + l.dlls[d]) }
+        else {
+            int pe = rd32(b, 60)
+            int opt = pe + 24
+            int expdir = rd32(b, opt + 112)   // data directory 0 (PE32+)
+            int ed = rva_to_file(b, expdir)
+            if ed >= 0 {
+                int n = rd32(b, ed + 24)
+                int names = rva_to_file(b, rd32(b, ed + 32))
+                for i in 0..n {
+                    string nm = rdstr(b, rva_to_file(b, rd32(b, names + 4 * i)), 512)
+                    idx_add(&l.expidx, nm, l.exp_name.len)
+                    l.exp_name.push(nm)
+                    l.exp_dll.push(d)
+                }
+            }
+        }
+    }
+}
+
+// the DLL exporting `name` (-1: none)
+int dll_of(Linker* l, string name) {
+    load_exports(l)
+    int found = 0 - 1
+    int k = idx_first(&l.expidx, name)
+    while k >= 0 {
+        if l.exp_name[k] == name && (found < 0 || l.exp_dll[k] < found) { found = l.exp_dll[k] }
+        k = idx_next(&l.expidx, k)
+    }
+    return found
+}
+
+string import_base(string name) {
+    if name.len > 6 && substr(name, 0, 6) == "__imp_" { return substr(name, 6, name.len - 6) }
+    return name
+}
+
+// ---- relocations -----------------------------------------------------------------------------------
+
+int reloc_count(Linker* l, LSec s) {
+    if (s.flags & 16777216) != 0 && s.nrel == 65535 { return rd32(l.objs[s.obj].b, s.relat) - 1 }
+    return s.nrel
+}
+int reloc_first(LSec s) {
+    if (s.flags & 16777216) != 0 && s.nrel == 65535 { return s.relat + 10 }
+    return s.relat
+}
+
+// every undefined symbol a kept section refers to becomes an import
+void find_imports(Linker* l) {
+    for si in 0..l.secs.len {
+        LSec s = l.secs[si]
+        if s.out >= 0 {
+            LObj o = l.objs[s.obj]
+            int n = reloc_count(l, s)
+            int at = reloc_first(s)
+            for r in 0..n {
+                int symi = rd32(o.b, at + 10 * r + 4)
+                LSym y = o.syms[symi]
+                if y.section == 0 && find_global(l, y.name) < 0 {
+                    string base = import_base(y.name)
+                    if find_import(l, base) < 0 {
+                        int d = dll_of(l, base)
+                        if d < 0 { lk_fail(l, "undefined symbol '" + y.name + "' (in " + o.name + ")") }
+                        idx_add(&l.impidx, base, l.imp.len)
+                        l.imp.push(base)
+                        l.imp_dll.push(d)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---- layout -----------------------------------------------------------------------------------------
+
+int align_up(int n, int a) { return (n + a - 1) / a * a }
+
+int sec_align(int flags) {
+    int a = (flags >> 20) & 15
+    if a == 0 { return 16 }
+    int r = 1
+    for i in 1..a { r = r * 2 }
+    return r
+}
+
+// the import tables' parts, in .rdata order: IDT, ILTs, IATs (one block), hint/names, DLL names
+struct ImpLayout { int idt; int ilt; int iat; int names; int dllnames; int end }
+
+int imports_of(Linker* l, int d) {
+    int n = 0
+    for i in 0..l.imp.len { if l.imp_dll[i] == d { n += 1 } }
+    return n
+}
+
+ImpLayout import_layout(Linker* l, int start) {
+    int used = 0
+    for d in 0..l.dlls.len { if imports_of(l, d) > 0 { used += 1 } }
+    int idt = align_up(start, 8)
+    int ilt = idt + 20 * (used + 1)
+    int slots = 0
+    for d in 0..l.dlls.len { int k = imports_of(l, d); if k > 0 { slots += k + 1 } }
+    int iat = ilt + 8 * slots
+    int names = iat + 8 * slots
+    int p = names
+    for i in 0..l.imp.len { p = align_up(p + 2 + l.imp[i].len + 1, 2) }
+    int dn = p
+    for d in 0..l.dlls.len { if imports_of(l, d) > 0 { p = p + l.dlls[d].len + 1 } }
+    return ImpLayout{ idt, ilt, iat, names, dn, p }
+}
+
+// the RVA of import i's IAT slot, and of its jump stub
+int iat_slot(Linker* l, ImpLayout il, int i) {
+    int at = il.iat
+    for d in 0..l.dlls.len {
+        int k = imports_of(l, d)
+        if k > 0 {
+            int pos = 0
+            for j in 0..l.imp.len {
+                if l.imp_dll[j] == d {
+                    if j == i { return l.orva[1] + at + 8 * pos }
+                    pos += 1
+                }
+            }
+            at = at + 8 * (k + 1)
+        }
+    }
+    return 0
+}
+
+int symbol_rva(Linker* l, ImpLayout il, int oi, int symi) {
+    LObj o = l.objs[oi]
+    LSym y = o.syms[symi]
+    if y.section > 0 {
+        LSec s = l.secs[o.first + y.section - 1]
+        if s.out < 0 { lk_fail(l, "a reference to the dropped section " + s.name + " (" + o.name + ")"); return 0 }
+        return l.orva[s.out] + s.at + y.value
+    }
+    if y.section == 0 {
+        int g = find_global(l, y.name)
+        if g >= 0 {
+            LSec s = l.secs[l.gsec[g]]
+            return l.orva[s.out] + s.at + l.gval[g]
+        }
+        int i = find_import(l, import_base(y.name))
+        if i < 0 { lk_fail(l, "undefined symbol '" + y.name + "'"); return 0 }
+        if import_base(y.name) != y.name { return iat_slot(l, il, i) }
+        return l.orva[0] + l.thunks_at + 8 * i
+    }
+    if y.section == 0 - 1 { return y.value }   // absolute
+    lk_fail(l, "unsupported symbol " + y.name)
+    return 0
+}
+
+// read / write little-endian in an output section's bytes
+int get32(u8[dynamic] b, int at) { return rd32(b, at) }
+void put32(u8[dynamic]* b, int at, int v) {
+    for i in 0..4 { b[0][at + i] = cast<u8>((v >> (8 * i)) & 255) }
+}
+void put64(u8[dynamic]* b, int at, int v) {
+    u64 x = cast<u64>(v)
+    for i in 0..8 {
+        b[0][at + i] = cast<u8>(cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+int get64(u8[dynamic] b, int at) {
+    u64 lo = cast<u64>(rd32(b, at)) & cast<u64>(4294967295)
+    u64 hi = cast<u64>(rd32(b, at + 4)) & cast<u64>(4294967295)
+    return cast<int>(lo | (hi << cast<u64>(32)))
+}
+
+int image_base() { return 5368709120 }   // 0x140000000
+
+void apply_relocs(Linker* l, ImpLayout il, int si, u8[dynamic]* out) {
+    LSec s = l.secs[si]
+    LObj o = l.objs[s.obj]
+    int n = reloc_count(l, s)
+    int at = reloc_first(s)
+    for r in 0..n {
+        int va = rd32(o.b, at + 10 * r)
+        int symi = rd32(o.b, at + 10 * r + 4)
+        int typ = rd16(o.b, at + 10 * r + 8)
+        int p = s.at + va
+        int prva = l.orva[s.out] + p
+        int sv = symbol_rva(l, il, s.obj, symi)
+        if typ >= 4 && typ <= 9 {
+            put32(out, p, rd32(out[0], p) + sv - (prva + 4 + (typ - 4)))
+        } else if typ == 1 {
+            put64(out, p, get64(out[0], p) + image_base() + sv)
+        } else if typ == 3 {
+            put32(out, p, rd32(out[0], p) + sv)
+        } else if typ == 2 {
+            put32(out, p, rd32(out[0], p) + image_base() + sv)
+        } else if typ != 0 {
+            lk_fail(l, "unsupported relocation type " + int_to_str(typ) + " in " + o.name)
+        }
+    }
+}
+
+// ---- writing the executable -----------------------------------------------------------------------
+
+struct PeOut { u8[dynamic] b }
+void p8(PeOut* o, int v) { o.b.push(cast<u8>(v & 255)) }
+void p16(PeOut* o, int v) { p8(o, v); p8(o, v >> 8) }
+void p32(PeOut* o, int v) { p8(o, v); p8(o, v >> 8); p8(o, v >> 16); p8(o, v >> 24) }
+void pzero(PeOut* o, int n) { for i in 0..n { p8(o, 0) } }
+void pname(PeOut* o, string s) { for i in 0..8 { if i < s.len { p8(o, cast<int>(s[i])) } else { p8(o, 0) } } }
+
+// The startup code: argc / argv from msvcrt, then main, then exit (which flushes stdio).
+string startup_asm() {
+    string[dynamic] p = []
+    p.push("\t.text\n\t.globl _strata_start\n_strata_start:\n")
+    p.push("\tsubq $72, %rsp\n")
+    p.push("\tmovl $0, 44(%rsp)\n\tleaq 44(%rsp), %rax\n\tmovq %rax, 32(%rsp)\n")      // _startupinfo
+    p.push("\tleaq 64(%rsp), %rcx\n\tleaq 56(%rsp), %rdx\n\tleaq 48(%rsp), %r8\n")      // &argc, &argv, &env
+    p.push("\txorl %r9d, %r9d\n\tcall __getmainargs\n")
+    p.push("\tmovl 64(%rsp), %ecx\n\tmovq 56(%rsp), %rdx\n\tcall main\n")
+    p.push("\tmovl %eax, %ecx\n\tcall exit\n")
+    return strata_join(&p)
+}
+
+// Link everything added so far into the executable `path`. False (with l.err) on failure.
+export bool link_exe(Linker* l, string path) {
+    // the startup code is just another object
+    ObjFile st = assemble_x64(startup_asm())
+    if !st.ok { lk_fail(l, "startup: " + st.err); return false }
+    link_add(l, "startup", coff_bytes(&st))
+    if !l.ok { return false }
+    if find_global(l, "main") < 0 { lk_fail(l, "no main"); return false }
+    find_imports(l)
+    if !l.ok { return false }
+
+    // place the input sections
+    for o in 0..4 { l.osize.push(0); l.orva.push(0); l.ofile.push(0); l.oraw.push(0) }
+    for si in 0..l.secs.len {
+        int out = l.secs[si].out
+        if out >= 0 {
+            int at = align_up(l.osize[out], sec_align(l.secs[si].flags))
+            l.secs[si].at = at
+            l.osize[out] = at + l.secs[si].size
+        }
+    }
+    // import stubs after the code, import tables after the read-only data
+    l.thunks_at = align_up(l.osize[0], 16)
+    l.osize[0] = l.thunks_at + 8 * l.imp.len
+    l.imports_at = align_up(l.osize[1], 16)
+    ImpLayout il = import_layout(l, l.imports_at)
+    if l.imp.len > 0 { l.osize[1] = il.end }
+
+    // addresses: headers, then each section page-aligned in memory, 512-aligned in the file
+    int nout = 0
+    for o in 0..4 { if l.osize[o] > 0 { nout += 1 } }
+    int headers = align_up(64 + 4 + 20 + 240 + 40 * nout, 512)
+    int rva = 4096
+    int fp = headers
+    for o in 0..4 {
+        if l.osize[o] > 0 {
+            l.orva[o] = rva
+            rva = align_up(rva + l.osize[o], 4096)
+            if o != 3 {
+                l.ofile[o] = fp
+                l.oraw[o] = align_up(l.osize[o], 512)
+                fp = fp + l.oraw[o]
+            }
+        }
+    }
+    int image_size = rva
+
+    // the section contents
+    u8[dynamic] text = []
+    u8[dynamic] rdata = []
+    u8[dynamic] data = []
+    for i in 0..l.osize[0] { text.push(cast<u8>(204)) }   // int3 between functions
+    for i in 0..l.osize[1] { rdata.push(cast<u8>(0)) }
+    for i in 0..l.osize[2] { data.push(cast<u8>(0)) }
+    for si in 0..l.secs.len {
+        LSec s = l.secs[si]
+        if s.out >= 0 && s.out != 3 && s.raw > 0 {
+            u8[dynamic] src = l.objs[s.obj].b
+            for i in 0..s.size {
+                if s.out == 0 { text[s.at + i] = src[s.raw + i] }
+                else if s.out == 1 { rdata[s.at + i] = src[s.raw + i] }
+                else { data[s.at + i] = src[s.raw + i] }
+            }
+        }
+    }
+    for si in 0..l.secs.len {
+        int out = l.secs[si].out
+        if out == 0 { apply_relocs(l, il, si, &text) }
+        else if out == 1 { apply_relocs(l, il, si, &rdata) }
+        else if out == 2 { apply_relocs(l, il, si, &data) }
+        else if out == 3 && reloc_count(l, l.secs[si]) > 0 { lk_fail(l, "relocations in .bss") }
+    }
+    if !l.ok { return false }
+
+    // import stubs: jmp *slot(%rip)
+    for i in 0..l.imp.len {
+        int at = l.thunks_at + 8 * i
+        text[at] = cast<u8>(255)
+        text[at + 1] = cast<u8>(37)
+        put32(&text, at + 2, iat_slot(l, il, i) - (l.orva[0] + at + 6))
+    }
+    // import tables
+    int idt_rva = 0
+    int idt_size = 0
+    int iat_rva = 0
+    int iat_size = 0
+    if l.imp.len > 0 {
+        int base = l.orva[1]
+        int ilt = il.ilt
+        int iat = il.iat
+        int dn = il.dllnames
+        int k = 0
+        // hint/name entries
+        int[dynamic] hn = []
+        int p = il.names
+        for i in 0..l.imp.len {
+            hn.push(p)
+            for c in 0..l.imp[i].len { rdata[p + 2 + c] = cast<u8>(cast<int>(l.imp[i][c])) }
+            p = align_up(p + 2 + l.imp[i].len + 1, 2)
+        }
+        for d in 0..l.dlls.len {
+            int cnt = imports_of(l, d)
+            if cnt > 0 {
+                for c in 0..l.dlls[d].len { rdata[dn + c] = cast<u8>(cast<int>(l.dlls[d][c])) }
+                int e = il.idt + 20 * k
+                put32(&rdata, e, base + ilt)          // import lookup table
+                put32(&rdata, e + 12, base + dn)      // DLL name
+                put32(&rdata, e + 16, base + iat)     // import address table
+                for i in 0..l.imp.len {
+                    if l.imp_dll[i] == d {
+                        put64(&rdata, ilt, base + hn[i])
+                        put64(&rdata, iat, base + hn[i])
+                        ilt += 8
+                        iat += 8
+                    }
+                }
+                ilt += 8
+                iat += 8
+                dn = dn + l.dlls[d].len + 1
+                k += 1
+            }
+        }
+        idt_rva = base + il.idt
+        idt_size = 20 * (k + 1)
+        iat_rva = base + il.iat
+        iat_size = il.names - il.iat
+    }
+
+    // the entry point
+    int g = find_global(l, "_strata_start")
+    LSec es = l.secs[l.gsec[g]]
+    int entry = l.orva[es.out] + es.at + l.gval[g]
+
+    // the file
+    u8[dynamic] ob = []
+    PeOut o = PeOut{ ob }
+    p16(&o, 23117)                 // "MZ"
+    pzero(&o, 58)
+    p32(&o, 64)                    // e_lfanew
+    p32(&o, 17744)                 // "PE\0\0"
+    p16(&o, 34404)                 // x86-64
+    p16(&o, nout)
+    p32(&o, 0)
+    p32(&o, 0)
+    p32(&o, 0)
+    p16(&o, 240)                   // optional header size
+    p16(&o, 35)                    // relocs stripped | executable | large address aware
+    p16(&o, 523)                   // PE32+
+    p8(&o, 2)
+    p8(&o, 0)
+    p32(&o, l.oraw[0])             // size of code
+    p32(&o, l.oraw[1] + l.oraw[2]) // initialized data
+    p32(&o, align_up(l.osize[3], 512))
+    p32(&o, entry)
+    p32(&o, l.orva[0])             // base of code
+    p32(&o, 1073741824)            // image base 0x140000000 (low, high)
+    p32(&o, 1)
+    p32(&o, 4096)                  // section alignment
+    p32(&o, 512)                   // file alignment
+    p16(&o, 6)
+    p16(&o, 0)
+    p16(&o, 0)
+    p16(&o, 0)
+    p16(&o, 6)
+    p16(&o, 0)
+    p32(&o, 0)
+    p32(&o, image_size)
+    p32(&o, headers)
+    p32(&o, 0)                     // checksum
+    p16(&o, 3)                     // console subsystem
+    p16(&o, 33024)                 // NX compatible, terminal-server aware (no ASLR: a fixed base)
+    p32(&o, 2097152)               // stack reserve 2 MB
+    p32(&o, 0)
+    p32(&o, 4096)                  // stack commit
+    p32(&o, 0)
+    p32(&o, 1048576)               // heap reserve
+    p32(&o, 0)
+    p32(&o, 4096)
+    p32(&o, 0)
+    p32(&o, 0)                     // loader flags
+    p32(&o, 16)
+    for d in 0..16 {
+        if d == 1 { p32(&o, idt_rva); p32(&o, idt_size) }
+        else if d == 12 { p32(&o, iat_rva); p32(&o, iat_size) }
+        else { p32(&o, 0); p32(&o, 0) }
+    }
+    string[dynamic] names = [".text", ".rdata", ".data", ".bss"]
+    int[dynamic] flags = [1610612768, 1073741888, 3221225536, 3221225600]   // code / rdata / data / bss
+    for s in 0..4 {
+        if l.osize[s] > 0 {
+            pname(&o, names[s])
+            p32(&o, l.osize[s])
+            p32(&o, l.orva[s])
+            p32(&o, l.oraw[s])
+            p32(&o, l.ofile[s])
+            p32(&o, 0)
+            p32(&o, 0)
+            p16(&o, 0)
+            p16(&o, 0)
+            p32(&o, flags[s])
+        }
+    }
+    while o.b.len < headers { p8(&o, 0) }
+    for s in 0..3 {
+        if l.osize[s] > 0 {
+            u8[dynamic] src = text
+            if s == 1 { src = rdata } else if s == 2 { src = data }
+            for i in 0..src.len { o.b.push(src[i]) }
+            while o.b.len < l.ofile[s] + l.oraw[s] { p8(&o, 0) }
+        }
+    }
+    if !strata_write_bytes(path, &o.b) { lk_fail(l, "cannot write " + path); return false }
+    return true
+}

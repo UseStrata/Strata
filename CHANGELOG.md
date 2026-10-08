@@ -4,12 +4,33 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
-## [Unreleased]
+## [2.1.0] - 2026-10-08
+**Native builds need no C compiler.** Strata now compiles, assembles and links a program
+itself: from `.strata` source to a Windows `.exe` with nothing but `stratac` and
+Windows' own DLLs.
+
 ### Added
+- **Strata's own linker** (`src/pelink.strata`): COFF objects -> a Windows x64 PE
+  executable. It merges sections (`.text` / `.rdata` / `.data` / `.bss`), resolves
+  symbols, applies relocations (REL32 and +1..5, ADDR64, ADDR32NB, ADDR32), and resolves
+  what's left by reading the **export tables of the system DLLs themselves**
+  (`msvcrt.dll`, `kernel32.dll`): no import libraries. Calls to imports go through jump
+  stubs; `__imp_` references use the import address table directly. A small startup
+  stub (Strata's own, assembled by its assembler) gets `argc` / `argv` from msvcrt,
+  calls `main` and exits through msvcrt's `exit`.
+  - `lib/srt.o`: the runtime compiled once, by `build.ps1`, and shipped in releases. It
+    calls only what `msvcrt.dll` exports: it now formats integers and floats itself
+    (float output stays byte-identical to the C backend's `%g`).
+  - A program builds in 62 ms (through C and gcc: 308 ms); the 20k-line one in 0.47 s
+    (was 0.87 s). Executables are small (12 KB for the examples) and import only
+    `msvcrt.dll`.
+  - Programs that link C libraries (`link`, `libs`, `c_sources`, crossplatform.h's OS
+    library) are still linked by the C toolchain; so is everything if `lib/srt.o` is
+    missing. If Strata's linker ever fails, `--backend auto` falls back to it too.
 - **Strata's own x86-64 assembler** (`src/x64asm.strata`) and **COFF object writer**
   (`src/coff.strata`): native builds no longer run an assembler. The backend's assembly
   becomes machine code inside `stratac` and is written as a Windows object file
-  (`<name>.o`); the C toolchain only links it with the runtime. It encodes every
+  (`<name>.o`). It encodes every
   instruction form the backend uses (moves and extensions, integer ALU, multiply /
   divide, shifts, setcc, jumps / calls with 32-bit displacements, push / pop, SSE scalar
   arithmetic, compares and conversions), `.text` / `.rdata`, `.globl`, `.p2align`,
@@ -20,12 +41,14 @@ and a GitHub Release.
     instructions with the same relocations. It assembles that 3.4 MB of assembly in
     157 ms (GNU as: 232 ms); the 20k-line native build went from 0.97 to 0.87 s.
 - `stratac assemble <file.s> [out.o]`: the assembler on its own.
-- Test (64): the assembler's output vs GNU as's, instruction by instruction, for ten
-  examples in both modes (needs objdump; skipped without it).
+- Tests (65): the assembler's output vs GNU as's, instruction by instruction, for ten
+  examples in both modes (needs objdump; skipped without it); native builds with **no
+  gcc on PATH** (four examples and the `pure` project).
 
 ### Changed
 - If the assembler ever rejects the backend's output, `--backend auto` builds with C
   instead (and `--backend native` reports it as an internal error).
+- `build.ps1` also builds `lib/srt.o`; `package.ps1` ships it.
 
 ## [2.0.0] - 2026-10-08
 The first step toward a Strata that depends on nothing but the operating system: it now

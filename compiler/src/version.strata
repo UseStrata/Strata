@@ -3,4 +3,4 @@
 //
 // src/version.strata - the compiler's version (shared by the CLI and libstrata).
 
-export string stratac_version() { return "2.0.0 (native)" }
+export string stratac_version() { return "2.1.0 (own assembler + linker)" }

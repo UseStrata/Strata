@@ -146,6 +146,25 @@ if (Get-Command objdump -ErrorAction SilentlyContinue) {
     Write-Host "SKIP  backend/assembler (no objdump)" -ForegroundColor Yellow
 }
 
+# No C compiler at all: with gcc off PATH, native programs still build and run (Strata
+# compiles, assembles and links them; the runtime is the prebuilt lib/srt.o).
+$savedPath = $env:Path
+$env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+$noCc = @()
+try {
+    foreach ($name in @("hello", "abi", "loops", "matrix")) {
+        $out  = ((& $strata run (Join-Path $examples "$name.strata") --backend native) -join "`n") -replace "`r",""
+        $want = ((Get-Content (Join-Path $here "run\$name.expected") -Raw) -replace "`r","").TrimEnd("`n")
+        if ($out.TrimEnd("`n") -ne $want) { $noCc += $name }
+    }
+    $pureDir = Join-Path $here "projects\pure"
+    $out  = ((& $strata run $pureDir --force --backend native) -join "`n") -replace "`r",""
+    $want = ((Get-Content (Join-Path $pureDir "expected.txt") -Raw) -replace "`r","").TrimEnd("`n")
+    if ($out.TrimEnd("`n") -ne $want) { $noCc += "projects/pure" }
+} finally { $env:Path = $savedPath }
+if ($noCc.Count -eq 0) { Write-Host "PASS  backend/no-c-compiler (native builds with no gcc on PATH)" -ForegroundColor Green; $pass++ }
+else { Write-Host "FAIL  backend/no-c-compiler ($($noCc -join ', '))" -ForegroundColor Red; $fail++ }
+
 # the native backend's own assembly (a smoke test of `stratac asm`)
 $asm = (& $strata asm (Join-Path $examples "run1.strata")) -join "`n"
 if ($LASTEXITCODE -eq 0 -and $asm -match "call fib" -and $asm -match "(?m)^fib:") {

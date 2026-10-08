@@ -68,6 +68,19 @@ typedef struct Facts Facts;
 typedef struct RegSet RegSet;
 typedef struct X64 X64;
 typedef struct NativeResult NativeResult;
+typedef struct ObjReloc ObjReloc;
+typedef struct ObjSymbol ObjSymbol;
+typedef struct ObjFile ObjFile;
+typedef struct Opnd Opnd;
+typedef struct Fix Fix;
+typedef struct Asm Asm;
+typedef struct Out Out;
+typedef struct LSec LSec;
+typedef struct LSym LSym;
+typedef struct LObj LObj;
+typedef struct Linker Linker;
+typedef struct ImpLayout ImpLayout;
+typedef struct PeOut PeOut;
 typedef struct Project Project;
 typedef struct Toml Toml;
 typedef struct BuildSpec BuildSpec;
@@ -445,6 +458,122 @@ struct NativeResult {
     const char* asm_text;
     const char* ir;
 };
+struct ObjReloc {
+    int64_t offset;
+    int64_t symbol;
+    int64_t after;
+};
+struct ObjSymbol {
+    const char* name;
+    int64_t section;
+    int64_t value;
+    bool global;
+};
+struct ObjFile {
+    bool ok;
+    const char* err;
+    Array text;
+    Array rdata;
+    Array relocs;
+    Array symbols;
+};
+struct Opnd {
+    int64_t kind;
+    int64_t reg;
+    int64_t size;
+    int64_t imm;
+    int64_t base;
+    const char* sym;
+};
+struct Fix {
+    int64_t pos;
+    const char* label;
+    int64_t addend;
+    int64_t after;
+};
+struct Asm {
+    ObjFile o;
+    int64_t sec;
+    Array lnames;
+    Array lsec;
+    Array loff;
+    NameIdx lidx;
+    Array globals;
+    Array fixes;
+    NameIdx sidx;
+    int64_t line;
+    const char* text;
+};
+struct Out {
+    Array b;
+    Array strtab;
+};
+struct LSec {
+    int64_t obj;
+    const char* name;
+    int64_t flags;
+    int64_t size;
+    int64_t raw;
+    int64_t nrel;
+    int64_t relat;
+    int64_t out;
+    int64_t at;
+};
+struct LSym {
+    const char* name;
+    int64_t value;
+    int64_t section;
+    int64_t cls;
+};
+struct LObj {
+    const char* name;
+    Array b;
+    int64_t first;
+    int64_t nsec;
+    Array syms;
+};
+struct Linker {
+    bool ok;
+    const char* err;
+    Array objs;
+    Array secs;
+    Array gname;
+    Array gsec;
+    Array gval;
+    NameIdx gidx;
+    Array imp;
+    Array imp_dll;
+    NameIdx impidx;
+    Array dlls;
+    Array exp_name;
+    Array exp_dll;
+    NameIdx expidx;
+    bool exports_loaded;
+    Array osize;
+    Array orva;
+    Array ofile;
+    Array oraw;
+    Array text;
+    Array rdata;
+    Array data;
+    int64_t thunks_at;
+    int64_t imports_at;
+    int64_t iat_at;
+    int64_t iat_size;
+    int64_t idt_at;
+    int64_t idt_size;
+};
+struct ImpLayout {
+    int64_t idt;
+    int64_t ilt;
+    int64_t iat;
+    int64_t names;
+    int64_t dllnames;
+    int64_t end;
+};
+struct PeOut {
+    Array b;
+};
 struct Project {
     bool ok;
     const char* file;
@@ -501,7 +630,7 @@ void idx_add(NameIdx* x, const char* key, int64_t k);
 int64_t idx_first(NameIdx* x, const char* key);
 int64_t slice_hash(const char* s, int64_t start, int64_t n, int64_t mask);
 int64_t idx_next(NameIdx* x, int64_t k);
-bool is_digit(char c);
+bool lexer__is_digit(char c);
 bool is_hex(char c);
 bool is_ident_start(char c);
 bool is_ident_part(char c);
@@ -514,7 +643,7 @@ bool same_slice(const char* s, int64_t start, int64_t n, const char* w);
 const char* intern(Lexer* l, int64_t start, int64_t n);
 Token make(Lexer* l, TokKind kind);
 Token make_text(Lexer* l, TokKind kind, const char* text);
-Token fail(Lexer* l);
+Token lexer__fail(Lexer* l);
 void skip_trivia(Lexer* l);
 bool valid_escape(char e, char quote);
 const char* literal_body(Lexer* l);
@@ -718,7 +847,7 @@ TInfo agg_info(int64_t size, int64_t align);
 int64_t vec_dim_of(const char* n);
 TInfo tinfo(Lower* l, TypeNode* t);
 int64_t struct_index(Lower* l, const char* name);
-int64_t align_up(int64_t n, int64_t a);
+int64_t lower__align_up(int64_t n, int64_t a);
 void layout(Lower* l, int64_t si);
 bool abi_small(int64_t size);
 int64_t abi_int_of(int64_t size);
@@ -855,7 +984,7 @@ Array alloc_regs(IrFunc* f, RegSet rs, Array skip);
 X64 new_x64(void);
 void out(X64* x, const char* s);
 void out_label(X64* x, const char* s);
-int64_t align_to(int64_t n, int64_t a);
+int64_t x64__align_to(int64_t n, int64_t a);
 RegSet x64_regs(void);
 int64_t x64_int_regs(void);
 int64_t x64_saved_regs(void);
@@ -898,6 +1027,83 @@ void x64_begin(X64* x);
 const char* x64_finish(X64* x, IrProgram* prog);
 const char* native_target_why(const char* os, const char* arch);
 NativeResult native_compile(Program prog, bool with_main, bool optimize_code);
+Opnd no_opnd(void);
+void x64asm__fail(Asm* a, const char* msg);
+int64_t legacy_reg(const char* s);
+bool parse_reg(const char* name, Opnd* o);
+bool x64asm__is_space(char c);
+const char* x64asm__trim(const char* s);
+bool x64asm__is_digit(char c);
+int64_t parse_num(Asm* a, const char* s);
+Opnd parse_opnd(Asm* a, const char* s);
+Array split_operands(const char* s);
+int64_t pos(Asm* a);
+void byte(Asm* a, int64_t v);
+void bytes_le(Asm* a, int64_t v, int64_t n);
+bool fits8(int64_t v);
+bool fits32s(int64_t v);
+bool byte_needs_rex(Opnd o);
+void enc(Asm* a, int64_t prefix, bool w, int64_t op1, int64_t op2, int64_t op3, int64_t regf, bool regb, Opnd rm, int64_t isz, int64_t imm);
+void rel32(Asm* a, const char* label);
+int64_t cc_code(const char* c);
+int64_t size_of(char c);
+void alu(Asm* a, int64_t d, int64_t size, Opnd src, Opnd dst);
+void mov(Asm* a, int64_t size, Opnd src, Opnd dst);
+void need(Asm* a, Array ops, int64_t n);
+void instruction(Asm* a, const char* mn, Array ops);
+void x64asm__align_to(Asm* a, int64_t n);
+void asciz(Asm* a, const char* q);
+void directive(Asm* a, const char* s);
+void define_label(Asm* a, const char* name);
+int64_t find_label(Asm* a, const char* name);
+int64_t symbol_index(Asm* a, const char* name, int64_t section, int64_t value);
+void patch32(Asm* a, int64_t at, int64_t v);
+ObjFile assemble_x64(const char* src);
+void u8put(Out* o, int64_t v);
+void u16put(Out* o, int64_t v);
+void u32put(Out* o, int64_t v);
+void zeros(Out* o, int64_t n);
+void name8(Out* o, const char* name);
+void section_header(Out* o, const char* name, int64_t size, int64_t data_at, int64_t relocs_at, int64_t nrelocs, int64_t flags);
+void symbol(Out* o, const char* name, int64_t value, int64_t section, int64_t typ, int64_t cls, int64_t naux);
+void section_aux(Out* o, int64_t size, int64_t nrelocs);
+bool write_coff(const char* path, ObjFile* f);
+Array coff_bytes(ObjFile* f);
+void lk_fail(Linker* l, const char* msg);
+int64_t rd16(Array b, int64_t at);
+int64_t rd32(Array b, int64_t at);
+const char* rdstr(Array b, int64_t at, int64_t max);
+Linker* new_linker(void);
+int64_t out_of(Linker* l, const char* name, int64_t flags);
+void link_add(Linker* l, const char* name, Array b);
+int64_t find_global(Linker* l, const char* name);
+int64_t find_import(Linker* l, const char* name);
+int64_t rva_to_file(Array b, int64_t rva);
+void load_exports(Linker* l);
+int64_t dll_of(Linker* l, const char* name);
+const char* import_base(const char* name);
+int64_t reloc_count(Linker* l, LSec s);
+int64_t reloc_first(LSec s);
+void find_imports(Linker* l);
+int64_t pelink__align_up(int64_t n, int64_t a);
+int64_t sec_align(int64_t flags);
+int64_t imports_of(Linker* l, int64_t d);
+ImpLayout import_layout(Linker* l, int64_t start);
+int64_t iat_slot(Linker* l, ImpLayout il, int64_t i);
+int64_t symbol_rva(Linker* l, ImpLayout il, int64_t oi, int64_t symi);
+int64_t get32(Array b, int64_t at);
+void put32(Array* b, int64_t at, int64_t v);
+void put64(Array* b, int64_t at, int64_t v);
+int64_t get64(Array b, int64_t at);
+int64_t image_base(void);
+void apply_relocs(Linker* l, ImpLayout il, int64_t si, Array* out);
+void p8(PeOut* o, int64_t v);
+void p16(PeOut* o, int64_t v);
+void p32(PeOut* o, int64_t v);
+void pzero(PeOut* o, int64_t n);
+void pname(PeOut* o, const char* s);
+const char* startup_asm(void);
+bool link_exe(Linker* l, const char* path);
 bool is_text_kind(TokKind k);
 const char* pad_left(const char* s, int64_t w);
 const char* pad_right(const char* s, int64_t w);
@@ -912,8 +1118,8 @@ void pr_decl(Decl* d);
 void print_program(Program prog);
 const char* host_os(void);
 const char* host_arch(void);
-bool is_space(char c);
-const char* trim(const char* s);
+bool project__is_space(char c);
+const char* project__trim(const char* s);
 const char* strip_comment(const char* s);
 void toml_error(Toml* t, const char* msg);
 const char* toml_string(Toml* t, const char* v);
@@ -937,7 +1143,7 @@ Array dll_link_args(const char* out_bin, bool in_rsp);
 Array os_link_args(Program prog, BuildSpec s);
 const char* guard_for(const char* name);
 bool run_build(BuildSpec s, const char* libdir);
-bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text);
+bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text, ObjFile* ob);
 void write_if_changed(const char* path, const char* text);
 const char* fwd_path(const char* p);
 const char* rsp_arg(const char* p);
@@ -954,6 +1160,7 @@ int64_t cmd_ast(const char* path);
 int64_t cmd_check(const char* path);
 int64_t cmd_emit(const char* path);
 int64_t cmd_native(const char* path, bool show_ir, bool opt);
+int64_t cmd_assemble(const char* path, const char* out);
 BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend);
 int64_t cmd_build(Target t, const char* libdir, bool release, bool force, const char* backend);
 int64_t cmd_run(Target t, const char* libdir, bool release, bool force, const char* backend, Array prog_args);
@@ -1005,7 +1212,7 @@ int64_t idx_next(NameIdx* x, int64_t k) {
     return (((int64_t*)(x->next).data)[k] - 1);
 }
 
-bool is_digit(char c) {
+bool lexer__is_digit(char c) {
     return ((c >= '0') && (c <= '9'));
 }
 
@@ -1018,7 +1225,7 @@ bool is_ident_start(char c) {
 }
 
 bool is_ident_part(char c) {
-    return (is_ident_start(c) || is_digit(c));
+    return (is_ident_start(c) || lexer__is_digit(c));
 }
 
 bool at_end(Lexer* l) {
@@ -1099,7 +1306,7 @@ Token make_text(Lexer* l, TokKind kind, const char* text) {
     return (Token){kind, text, l->start_line, l->start_col};
 }
 
-Token fail(Lexer* l) {
+Token lexer__fail(Lexer* l) {
     l->had_error = true;
     return (Token){TkError, "", l->start_line, l->start_col};
 }
@@ -1158,19 +1365,19 @@ Token lexer__string_lit(Lexer* l) {
     while ((!at_end(l)) && (peek(l) != '"')) {
         char c = peek(l);
         if (c == '\n') {
-            return fail(l);
+            return lexer__fail(l);
         }
         if (c == '\\') {
             advance(l);
             if (at_end(l) || (!valid_escape(advance(l), '"'))) {
-                return fail(l);
+                return lexer__fail(l);
             }
         } else {
             advance(l);
         }
     }
     if (at_end(l)) {
-        return fail(l);
+        return lexer__fail(l);
     }
     advance(l);
     return make_text(l, TkString, literal_body(l));
@@ -1178,16 +1385,16 @@ Token lexer__string_lit(Lexer* l) {
 
 Token char_lit(Lexer* l) {
     if (at_end(l)) {
-        return fail(l);
+        return lexer__fail(l);
     }
     char c = advance(l);
     if (c == '\\') {
         if (at_end(l) || (!valid_escape(advance(l), '\''))) {
-            return fail(l);
+            return lexer__fail(l);
         }
     }
     if (!match(l, '\'')) {
-        return fail(l);
+        return lexer__fail(l);
     }
     return make_text(l, TkChar, literal_body(l));
 }
@@ -1208,14 +1415,14 @@ Token number(Lexer* l) {
         }
         return make(l, TkInt);
     }
-    while (is_digit(peek(l)) || (peek(l) == '_')) {
+    while (lexer__is_digit(peek(l)) || (peek(l) == '_')) {
         advance(l);
     }
     bool is_float = false;
-    if ((peek(l) == '.') && is_digit(peek_next(l))) {
+    if ((peek(l) == '.') && lexer__is_digit(peek_next(l))) {
         is_float = true;
         advance(l);
-        while (is_digit(peek(l)) || (peek(l) == '_')) {
+        while (lexer__is_digit(peek(l)) || (peek(l) == '_')) {
             advance(l);
         }
     }
@@ -1225,7 +1432,7 @@ Token number(Lexer* l) {
         if ((peek(l) == '+') || (peek(l) == '-')) {
             advance(l);
         }
-        while (is_digit(peek(l))) {
+        while (lexer__is_digit(peek(l))) {
             advance(l);
         }
     }
@@ -1504,17 +1711,17 @@ Token scan_token(Lexer* l) {
             break;
         }
         default: {
-            if (is_digit(c)) {
+            if (lexer__is_digit(c)) {
                 return number(l);
             }
             if (is_ident_start(c)) {
                 return identifier(l);
             }
-            return fail(l);
+            return lexer__fail(l);
             break;
         }
     }
-    return fail(l);
+    return lexer__fail(l);
 }
 
 bool ends_statement(TokKind k) {
@@ -6806,7 +7013,7 @@ int64_t struct_index(Lower* l, const char* name) {
     return found;
 }
 
-int64_t align_up(int64_t n, int64_t a) {
+int64_t lower__align_up(int64_t n, int64_t a) {
     return ((((n + a) - 1) / a) * a);
 }
 
@@ -6823,14 +7030,14 @@ void layout(Lower* l, int64_t si) {
     int64_t align = 1;
     for (int64_t k = 0; k < ((StructLay*)(l->structs).data)[si].fields.len; k++) {
         TInfo ti = tinfo(l, ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[k].type);
-        off = align_up(off, ti.align);
+        off = lower__align_up(off, ti.align);
         ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[k].off = off;
         off += ti.size;
         if (ti.align > align) {
             align = ti.align;
         }
     }
-    ((StructLay*)(l->structs).data)[si].size = align_up(off, align);
+    ((StructLay*)(l->structs).data)[si].size = lower__align_up(off, align);
     ((StructLay*)(l->structs).data)[si].align = align;
     ((StructLay*)(l->structs).data)[si].state = 2;
 }
@@ -9698,7 +9905,7 @@ void out_label(X64* x, const char* s) {
     ({ const char* _e = str_concat(s, ":\n"); arr_push(&(x->out), &_e); });
 }
 
-int64_t align_to(int64_t n, int64_t a) {
+int64_t x64__align_to(int64_t n, int64_t a) {
     return ((((n + a) - 1) / a) * a);
 }
 
@@ -10742,7 +10949,7 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
         }
     }
     int64_t cur = (8 * nint);
-    cur = align_to((cur + (16 * nflt)), 16);
+    cur = x64__align_to((cur + (16 * nflt)), 16);
     x->save_base = (0 - cur);
     Array loc = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array isreg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
@@ -10768,7 +10975,7 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
         if (al > 16) {
             al = 16;
         }
-        cur = align_to((cur + ((IrSlot*)(f->slots).data)[s].size), al);
+        cur = x64__align_to((cur + ((IrSlot*)(f->slots).data)[s].size), al);
         ({ int64_t _e = (0 - cur); arr_push(&(so), &_e); });
     }
     x->slot_off = so;
@@ -10778,7 +10985,7 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
             outgoing = (8 * ((Ins*)(f->code).data)[k].args.len);
         }
     }
-    int64_t frame = (align_to((cur + outgoing), 16) - (8 * nint));
+    int64_t frame = (x64__align_to((cur + outgoing), 16) - (8 * nint));
     out(x, ".p2align 4");
     if (f->global) {
         out(x, str_concat(".globl ", f->name));
@@ -10885,6 +11092,2076 @@ NativeResult native_compile(Program prog, bool with_main, bool optimize_code) {
     }
     const char* asm_text = x64_finish((&x), (&l->prog));
     return (NativeResult){true, "", asm_text, ir_program_text((&l->prog))};
+}
+
+Opnd no_opnd(void) {
+    return (Opnd){0, 0, 0, 0, 0, ""};
+}
+
+void x64asm__fail(Asm* a, const char* msg) {
+    if (a->o.ok) {
+        a->o.err = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("line ", str_from_int(a->line)), ": "), msg), " ("), a->text), ")");
+    }
+    a->o.ok = false;
+}
+
+int64_t legacy_reg(const char* s) {
+    if (str_eq(s, "rax")) {
+        return 128;
+    }
+    if (str_eq(s, "rcx")) {
+        return 129;
+    }
+    if (str_eq(s, "rdx")) {
+        return 130;
+    }
+    if (str_eq(s, "rbx")) {
+        return 131;
+    }
+    if (str_eq(s, "rsp")) {
+        return 132;
+    }
+    if (str_eq(s, "rbp")) {
+        return 133;
+    }
+    if (str_eq(s, "rsi")) {
+        return 134;
+    }
+    if (str_eq(s, "rdi")) {
+        return 135;
+    }
+    if (str_eq(s, "eax")) {
+        return 64;
+    }
+    if (str_eq(s, "ecx")) {
+        return 65;
+    }
+    if (str_eq(s, "edx")) {
+        return 66;
+    }
+    if (str_eq(s, "ebx")) {
+        return 67;
+    }
+    if (str_eq(s, "esp")) {
+        return 68;
+    }
+    if (str_eq(s, "ebp")) {
+        return 69;
+    }
+    if (str_eq(s, "esi")) {
+        return 70;
+    }
+    if (str_eq(s, "edi")) {
+        return 71;
+    }
+    if (str_eq(s, "ax")) {
+        return 32;
+    }
+    if (str_eq(s, "cx")) {
+        return 33;
+    }
+    if (str_eq(s, "dx")) {
+        return 34;
+    }
+    if (str_eq(s, "bx")) {
+        return 35;
+    }
+    if (str_eq(s, "sp")) {
+        return 36;
+    }
+    if (str_eq(s, "bp")) {
+        return 37;
+    }
+    if (str_eq(s, "si")) {
+        return 38;
+    }
+    if (str_eq(s, "di")) {
+        return 39;
+    }
+    if (str_eq(s, "al")) {
+        return 16;
+    }
+    if (str_eq(s, "cl")) {
+        return 17;
+    }
+    if (str_eq(s, "dl")) {
+        return 18;
+    }
+    if (str_eq(s, "bl")) {
+        return 19;
+    }
+    if (str_eq(s, "spl")) {
+        return 20;
+    }
+    if (str_eq(s, "bpl")) {
+        return 21;
+    }
+    if (str_eq(s, "sil")) {
+        return 22;
+    }
+    if (str_eq(s, "dil")) {
+        return 23;
+    }
+    return (0 - 1);
+}
+
+bool parse_reg(const char* name, Opnd* o) {
+    int64_t n = str_len(name);
+    if ((n > 3) && str_eq(str_sub(name, 0, 3), "xmm")) {
+        int64_t v = 0;
+        for (int64_t i = 3; i < n; i++) {
+            v = ((v * 10) + (((int64_t)(name[i])) - ((int64_t)('0'))));
+        }
+        o->kind = 1;
+        o->reg = v;
+        o->size = 16;
+        return ((v >= 0) && (v < 16));
+    }
+    if (((n >= 2) && (name[0] == 'r')) && x64asm__is_digit(name[1])) {
+        int64_t k = 1;
+        int64_t v = 0;
+        while ((k < n) && x64asm__is_digit(name[k])) {
+            v = ((v * 10) + (((int64_t)(name[k])) - ((int64_t)('0'))));
+            k += 1;
+        }
+        const char* suf = str_sub(name, k, (n - k));
+        int64_t size = 0;
+        if (str_eq(suf, "")) {
+            size = 8;
+        } else 
+        if (str_eq(suf, "d")) {
+            size = 4;
+        } else 
+        if (str_eq(suf, "w")) {
+            size = 2;
+        } else 
+        if (str_eq(suf, "b")) {
+            size = 1;
+        }
+        o->kind = 1;
+        o->reg = v;
+        o->size = size;
+        return (((size > 0) && (v >= 8)) && (v <= 15));
+    }
+    int64_t c = legacy_reg(name);
+    if (c < 0) {
+        return false;
+    }
+    o->kind = 1;
+    o->reg = (c % 16);
+    o->size = (c / 16);
+    return true;
+}
+
+bool x64asm__is_space(char c) {
+    return (((c == ' ') || (c == '\t')) || (c == '\r'));
+}
+
+const char* x64asm__trim(const char* s) {
+    int64_t i = 0;
+    int64_t j = str_len(s);
+    while ((i < j) && x64asm__is_space(s[i])) {
+        i += 1;
+    }
+    while ((j > i) && x64asm__is_space(s[(j - 1)])) {
+        j -= 1;
+    }
+    return str_sub(s, i, (j - i));
+}
+
+bool x64asm__is_digit(char c) {
+    return ((c >= '0') && (c <= '9'));
+}
+
+int64_t parse_num(Asm* a, const char* s) {
+    int64_t i = 0;
+    bool neg = false;
+    if ((str_len(s) > 0) && (s[0] == '-')) {
+        neg = true;
+        i = 1;
+    } else 
+    if ((str_len(s) > 0) && (s[0] == '+')) {
+        i = 1;
+    }
+    uint64_t v = 0;
+    if (((str_len(s) > (i + 2)) && (s[i] == '0')) && ((s[(i + 1)] == 'x') || (s[(i + 1)] == 'X'))) {
+        i += 2;
+        while (i < str_len(s)) {
+            char c = s[i];
+            uint64_t d = 0;
+            if ((c >= '0') && (c <= '9')) {
+                d = ((uint64_t)((((int64_t)(c)) - ((int64_t)('0')))));
+            } else 
+            if ((c >= 'a') && (c <= 'f')) {
+                d = ((uint64_t)(((((int64_t)(c)) - ((int64_t)('a'))) + 10)));
+            } else 
+            if ((c >= 'A') && (c <= 'F')) {
+                d = ((uint64_t)(((((int64_t)(c)) - ((int64_t)('A'))) + 10)));
+            } else {
+                x64asm__fail(a, str_concat("bad number ", s));
+            }
+            v = ((v * 16) + d);
+            i += 1;
+        }
+    } else {
+        if (i >= str_len(s)) {
+            x64asm__fail(a, str_concat("bad number ", s));
+        }
+        while (i < str_len(s)) {
+            if (!x64asm__is_digit(s[i])) {
+                x64asm__fail(a, str_concat("bad number ", s));
+            }
+            v = ((v * 10) + ((uint64_t)((((int64_t)(s[i])) - ((int64_t)('0'))))));
+            i += 1;
+        }
+    }
+    int64_t r = ((int64_t)(v));
+    if (neg) {
+        return (0 - r);
+    }
+    return r;
+}
+
+Opnd parse_opnd(Asm* a, const char* s) {
+    Opnd o = no_opnd();
+    if (str_len(s) == 0) {
+        x64asm__fail(a, "missing operand");
+        return o;
+    }
+    if (s[0] == '%') {
+        if (!parse_reg(str_sub(s, 1, (str_len(s) - 1)), (&o))) {
+            x64asm__fail(a, str_concat("unknown register ", s));
+        }
+        return o;
+    }
+    if (s[0] == '$') {
+        o.kind = 2;
+        o.imm = parse_num(a, str_sub(s, 1, (str_len(s) - 1)));
+        return o;
+    }
+    int64_t p = (0 - 1);
+    for (int64_t i = 0; i < str_len(s); i++) {
+        if ((p < 0) && (s[i] == '(')) {
+            p = i;
+        }
+    }
+    if (p < 0) {
+        o.kind = 4;
+        o.sym = s;
+        return o;
+    }
+    o.kind = 3;
+    if (s[(str_len(s) - 1)] != ')') {
+        x64asm__fail(a, str_concat("bad memory operand ", s));
+        return o;
+    }
+    const char* inner = str_sub(s, (p + 1), ((str_len(s) - p) - 2));
+    if (str_eq(inner, "%rip")) {
+        o.base = (0 - 1);
+    } else {
+        Opnd r = no_opnd();
+        if (((str_len(inner) < 2) || (!parse_reg(str_sub(inner, 1, (str_len(inner) - 1)), (&r)))) || (r.size != 8)) {
+            x64asm__fail(a, str_concat("bad base register ", inner));
+            return o;
+        }
+        o.base = r.reg;
+    }
+    const char* d = str_sub(s, 0, p);
+    if (str_len(d) > 0) {
+        if ((x64asm__is_digit(d[0]) || (d[0] == '-')) || (d[0] == '+')) {
+            o.imm = parse_num(a, d);
+        } else {
+            int64_t q = (0 - 1);
+            for (int64_t i = 1; i < str_len(d); i++) {
+                if ((q < 0) && ((d[i] == '+') || (d[i] == '-'))) {
+                    q = i;
+                }
+            }
+            if (q < 0) {
+                o.sym = d;
+            } else {
+                o.sym = str_sub(d, 0, q);
+                o.imm = parse_num(a, str_sub(d, q, (str_len(d) - q)));
+            }
+        }
+    }
+    return o;
+}
+
+Array split_operands(const char* s) {
+    Array r = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    int64_t depth = 0;
+    bool quoted = false;
+    int64_t start = 0;
+    for (int64_t i = 0; i < str_len(s); i++) {
+        char c = s[i];
+        if (c == '"') {
+            quoted = (!quoted);
+        } else 
+        if ((!quoted) && (c == '(')) {
+            depth += 1;
+        } else 
+        if ((!quoted) && (c == ')')) {
+            depth -= 1;
+        } else 
+        if (((!quoted) && (depth == 0)) && (c == ',')) {
+            ({ const char* _e = x64asm__trim(str_sub(s, start, (i - start))); arr_push(&(r), &_e); });
+            start = (i + 1);
+        }
+    }
+    const char* last = x64asm__trim(str_sub(s, start, (str_len(s) - start)));
+    if (str_len(last) > 0) {
+        ({ const char* _e = last; arr_push(&(r), &_e); });
+    }
+    return r;
+}
+
+int64_t pos(Asm* a) {
+    if (a->sec == 2) {
+        return a->o.rdata.len;
+    }
+    return a->o.text.len;
+}
+
+void byte(Asm* a, int64_t v) {
+    if (a->sec == 2) {
+        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.rdata), &_e); });
+    } else {
+        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.text), &_e); });
+    }
+}
+
+void bytes_le(Asm* a, int64_t v, int64_t n) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < n; i++) {
+        byte(a, ((int64_t)((x & ((uint64_t)(255))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+bool fits8(int64_t v) {
+    return ((v >= (0 - 128)) && (v <= 127));
+}
+
+bool fits32s(int64_t v) {
+    return ((v >= (0 - 2147483648)) && (v <= 2147483647));
+}
+
+bool byte_needs_rex(Opnd o) {
+    return ((((o.kind == 1) && (o.size == 1)) && (o.reg >= 4)) && (o.reg < 8));
+}
+
+void enc(Asm* a, int64_t prefix, bool w, int64_t op1, int64_t op2, int64_t op3, int64_t regf, bool regb, Opnd rm, int64_t isz, int64_t imm) {
+    if (a->sec != 1) {
+        x64asm__fail(a, "instruction outside .text");
+        return;
+    }
+    if (prefix != 0) {
+        byte(a, prefix);
+    }
+    int64_t rex = 0;
+    if (w) {
+        rex = (rex | 8);
+    }
+    if (regf >= 8) {
+        rex = (rex | 4);
+    }
+    if ((rm.kind == 1) && (rm.reg >= 8)) {
+        rex = (rex | 1);
+    }
+    if ((rm.kind == 3) && (rm.base >= 8)) {
+        rex = (rex | 1);
+    }
+    bool need = (((rex != 0) || byte_needs_rex(rm)) || ((regb && (regf >= 4)) && (regf < 8)));
+    if (need) {
+        byte(a, (64 | rex));
+    }
+    byte(a, op1);
+    if (op2 >= 0) {
+        byte(a, op2);
+    }
+    if (op3 >= 0) {
+        byte(a, op3);
+    }
+    int64_t r = ((regf & 7) * 8);
+    if (rm.kind == 1) {
+        byte(a, ((192 | r) | (rm.reg & 7)));
+    } else 
+    if ((rm.kind == 3) && (rm.base < 0)) {
+        byte(a, (5 | r));
+        if (!str_eq(rm.sym, "")) {
+            ({ Fix _e = (Fix){a->o.text.len, rm.sym, rm.imm, isz}; arr_push(&(a->fixes), &_e); });
+            bytes_le(a, 0, 4);
+        } else {
+            bytes_le(a, rm.imm, 4);
+        }
+    } else 
+    if (rm.kind == 3) {
+        if (!str_eq(rm.sym, "")) {
+            x64asm__fail(a, "a symbol needs %rip");
+        }
+        int64_t b7 = (rm.base & 7);
+        int64_t d = rm.imm;
+        int64_t mode = 2;
+        if ((d == 0) && (b7 != 5)) {
+            mode = 0;
+        } else 
+        if (fits8(d)) {
+            mode = 1;
+        }
+        int64_t low = b7;
+        if (b7 == 4) {
+            low = 4;
+        }
+        byte(a, (((mode * 64) | r) | low));
+        if (b7 == 4) {
+            byte(a, 36);
+        }
+        if (mode == 1) {
+            byte(a, d);
+        } else 
+        if (mode == 2) {
+            bytes_le(a, d, 4);
+        }
+    } else {
+        x64asm__fail(a, "expected a register or memory operand");
+    }
+    if (isz > 0) {
+        bytes_le(a, imm, isz);
+    }
+}
+
+void rel32(Asm* a, const char* label) {
+    ({ Fix _e = (Fix){a->o.text.len, label, 0, 0}; arr_push(&(a->fixes), &_e); });
+    bytes_le(a, 0, 4);
+}
+
+int64_t cc_code(const char* c) {
+    if (str_eq(c, "o")) {
+        return 0;
+    }
+    if (str_eq(c, "no")) {
+        return 1;
+    }
+    if ((str_eq(c, "b") || str_eq(c, "c")) || str_eq(c, "nae")) {
+        return 2;
+    }
+    if ((str_eq(c, "ae") || str_eq(c, "nb")) || str_eq(c, "nc")) {
+        return 3;
+    }
+    if (str_eq(c, "e") || str_eq(c, "z")) {
+        return 4;
+    }
+    if (str_eq(c, "ne") || str_eq(c, "nz")) {
+        return 5;
+    }
+    if (str_eq(c, "be") || str_eq(c, "na")) {
+        return 6;
+    }
+    if (str_eq(c, "a") || str_eq(c, "nbe")) {
+        return 7;
+    }
+    if (str_eq(c, "s")) {
+        return 8;
+    }
+    if (str_eq(c, "ns")) {
+        return 9;
+    }
+    if (str_eq(c, "p") || str_eq(c, "pe")) {
+        return 10;
+    }
+    if (str_eq(c, "np") || str_eq(c, "po")) {
+        return 11;
+    }
+    if (str_eq(c, "l") || str_eq(c, "nge")) {
+        return 12;
+    }
+    if (str_eq(c, "ge") || str_eq(c, "nl")) {
+        return 13;
+    }
+    if (str_eq(c, "le") || str_eq(c, "ng")) {
+        return 14;
+    }
+    if (str_eq(c, "g") || str_eq(c, "nle")) {
+        return 15;
+    }
+    return (0 - 1);
+}
+
+int64_t size_of(char c) {
+    if (c == 'q') {
+        return 8;
+    }
+    if (c == 'l') {
+        return 4;
+    }
+    if (c == 'w') {
+        return 2;
+    }
+    if (c == 'b') {
+        return 1;
+    }
+    return 0;
+}
+
+void alu(Asm* a, int64_t d, int64_t size, Opnd src, Opnd dst) {
+    bool w = (size == 8);
+    int64_t pre = 0;
+    if (size == 2) {
+        pre = 102;
+    }
+    if (src.kind == 2) {
+        if (size == 1) {
+            enc(a, pre, false, 128, (0 - 1), (0 - 1), d, false, dst, 1, src.imm);
+        } else 
+        if (fits8(src.imm)) {
+            enc(a, pre, w, 131, (0 - 1), (0 - 1), d, false, dst, 1, src.imm);
+        } else {
+            int64_t isz = 4;
+            if (size == 2) {
+                isz = 2;
+            }
+            if ((size == 8) && (!fits32s(src.imm))) {
+                x64asm__fail(a, "immediate too large");
+            }
+            enc(a, pre, w, 129, (0 - 1), (0 - 1), d, false, dst, isz, src.imm);
+        }
+    } else 
+    if (src.kind == 1) {
+        int64_t op = ((d * 8) + 1);
+        if (size == 1) {
+            op = (d * 8);
+        }
+        enc(a, pre, w, op, (0 - 1), (0 - 1), src.reg, (size == 1), dst, 0, 0);
+    } else 
+    if ((src.kind == 3) && (dst.kind == 1)) {
+        int64_t op = ((d * 8) + 3);
+        if (size == 1) {
+            op = ((d * 8) + 2);
+        }
+        enc(a, pre, w, op, (0 - 1), (0 - 1), dst.reg, (size == 1), src, 0, 0);
+    } else {
+        x64asm__fail(a, "unsupported operands");
+    }
+}
+
+void mov(Asm* a, int64_t size, Opnd src, Opnd dst) {
+    bool w = (size == 8);
+    int64_t pre = 0;
+    if (size == 2) {
+        pre = 102;
+    }
+    if (((size == 8) && (src.kind == 1)) && (src.size == 16)) {
+        enc(a, 102, true, 15, 126, (0 - 1), src.reg, false, dst, 0, 0);
+        return;
+    }
+    if (((size == 8) && (dst.kind == 1)) && (dst.size == 16)) {
+        enc(a, 102, true, 15, 110, (0 - 1), dst.reg, false, src, 0, 0);
+        return;
+    }
+    if (src.kind == 2) {
+        int64_t isz = 4;
+        if (size == 2) {
+            isz = 2;
+        } else 
+        if (size == 1) {
+            isz = 1;
+        }
+        if ((size == 8) && (!fits32s(src.imm))) {
+            x64asm__fail(a, "immediate too large (movabsq)");
+        }
+        int64_t op = 199;
+        if (size == 1) {
+            op = 198;
+        }
+        enc(a, pre, w, op, (0 - 1), (0 - 1), 0, false, dst, isz, src.imm);
+    } else 
+    if (src.kind == 1) {
+        int64_t op = 137;
+        if (size == 1) {
+            op = 136;
+        }
+        enc(a, pre, w, op, (0 - 1), (0 - 1), src.reg, (size == 1), dst, 0, 0);
+    } else 
+    if ((src.kind == 3) && (dst.kind == 1)) {
+        int64_t op = 139;
+        if (size == 1) {
+            op = 138;
+        }
+        enc(a, pre, w, op, (0 - 1), (0 - 1), dst.reg, (size == 1), src, 0, 0);
+    } else {
+        x64asm__fail(a, "unsupported mov");
+    }
+}
+
+void need(Asm* a, Array ops, int64_t n) {
+    if (ops.len != n) {
+        x64asm__fail(a, str_concat(str_concat("expected ", str_from_int(n)), " operand(s)"));
+    }
+}
+
+void instruction(Asm* a, const char* mn, Array ops) {
+    int64_t n = ops.len;
+    Opnd x = no_opnd();
+    Opnd y = no_opnd();
+    if (n > 0) {
+        x = parse_opnd(a, ((const char**)(ops).data)[0]);
+    }
+    if (n > 1) {
+        y = parse_opnd(a, ((const char**)(ops).data)[1]);
+    }
+    if (!a->o.ok) {
+        return;
+    }
+    int64_t ml = str_len(mn);
+    char last = mn[(ml - 1)];
+    if (str_eq(mn, "ret")) {
+        byte(a, 195);
+        return;
+    }
+    if (str_eq(mn, "leave")) {
+        byte(a, 201);
+        return;
+    }
+    if (str_eq(mn, "cqto")) {
+        byte(a, 72);
+        byte(a, 153);
+        return;
+    }
+    if (str_eq(mn, "jmp")) {
+        need(a, ops, 1);
+        byte(a, 233);
+        rel32(a, x.sym);
+        return;
+    }
+    if (str_eq(mn, "call")) {
+        need(a, ops, 1);
+        byte(a, 232);
+        rel32(a, x.sym);
+        return;
+    }
+    if ((ml >= 2) && (mn[0] == 'j')) {
+        int64_t cc = cc_code(str_sub(mn, 1, (ml - 1)));
+        if (((cc >= 0) && (n == 1)) && (x.kind == 4)) {
+            byte(a, 15);
+            byte(a, (128 + cc));
+            rel32(a, x.sym);
+            return;
+        }
+    }
+    if ((ml >= 4) && str_eq(str_sub(mn, 0, 3), "set")) {
+        int64_t cc = cc_code(str_sub(mn, 3, (ml - 3)));
+        if ((cc >= 0) && (n == 1)) {
+            enc(a, 0, false, 15, (144 + cc), (0 - 1), 0, false, x, 0, 0);
+            return;
+        }
+    }
+    if (str_eq(mn, "pushq") || str_eq(mn, "popq")) {
+        need(a, ops, 1);
+        if (x.reg >= 8) {
+            byte(a, 65);
+        }
+        if (str_eq(mn, "pushq")) {
+            byte(a, (80 + (x.reg & 7)));
+        } else {
+            byte(a, (88 + (x.reg & 7)));
+        }
+        return;
+    }
+    if ((ml >= 3) && (ml <= 5)) {
+        const char* base = str_sub(mn, 0, (ml - 1));
+        int64_t sz = size_of(last);
+        int64_t d = (0 - 1);
+        if (str_eq(base, "add")) {
+            d = 0;
+        } else 
+        if (str_eq(base, "or")) {
+            d = 1;
+        } else 
+        if (str_eq(base, "and")) {
+            d = 4;
+        } else 
+        if (str_eq(base, "sub")) {
+            d = 5;
+        } else 
+        if (str_eq(base, "xor")) {
+            d = 6;
+        } else 
+        if (str_eq(base, "cmp")) {
+            d = 7;
+        }
+        if ((d >= 0) && (sz > 0)) {
+            need(a, ops, 2);
+            alu(a, d, sz, x, y);
+            return;
+        }
+    }
+    if (((str_eq(mn, "movq") || str_eq(mn, "movl")) || str_eq(mn, "movw")) || str_eq(mn, "movb")) {
+        need(a, ops, 2);
+        mov(a, size_of(last), x, y);
+        return;
+    }
+    if (str_eq(mn, "movabsq")) {
+        need(a, ops, 2);
+        if (y.reg >= 8) {
+            byte(a, 73);
+        } else {
+            byte(a, 72);
+        }
+        byte(a, (184 + (y.reg & 7)));
+        bytes_le(a, x.imm, 8);
+        return;
+    }
+    if (str_eq(mn, "movsbq")) {
+        enc(a, 0, true, 15, 190, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movswq")) {
+        enc(a, 0, true, 15, 191, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movzbq")) {
+        enc(a, 0, true, 15, 182, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movzwq")) {
+        enc(a, 0, true, 15, 183, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movzbl")) {
+        enc(a, 0, false, 15, 182, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movzwl")) {
+        enc(a, 0, false, 15, 183, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movslq")) {
+        enc(a, 0, true, 99, (0 - 1), (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "leaq")) {
+        need(a, ops, 2);
+        enc(a, 0, true, 141, (0 - 1), (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movd")) {
+        need(a, ops, 2);
+        if (x.size == 16) {
+            enc(a, 102, false, 15, 126, (0 - 1), x.reg, false, y, 0, 0);
+        } else {
+            enc(a, 102, false, 15, 110, (0 - 1), y.reg, false, x, 0, 0);
+        }
+        return;
+    }
+    if (str_eq(mn, "imulq")) {
+        need(a, ops, 2);
+        if (x.kind == 2) {
+            if (fits8(x.imm)) {
+                enc(a, 0, true, 107, (0 - 1), (0 - 1), y.reg, false, y, 1, x.imm);
+            } else {
+                enc(a, 0, true, 105, (0 - 1), (0 - 1), y.reg, false, y, 4, x.imm);
+            }
+        } else {
+            enc(a, 0, true, 15, 175, (0 - 1), y.reg, false, x, 0, 0);
+        }
+        return;
+    }
+    if (str_eq(mn, "idivq")) {
+        enc(a, 0, true, 247, (0 - 1), (0 - 1), 7, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "divq")) {
+        enc(a, 0, true, 247, (0 - 1), (0 - 1), 6, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "negq")) {
+        enc(a, 0, true, 247, (0 - 1), (0 - 1), 3, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "notq")) {
+        enc(a, 0, true, 247, (0 - 1), (0 - 1), 2, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "decq")) {
+        enc(a, 0, true, 255, (0 - 1), (0 - 1), 1, false, x, 0, 0);
+        return;
+    }
+    if ((str_eq(mn, "shlq") || str_eq(mn, "shrq")) || str_eq(mn, "sarq")) {
+        need(a, ops, 2);
+        int64_t d = 4;
+        if (str_eq(mn, "shrq")) {
+            d = 5;
+        } else 
+        if (str_eq(mn, "sarq")) {
+            d = 7;
+        }
+        if (x.kind == 2) {
+            enc(a, 0, true, 193, (0 - 1), (0 - 1), d, false, y, 1, x.imm);
+        } else 
+        if (((x.kind == 1) && (x.reg == 1)) && (x.size == 1)) {
+            enc(a, 0, true, 211, (0 - 1), (0 - 1), d, false, y, 0, 0);
+        } else {
+            x64asm__fail(a, "a shift count must be $imm or %cl");
+        }
+        return;
+    }
+    if (str_eq(mn, "btcq")) {
+        need(a, ops, 2);
+        enc(a, 0, true, 15, 186, (0 - 1), 7, false, y, 1, x.imm);
+        return;
+    }
+    int64_t pre = 0;
+    if ((ml > 2) && str_eq(str_sub(mn, (ml - 2), 2), "ss")) {
+        pre = 243;
+    }
+    if ((ml > 2) && str_eq(str_sub(mn, (ml - 2), 2), "sd")) {
+        pre = 242;
+    }
+    if (str_eq(mn, "movss") || str_eq(mn, "movsd")) {
+        need(a, ops, 2);
+        if (y.kind == 1) {
+            enc(a, pre, false, 15, 16, (0 - 1), y.reg, false, x, 0, 0);
+        } else {
+            enc(a, pre, false, 15, 17, (0 - 1), x.reg, false, y, 0, 0);
+        }
+        return;
+    }
+    if (str_eq(mn, "movaps")) {
+        need(a, ops, 2);
+        enc(a, 0, false, 15, 40, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "movups")) {
+        need(a, ops, 2);
+        if (y.kind == 1) {
+            enc(a, 0, false, 15, 16, (0 - 1), y.reg, false, x, 0, 0);
+        } else {
+            enc(a, 0, false, 15, 17, (0 - 1), x.reg, false, y, 0, 0);
+        }
+        return;
+    }
+    if ((pre != 0) && (ml == 5)) {
+        const char* base = str_sub(mn, 0, 3);
+        int64_t op = (0 - 1);
+        if (str_eq(base, "add")) {
+            op = 88;
+        } else 
+        if (str_eq(base, "mul")) {
+            op = 89;
+        } else 
+        if (str_eq(base, "sub")) {
+            op = 92;
+        } else 
+        if (str_eq(base, "div")) {
+            op = 94;
+        }
+        if (op >= 0) {
+            need(a, ops, 2);
+            enc(a, pre, false, 15, op, (0 - 1), y.reg, false, x, 0, 0);
+            return;
+        }
+    }
+    if (str_eq(mn, "sqrtss") || str_eq(mn, "sqrtsd")) {
+        need(a, ops, 2);
+        enc(a, pre, false, 15, 81, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "ucomiss")) {
+        need(a, ops, 2);
+        enc(a, 0, false, 15, 46, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "ucomisd")) {
+        need(a, ops, 2);
+        enc(a, 102, false, 15, 46, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "cvtsi2ssq")) {
+        need(a, ops, 2);
+        enc(a, 243, true, 15, 42, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "cvtsi2sdq")) {
+        need(a, ops, 2);
+        enc(a, 242, true, 15, 42, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "cvttss2siq")) {
+        need(a, ops, 2);
+        enc(a, 243, true, 15, 44, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "cvttsd2siq")) {
+        need(a, ops, 2);
+        enc(a, 242, true, 15, 44, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "cvtss2sd")) {
+        need(a, ops, 2);
+        enc(a, 243, false, 15, 90, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    if (str_eq(mn, "cvtsd2ss")) {
+        need(a, ops, 2);
+        enc(a, 242, false, 15, 90, (0 - 1), y.reg, false, x, 0, 0);
+        return;
+    }
+    x64asm__fail(a, str_concat("unknown instruction ", mn));
+}
+
+void x64asm__align_to(Asm* a, int64_t n) {
+    int64_t fill = 0;
+    if (a->sec == 1) {
+        fill = 144;
+    }
+    while ((pos(a) % n) != 0) {
+        byte(a, fill);
+    }
+}
+
+void asciz(Asm* a, const char* q) {
+    if (((str_len(q) < 2) || (q[0] != '"')) || (q[(str_len(q) - 1)] != '"')) {
+        x64asm__fail(a, "expected a quoted string");
+        return;
+    }
+    int64_t i = 1;
+    int64_t end = (str_len(q) - 1);
+    while (i < end) {
+        char c = q[i];
+        if ((c == '\\') && ((i + 1) < end)) {
+            char e = q[(i + 1)];
+            i += 2;
+            if (e == 'n') {
+                byte(a, 10);
+            } else 
+            if (e == 't') {
+                byte(a, 9);
+            } else 
+            if (e == 'r') {
+                byte(a, 13);
+            } else 
+            if (e == 'b') {
+                byte(a, 8);
+            } else 
+            if (e == 'f') {
+                byte(a, 12);
+            } else 
+            if ((e >= '0') && (e <= '7')) {
+                int64_t v = (((int64_t)(e)) - ((int64_t)('0')));
+                int64_t k = 0;
+                while ((((k < 2) && (i < end)) && (q[i] >= '0')) && (q[i] <= '7')) {
+                    v = ((v * 8) + (((int64_t)(q[i])) - ((int64_t)('0'))));
+                    i += 1;
+                    k += 1;
+                }
+                byte(a, v);
+            } else {
+                byte(a, ((int64_t)(e)));
+            }
+        } else {
+            byte(a, ((int64_t)(c)));
+            i += 1;
+        }
+    }
+    byte(a, 0);
+}
+
+void directive(Asm* a, const char* s) {
+    int64_t sp = (0 - 1);
+    for (int64_t i = 0; i < str_len(s); i++) {
+        if ((sp < 0) && x64asm__is_space(s[i])) {
+            sp = i;
+        }
+    }
+    const char* name = s;
+    const char* arg = "";
+    if (sp >= 0) {
+        name = str_sub(s, 0, sp);
+        arg = x64asm__trim(str_sub(s, sp, (str_len(s) - sp)));
+    }
+    if (str_eq(name, ".text")) {
+        a->sec = 1;
+    } else 
+    if (str_eq(name, ".section")) {
+        if ((str_len(arg) >= 6) && str_eq(str_sub(arg, 0, 6), ".rdata")) {
+            a->sec = 2;
+        } else 
+        if ((str_len(arg) >= 5) && str_eq(str_sub(arg, 0, 5), ".text")) {
+            a->sec = 1;
+        } else {
+            x64asm__fail(a, str_concat("unknown section ", arg));
+        }
+    } else 
+    if (str_eq(name, ".globl")) {
+        ({ const char* _e = arg; arr_push(&(a->globals), &_e); });
+    } else 
+    if (str_eq(name, ".p2align")) {
+        int64_t p = parse_num(a, arg);
+        int64_t n = 1;
+        for (int64_t k = 0; k < p; k++) {
+            n = (n * 2);
+        }
+        x64asm__align_to(a, n);
+    } else 
+    if (str_eq(name, ".asciz")) {
+        asciz(a, arg);
+    } else 
+    if (str_eq(name, ".float")) {
+        bytes_le(a, strata_f32_bits(arg), 4);
+    } else 
+    if (str_eq(name, ".double")) {
+        bytes_le(a, strata_f64_bits(arg), 8);
+    } else {
+        x64asm__fail(a, str_concat("unknown directive ", name));
+    }
+}
+
+void define_label(Asm* a, const char* name) {
+    idx_add((&a->lidx), name, a->lnames.len);
+    ({ const char* _e = name; arr_push(&(a->lnames), &_e); });
+    ({ int64_t _e = a->sec; arr_push(&(a->lsec), &_e); });
+    ({ int64_t _e = pos(a); arr_push(&(a->loff), &_e); });
+}
+
+int64_t find_label(Asm* a, const char* name) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&a->lidx), name);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((const char**)(a->lnames).data)[k], name)) {
+            found = k;
+        }
+        k = idx_next((&a->lidx), k);
+    }
+    return found;
+}
+
+int64_t symbol_index(Asm* a, const char* name, int64_t section, int64_t value) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&a->sidx), name);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((ObjSymbol*)(a->o.symbols).data)[k].name, name)) {
+            found = k;
+        }
+        k = idx_next((&a->sidx), k);
+    }
+    if (found >= 0) {
+        return found;
+    }
+    idx_add((&a->sidx), name, a->o.symbols.len);
+    bool global = (section == 0);
+    for (int64_t i = 0; i < a->globals.len; i++) {
+        if (str_eq(((const char**)(a->globals).data)[i], name)) {
+            global = true;
+        }
+    }
+    ({ ObjSymbol _e = (ObjSymbol){name, section, value, global}; arr_push(&(a->o.symbols), &_e); });
+    return (a->o.symbols.len - 1);
+}
+
+void patch32(Asm* a, int64_t at, int64_t v) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < 4; i++) {
+        ((uint8_t*)(a->o.text).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+ObjFile assemble_x64(const char* src) {
+    int64_t lines = 1;
+    int64_t n = str_len(src);
+    for (int64_t i = 0; i < n; i++) {
+        if (src[i] == '\n') {
+            lines += 1;
+        }
+    }
+    Array t = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array r = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array rl = ({ Array _a = arr_make(sizeof(ObjReloc)); _a; });
+    Array sy = ({ Array _a = arr_make(sizeof(ObjSymbol)); _a; });
+    Array ln = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array ls = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lo = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array gl = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array fx = ({ Array _a = arr_make(sizeof(Fix)); _a; });
+    Asm a = (Asm){(ObjFile){true, "", t, r, rl, sy}, 1, ln, ls, lo, new_idx(((lines / 2) + 16)), gl, fx, new_idx(((lines / 8) + 16)), 0, ""};
+    int64_t start = 0;
+    int64_t i = 0;
+    while ((i <= n) && a.o.ok) {
+        if ((i == n) || (src[i] == '\n')) {
+            a.line += 1;
+            const char* s = x64asm__trim(str_sub(src, start, (i - start)));
+            a.text = s;
+            if ((str_len(s) > 0) && (s[0] != '#')) {
+                if (s[(str_len(s) - 1)] == ':') {
+                    define_label((&a), str_sub(s, 0, (str_len(s) - 1)));
+                } else 
+                if (s[0] == '.') {
+                    directive((&a), s);
+                } else {
+                    int64_t sp = (0 - 1);
+                    for (int64_t k = 0; k < str_len(s); k++) {
+                        if ((sp < 0) && x64asm__is_space(s[k])) {
+                            sp = k;
+                        }
+                    }
+                    if (sp < 0) {
+                        instruction((&a), s, split_operands(""));
+                    } else {
+                        instruction((&a), str_sub(s, 0, sp), split_operands(str_sub(s, sp, (str_len(s) - sp))));
+                    }
+                }
+            }
+            start = (i + 1);
+        }
+        i += 1;
+    }
+    if (!a.o.ok) {
+        return a.o;
+    }
+    for (int64_t k = 0; k < a.lnames.len; k++) {
+        const char* nm = ((const char**)(a.lnames).data)[k];
+        if ((((int64_t*)(a.lsec).data)[k] == 1) && (!(((str_len(nm) > 1) && (nm[0] == '.')) && (nm[1] == 'L')))) {
+            symbol_index((&a), nm, 1, ((int64_t*)(a.loff).data)[k]);
+        }
+    }
+    for (int64_t k = 0; k < a.fixes.len; k++) {
+        Fix f = ((Fix*)(a.fixes).data)[k];
+        int64_t li = find_label((&a), f.label);
+        if ((li >= 0) && (((int64_t*)(a.lsec).data)[li] == 1)) {
+            patch32((&a), f.pos, ((((int64_t*)(a.loff).data)[li] + f.addend) - ((f.pos + 4) + f.after)));
+        } else 
+        if (li >= 0) {
+            patch32((&a), f.pos, (((int64_t*)(a.loff).data)[li] + f.addend));
+            ({ ObjReloc _e = (ObjReloc){f.pos, (0 - 2), f.after}; arr_push(&(a.o.relocs), &_e); });
+        } else {
+            patch32((&a), f.pos, f.addend);
+            ({ ObjReloc _e = (ObjReloc){f.pos, symbol_index((&a), f.label, 0, 0), f.after}; arr_push(&(a.o.relocs), &_e); });
+        }
+    }
+    return a.o;
+}
+
+void u8put(Out* o, int64_t v) {
+    ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(o->b), &_e); });
+}
+
+void u16put(Out* o, int64_t v) {
+    u8put(o, v);
+    u8put(o, (v >> 8));
+}
+
+void u32put(Out* o, int64_t v) {
+    u8put(o, v);
+    u8put(o, (v >> 8));
+    u8put(o, (v >> 16));
+    u8put(o, (v >> 24));
+}
+
+void zeros(Out* o, int64_t n) {
+    for (int64_t i = 0; i < n; i++) {
+        u8put(o, 0);
+    }
+}
+
+void name8(Out* o, const char* name) {
+    if (str_len(name) <= 8) {
+        for (int64_t i = 0; i < str_len(name); i++) {
+            u8put(o, ((int64_t)(name[i])));
+        }
+        zeros(o, (8 - str_len(name)));
+    } else {
+        int64_t off = (4 + o->strtab.len);
+        for (int64_t i = 0; i < str_len(name); i++) {
+            ({ uint8_t _e = ((uint8_t)((((int64_t)(name[i])) & 255))); arr_push(&(o->strtab), &_e); });
+        }
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(o->strtab), &_e); });
+        u32put(o, 0);
+        u32put(o, off);
+    }
+}
+
+void section_header(Out* o, const char* name, int64_t size, int64_t data_at, int64_t relocs_at, int64_t nrelocs, int64_t flags) {
+    name8(o, name);
+    u32put(o, 0);
+    u32put(o, 0);
+    u32put(o, size);
+    if (size > 0) {
+        u32put(o, data_at);
+    } else {
+        u32put(o, 0);
+    }
+    if (nrelocs > 0) {
+        u32put(o, relocs_at);
+    } else {
+        u32put(o, 0);
+    }
+    u32put(o, 0);
+    if (nrelocs > 65535) {
+        u16put(o, 65535);
+    } else {
+        u16put(o, nrelocs);
+    }
+    u16put(o, 0);
+    u32put(o, flags);
+}
+
+void symbol(Out* o, const char* name, int64_t value, int64_t section, int64_t typ, int64_t cls, int64_t naux) {
+    name8(o, name);
+    u32put(o, value);
+    u16put(o, section);
+    u16put(o, typ);
+    u8put(o, cls);
+    u8put(o, naux);
+}
+
+void section_aux(Out* o, int64_t size, int64_t nrelocs) {
+    u32put(o, size);
+    if (nrelocs > 65535) {
+        u16put(o, 65535);
+    } else {
+        u16put(o, nrelocs);
+    }
+    u16put(o, 0);
+    u32put(o, 0);
+    u16put(o, 0);
+    u8put(o, 0);
+    zeros(o, 3);
+}
+
+bool write_coff(const char* path, ObjFile* f) {
+    Array bytes = coff_bytes(f);
+    return strata_write_bytes(path, (&bytes));
+}
+
+Array coff_bytes(ObjFile* f) {
+    Array b = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array st = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Out o = (Out){b, st};
+    int64_t text_size = f->text.len;
+    int64_t rdata_size = f->rdata.len;
+    int64_t text_at = (20 + (40 * 2));
+    int64_t rdata_at = (text_at + text_size);
+    int64_t relocs_at = (rdata_at + rdata_size);
+    int64_t nrel = f->relocs.len;
+    bool overflow = (nrel > 65535);
+    int64_t nrec = nrel;
+    if (overflow) {
+        nrec = (nrel + 1);
+    }
+    int64_t symtab_at = (relocs_at + (10 * nrec));
+    int64_t nsyms = (4 + f->symbols.len);
+    u16put((&o), 34404);
+    u16put((&o), 2);
+    u32put((&o), 0);
+    u32put((&o), symtab_at);
+    u32put((&o), nsyms);
+    u16put((&o), 0);
+    u16put((&o), 0);
+    int64_t text_flags = 1615855648;
+    if (overflow) {
+        text_flags = (text_flags | 16777216);
+    }
+    section_header((&o), ".text", text_size, text_at, relocs_at, nrec, text_flags);
+    section_header((&o), ".rdata", rdata_size, rdata_at, 0, 0, 1079001152);
+    for (int64_t i = 0; i < text_size; i++) {
+        ({ uint8_t _e = ((uint8_t*)(f->text).data)[i]; arr_push(&(o.b), &_e); });
+    }
+    for (int64_t i = 0; i < rdata_size; i++) {
+        ({ uint8_t _e = ((uint8_t*)(f->rdata).data)[i]; arr_push(&(o.b), &_e); });
+    }
+    if (overflow) {
+        u32put((&o), nrec);
+        u32put((&o), 0);
+        u16put((&o), 0);
+    }
+    for (int64_t i = 0; i < nrel; i++) {
+        ObjReloc r = ((ObjReloc*)(f->relocs).data)[i];
+        int64_t sym = (4 + r.symbol);
+        if (r.symbol == (0 - 1)) {
+            sym = 0;
+        }
+        if (r.symbol == (0 - 2)) {
+            sym = 2;
+        }
+        u32put((&o), r.offset);
+        u32put((&o), sym);
+        u16put((&o), (4 + r.after));
+    }
+    symbol((&o), ".text", 0, 1, 0, 3, 1);
+    section_aux((&o), text_size, nrel);
+    symbol((&o), ".rdata", 0, 2, 0, 3, 1);
+    section_aux((&o), rdata_size, 0);
+    for (int64_t i = 0; i < f->symbols.len; i++) {
+        ObjSymbol s = ((ObjSymbol*)(f->symbols).data)[i];
+        int64_t cls = 3;
+        if (s.global) {
+            cls = 2;
+        }
+        int64_t typ = 0;
+        if (s.section != 2) {
+            typ = 32;
+        }
+        symbol((&o), s.name, s.value, s.section, typ, cls, 0);
+    }
+    u32put((&o), (4 + o.strtab.len));
+    for (int64_t i = 0; i < o.strtab.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(o.strtab).data)[i]; arr_push(&(o.b), &_e); });
+    }
+    return o.b;
+}
+
+void lk_fail(Linker* l, const char* msg) {
+    if (l->ok) {
+        l->err = msg;
+    }
+    l->ok = false;
+}
+
+int64_t rd16(Array b, int64_t at) {
+    return (((int64_t)(((uint8_t*)(b).data)[at])) | (((int64_t)(((uint8_t*)(b).data)[(at + 1)])) << 8));
+}
+
+int64_t rd32(Array b, int64_t at) {
+    return (rd16(b, at) | (rd16(b, (at + 2)) << 16));
+}
+
+const char* rdstr(Array b, int64_t at, int64_t max) {
+    return strata_bytes_cstr((&b), at, max);
+}
+
+Linker* new_linker(void) {
+    Array o = ({ Array _a = arr_make(sizeof(LObj)); _a; });
+    Array s = ({ Array _a = arr_make(sizeof(LSec)); _a; });
+    Array gn = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array gs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array gv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array im = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array id = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array dl = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array en = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array ed = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array b = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array c = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array d = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array t = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array r = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array dt = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    ({ const char* _e = "msvcrt.dll"; arr_push(&(dl), &_e); });
+    ({ const char* _e = "kernel32.dll"; arr_push(&(dl), &_e); });
+    return ({ Linker _v = (Linker){true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, en, ed, new_idx(8192), false, a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0}; Linker* _p = (Linker*)arena_alloc(strata_heap(), sizeof(Linker)); *_p = _v; _p; });
+}
+
+int64_t out_of(Linker* l, const char* name, int64_t flags) {
+    const char* base = name;
+    for (int64_t i = 0; i < str_len(name); i++) {
+        if ((name[i] == '$') && str_eq(base, name)) {
+            base = str_sub(name, 0, i);
+        }
+    }
+    if ((flags & 2048) != 0) {
+        return (0 - 1);
+    }
+    if (str_eq(base, ".text")) {
+        return 0;
+    }
+    if (str_eq(base, ".rdata") || str_eq(base, ".rodata")) {
+        return 1;
+    }
+    if (str_eq(base, ".data")) {
+        return 2;
+    }
+    if (str_eq(base, ".bss")) {
+        return 3;
+    }
+    if (((str_eq(base, ".drectve") || str_eq(base, ".pdata")) || str_eq(base, ".xdata")) || str_eq(base, ".comment")) {
+        return (0 - 1);
+    }
+    if ((str_len(base) >= 6) && str_eq(str_sub(base, 0, 6), ".debug")) {
+        return (0 - 1);
+    }
+    lk_fail(l, str_concat("unsupported section ", name));
+    return (0 - 1);
+}
+
+void link_add(Linker* l, const char* name, Array b) {
+    if ((b.len < 20) || (rd16(b, 0) != 34404)) {
+        lk_fail(l, str_concat(name, " is not an x86-64 COFF object"));
+        return;
+    }
+    int64_t nsec = rd16(b, 2);
+    int64_t symat = rd32(b, 8);
+    int64_t nsym = rd32(b, 12);
+    int64_t shat = (20 + rd16(b, 16));
+    int64_t strat = (symat + (18 * nsym));
+    int64_t first = l->secs.len;
+    int64_t oi = l->objs.len;
+    for (int64_t k = 0; k < nsec; k++) {
+        int64_t h = (shat + (40 * k));
+        const char* nm = rdstr(b, h, 8);
+        if ((str_len(nm) > 1) && (nm[0] == '/')) {
+            int64_t off = 0;
+            for (int64_t q = 1; q < str_len(nm); q++) {
+                off = ((off * 10) + (((int64_t)(nm[q])) - ((int64_t)('0'))));
+            }
+            nm = rdstr(b, (strat + off), 4096);
+        }
+        int64_t flags = rd32(b, (h + 36));
+        ({ LSec _e = (LSec){oi, nm, flags, rd32(b, (h + 16)), rd32(b, (h + 20)), rd16(b, (h + 32)), rd32(b, (h + 24)), out_of(l, nm, flags), 0}; arr_push(&(l->secs), &_e); });
+    }
+    Array syms = ({ Array _a = arr_make(sizeof(LSym)); _a; });
+    int64_t k = 0;
+    while (k < nsym) {
+        int64_t at = (symat + (18 * k));
+        const char* nm = "";
+        if (rd32(b, at) == 0) {
+            nm = rdstr(b, (strat + rd32(b, (at + 4))), 4096);
+        } else {
+            nm = rdstr(b, at, 8);
+        }
+        int64_t sec = rd16(b, (at + 12));
+        if (sec >= 32768) {
+            sec = (sec - 65536);
+        }
+        int64_t naux = ((int64_t)(((uint8_t*)(b).data)[(at + 17)]));
+        ({ LSym _e = (LSym){nm, rd32(b, (at + 8)), sec, ((int64_t)(((uint8_t*)(b).data)[(at + 16)]))}; arr_push(&(syms), &_e); });
+        for (int64_t q = 0; q < naux; q++) {
+            ({ LSym _e = (LSym){"", 0, (0 - 99), 0}; arr_push(&(syms), &_e); });
+        }
+        k = ((k + 1) + naux);
+    }
+    ({ LObj _e = (LObj){name, b, first, nsec, syms}; arr_push(&(l->objs), &_e); });
+    for (int64_t i = 0; i < syms.len; i++) {
+        LSym s = ((LSym*)(syms).data)[i];
+        if ((s.cls == 2) && (s.section > 0)) {
+            if (find_global(l, s.name) >= 0) {
+                lk_fail(l, str_concat(str_concat(str_concat(str_concat("'", s.name), "' is defined twice ("), name), ")"));
+            }
+            idx_add((&l->gidx), s.name, l->gname.len);
+            ({ const char* _e = s.name; arr_push(&(l->gname), &_e); });
+            ({ int64_t _e = ((first + s.section) - 1); arr_push(&(l->gsec), &_e); });
+            ({ int64_t _e = s.value; arr_push(&(l->gval), &_e); });
+        } else 
+        if (((s.cls == 2) && (s.section == 0)) && (s.value > 0)) {
+            lk_fail(l, str_concat(str_concat("'", s.name), "' is a common symbol (compile C with -fno-common)"));
+        }
+    }
+}
+
+int64_t find_global(Linker* l, const char* name) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&l->gidx), name);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((const char**)(l->gname).data)[k], name)) {
+            found = k;
+        }
+        k = idx_next((&l->gidx), k);
+    }
+    return found;
+}
+
+int64_t find_import(Linker* l, const char* name) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&l->impidx), name);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((const char**)(l->imp).data)[k], name)) {
+            found = k;
+        }
+        k = idx_next((&l->impidx), k);
+    }
+    return found;
+}
+
+int64_t rva_to_file(Array b, int64_t rva) {
+    int64_t pe = rd32(b, 60);
+    int64_t nsec = rd16(b, (pe + 6));
+    int64_t sh = ((pe + 24) + rd16(b, (pe + 20)));
+    int64_t r = (0 - 1);
+    for (int64_t k = 0; k < nsec; k++) {
+        int64_t h = (sh + (40 * k));
+        int64_t va = rd32(b, (h + 12));
+        int64_t vs = rd32(b, (h + 8));
+        if (vs < rd32(b, (h + 16))) {
+            vs = rd32(b, (h + 16));
+        }
+        if ((rva >= va) && (rva < (va + vs))) {
+            r = ((rva - va) + rd32(b, (h + 20)));
+        }
+    }
+    return r;
+}
+
+void load_exports(Linker* l) {
+    if (l->exports_loaded) {
+        return;
+    }
+    l->exports_loaded = true;
+    const char* sys = strata_getenv("SystemRoot");
+    if (str_eq(sys, "")) {
+        sys = "C:\\Windows";
+    }
+    for (int64_t d = 0; d < l->dlls.len; d++) {
+        Array b = strata_read_bytes(str_concat(str_concat(sys, "\\System32\\"), ((const char**)(l->dlls).data)[d]));
+        if (b.len < 64) {
+            lk_fail(l, str_concat("cannot read ", ((const char**)(l->dlls).data)[d]));
+        } else {
+            int64_t pe = rd32(b, 60);
+            int64_t opt = (pe + 24);
+            int64_t expdir = rd32(b, (opt + 112));
+            int64_t ed = rva_to_file(b, expdir);
+            if (ed >= 0) {
+                int64_t n = rd32(b, (ed + 24));
+                int64_t names = rva_to_file(b, rd32(b, (ed + 32)));
+                for (int64_t i = 0; i < n; i++) {
+                    const char* nm = rdstr(b, rva_to_file(b, rd32(b, (names + (4 * i)))), 512);
+                    idx_add((&l->expidx), nm, l->exp_name.len);
+                    ({ const char* _e = nm; arr_push(&(l->exp_name), &_e); });
+                    ({ int64_t _e = d; arr_push(&(l->exp_dll), &_e); });
+                }
+            }
+        }
+    }
+}
+
+int64_t dll_of(Linker* l, const char* name) {
+    load_exports(l);
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&l->expidx), name);
+    while (k >= 0) {
+        if (str_eq(((const char**)(l->exp_name).data)[k], name) && ((found < 0) || (((int64_t*)(l->exp_dll).data)[k] < found))) {
+            found = ((int64_t*)(l->exp_dll).data)[k];
+        }
+        k = idx_next((&l->expidx), k);
+    }
+    return found;
+}
+
+const char* import_base(const char* name) {
+    if ((str_len(name) > 6) && str_eq(str_sub(name, 0, 6), "__imp_")) {
+        return str_sub(name, 6, (str_len(name) - 6));
+    }
+    return name;
+}
+
+int64_t reloc_count(Linker* l, LSec s) {
+    if (((s.flags & 16777216) != 0) && (s.nrel == 65535)) {
+        return (rd32(((LObj*)(l->objs).data)[s.obj].b, s.relat) - 1);
+    }
+    return s.nrel;
+}
+
+int64_t reloc_first(LSec s) {
+    if (((s.flags & 16777216) != 0) && (s.nrel == 65535)) {
+        return (s.relat + 10);
+    }
+    return s.relat;
+}
+
+void find_imports(Linker* l) {
+    for (int64_t si = 0; si < l->secs.len; si++) {
+        LSec s = ((LSec*)(l->secs).data)[si];
+        if (s.out >= 0) {
+            LObj o = ((LObj*)(l->objs).data)[s.obj];
+            int64_t n = reloc_count(l, s);
+            int64_t at = reloc_first(s);
+            for (int64_t r = 0; r < n; r++) {
+                int64_t symi = rd32(o.b, ((at + (10 * r)) + 4));
+                LSym y = ((LSym*)(o.syms).data)[symi];
+                if ((y.section == 0) && (find_global(l, y.name) < 0)) {
+                    const char* base = import_base(y.name);
+                    if (find_import(l, base) < 0) {
+                        int64_t d = dll_of(l, base);
+                        if (d < 0) {
+                            lk_fail(l, str_concat(str_concat(str_concat(str_concat("undefined symbol '", y.name), "' (in "), o.name), ")"));
+                        }
+                        idx_add((&l->impidx), base, l->imp.len);
+                        ({ const char* _e = base; arr_push(&(l->imp), &_e); });
+                        ({ int64_t _e = d; arr_push(&(l->imp_dll), &_e); });
+                    }
+                }
+            }
+        }
+    }
+}
+
+int64_t pelink__align_up(int64_t n, int64_t a) {
+    return ((((n + a) - 1) / a) * a);
+}
+
+int64_t sec_align(int64_t flags) {
+    int64_t a = ((flags >> 20) & 15);
+    if (a == 0) {
+        return 16;
+    }
+    int64_t r = 1;
+    for (int64_t i = 1; i < a; i++) {
+        r = (r * 2);
+    }
+    return r;
+}
+
+int64_t imports_of(Linker* l, int64_t d) {
+    int64_t n = 0;
+    for (int64_t i = 0; i < l->imp.len; i++) {
+        if (((int64_t*)(l->imp_dll).data)[i] == d) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+ImpLayout import_layout(Linker* l, int64_t start) {
+    int64_t used = 0;
+    for (int64_t d = 0; d < l->dlls.len; d++) {
+        if (imports_of(l, d) > 0) {
+            used += 1;
+        }
+    }
+    int64_t idt = pelink__align_up(start, 8);
+    int64_t ilt = (idt + (20 * (used + 1)));
+    int64_t slots = 0;
+    for (int64_t d = 0; d < l->dlls.len; d++) {
+        int64_t k = imports_of(l, d);
+        if (k > 0) {
+            slots += (k + 1);
+        }
+    }
+    int64_t iat = (ilt + (8 * slots));
+    int64_t names = (iat + (8 * slots));
+    int64_t p = names;
+    for (int64_t i = 0; i < l->imp.len; i++) {
+        p = pelink__align_up((((p + 2) + str_len(((const char**)(l->imp).data)[i])) + 1), 2);
+    }
+    int64_t dn = p;
+    for (int64_t d = 0; d < l->dlls.len; d++) {
+        if (imports_of(l, d) > 0) {
+            p = ((p + str_len(((const char**)(l->dlls).data)[d])) + 1);
+        }
+    }
+    return (ImpLayout){idt, ilt, iat, names, dn, p};
+}
+
+int64_t iat_slot(Linker* l, ImpLayout il, int64_t i) {
+    int64_t at = il.iat;
+    for (int64_t d = 0; d < l->dlls.len; d++) {
+        int64_t k = imports_of(l, d);
+        if (k > 0) {
+            int64_t pos = 0;
+            for (int64_t j = 0; j < l->imp.len; j++) {
+                if (((int64_t*)(l->imp_dll).data)[j] == d) {
+                    if (j == i) {
+                        return ((((int64_t*)(l->orva).data)[1] + at) + (8 * pos));
+                    }
+                    pos += 1;
+                }
+            }
+            at = (at + (8 * (k + 1)));
+        }
+    }
+    return 0;
+}
+
+int64_t symbol_rva(Linker* l, ImpLayout il, int64_t oi, int64_t symi) {
+    LObj o = ((LObj*)(l->objs).data)[oi];
+    LSym y = ((LSym*)(o.syms).data)[symi];
+    if (y.section > 0) {
+        LSec s = ((LSec*)(l->secs).data)[((o.first + y.section) - 1)];
+        if (s.out < 0) {
+            lk_fail(l, str_concat(str_concat(str_concat(str_concat("a reference to the dropped section ", s.name), " ("), o.name), ")"));
+            return 0;
+        }
+        return ((((int64_t*)(l->orva).data)[s.out] + s.at) + y.value);
+    }
+    if (y.section == 0) {
+        int64_t g = find_global(l, y.name);
+        if (g >= 0) {
+            LSec s = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
+            return ((((int64_t*)(l->orva).data)[s.out] + s.at) + ((int64_t*)(l->gval).data)[g]);
+        }
+        int64_t i = find_import(l, import_base(y.name));
+        if (i < 0) {
+            lk_fail(l, str_concat(str_concat("undefined symbol '", y.name), "'"));
+            return 0;
+        }
+        if (!str_eq(import_base(y.name), y.name)) {
+            return iat_slot(l, il, i);
+        }
+        return ((((int64_t*)(l->orva).data)[0] + l->thunks_at) + (8 * i));
+    }
+    if (y.section == (0 - 1)) {
+        return y.value;
+    }
+    lk_fail(l, str_concat("unsupported symbol ", y.name));
+    return 0;
+}
+
+int64_t get32(Array b, int64_t at) {
+    return rd32(b, at);
+}
+
+void put32(Array* b, int64_t at, int64_t v) {
+    for (int64_t i = 0; i < 4; i++) {
+        ((uint8_t*)(b[0]).data)[(at + i)] = ((uint8_t)(((v >> (8 * i)) & 255)));
+    }
+}
+
+void put64(Array* b, int64_t at, int64_t v) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < 8; i++) {
+        ((uint8_t*)(b[0]).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+int64_t get64(Array b, int64_t at) {
+    uint64_t lo = (((uint64_t)(rd32(b, at))) & ((uint64_t)(4294967295)));
+    uint64_t hi = (((uint64_t)(rd32(b, (at + 4)))) & ((uint64_t)(4294967295)));
+    return ((int64_t)((lo | (hi << ((uint64_t)(32))))));
+}
+
+int64_t image_base(void) {
+    return 5368709120;
+}
+
+void apply_relocs(Linker* l, ImpLayout il, int64_t si, Array* out) {
+    LSec s = ((LSec*)(l->secs).data)[si];
+    LObj o = ((LObj*)(l->objs).data)[s.obj];
+    int64_t n = reloc_count(l, s);
+    int64_t at = reloc_first(s);
+    for (int64_t r = 0; r < n; r++) {
+        int64_t va = rd32(o.b, (at + (10 * r)));
+        int64_t symi = rd32(o.b, ((at + (10 * r)) + 4));
+        int64_t typ = rd16(o.b, ((at + (10 * r)) + 8));
+        int64_t p = (s.at + va);
+        int64_t prva = (((int64_t*)(l->orva).data)[s.out] + p);
+        int64_t sv = symbol_rva(l, il, s.obj, symi);
+        if ((typ >= 4) && (typ <= 9)) {
+            put32(out, p, ((rd32(out[0], p) + sv) - ((prva + 4) + (typ - 4))));
+        } else 
+        if (typ == 1) {
+            put64(out, p, ((get64(out[0], p) + image_base()) + sv));
+        } else 
+        if (typ == 3) {
+            put32(out, p, (rd32(out[0], p) + sv));
+        } else 
+        if (typ == 2) {
+            put32(out, p, ((rd32(out[0], p) + image_base()) + sv));
+        } else 
+        if (typ != 0) {
+            lk_fail(l, str_concat(str_concat(str_concat("unsupported relocation type ", str_from_int(typ)), " in "), o.name));
+        }
+    }
+}
+
+void p8(PeOut* o, int64_t v) {
+    ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(o->b), &_e); });
+}
+
+void p16(PeOut* o, int64_t v) {
+    p8(o, v);
+    p8(o, (v >> 8));
+}
+
+void p32(PeOut* o, int64_t v) {
+    p8(o, v);
+    p8(o, (v >> 8));
+    p8(o, (v >> 16));
+    p8(o, (v >> 24));
+}
+
+void pzero(PeOut* o, int64_t n) {
+    for (int64_t i = 0; i < n; i++) {
+        p8(o, 0);
+    }
+}
+
+void pname(PeOut* o, const char* s) {
+    for (int64_t i = 0; i < 8; i++) {
+        if (i < str_len(s)) {
+            p8(o, ((int64_t)(s[i])));
+        } else {
+            p8(o, 0);
+        }
+    }
+}
+
+const char* startup_asm(void) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = "\t.text\n\t.globl _strata_start\n_strata_start:\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tsubq $72, %rsp\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tmovl $0, 44(%rsp)\n\tleaq 44(%rsp), %rax\n\tmovq %rax, 32(%rsp)\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tleaq 64(%rsp), %rcx\n\tleaq 56(%rsp), %rdx\n\tleaq 48(%rsp), %r8\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\txorl %r9d, %r9d\n\tcall __getmainargs\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tmovl 64(%rsp), %ecx\n\tmovq 56(%rsp), %rdx\n\tcall main\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tmovl %eax, %ecx\n\tcall exit\n"; arr_push(&(p), &_e); });
+    return strata_join((&p));
+}
+
+bool link_exe(Linker* l, const char* path) {
+    ObjFile st = assemble_x64(startup_asm());
+    if (!st.ok) {
+        lk_fail(l, str_concat("startup: ", st.err));
+        return false;
+    }
+    link_add(l, "startup", coff_bytes((&st)));
+    if (!l->ok) {
+        return false;
+    }
+    if (find_global(l, "main") < 0) {
+        lk_fail(l, "no main");
+        return false;
+    }
+    find_imports(l);
+    if (!l->ok) {
+        return false;
+    }
+    for (int64_t o = 0; o < 4; o++) {
+        ({ int64_t _e = 0; arr_push(&(l->osize), &_e); });
+        ({ int64_t _e = 0; arr_push(&(l->orva), &_e); });
+        ({ int64_t _e = 0; arr_push(&(l->ofile), &_e); });
+        ({ int64_t _e = 0; arr_push(&(l->oraw), &_e); });
+    }
+    for (int64_t si = 0; si < l->secs.len; si++) {
+        int64_t out = ((LSec*)(l->secs).data)[si].out;
+        if (out >= 0) {
+            int64_t at = pelink__align_up(((int64_t*)(l->osize).data)[out], sec_align(((LSec*)(l->secs).data)[si].flags));
+            ((LSec*)(l->secs).data)[si].at = at;
+            ((int64_t*)(l->osize).data)[out] = (at + ((LSec*)(l->secs).data)[si].size);
+        }
+    }
+    l->thunks_at = pelink__align_up(((int64_t*)(l->osize).data)[0], 16);
+    ((int64_t*)(l->osize).data)[0] = (l->thunks_at + (8 * l->imp.len));
+    l->imports_at = pelink__align_up(((int64_t*)(l->osize).data)[1], 16);
+    ImpLayout il = import_layout(l, l->imports_at);
+    if (l->imp.len > 0) {
+        ((int64_t*)(l->osize).data)[1] = il.end;
+    }
+    int64_t nout = 0;
+    for (int64_t o = 0; o < 4; o++) {
+        if (((int64_t*)(l->osize).data)[o] > 0) {
+            nout += 1;
+        }
+    }
+    int64_t headers = pelink__align_up(((((64 + 4) + 20) + 240) + (40 * nout)), 512);
+    int64_t rva = 4096;
+    int64_t fp = headers;
+    for (int64_t o = 0; o < 4; o++) {
+        if (((int64_t*)(l->osize).data)[o] > 0) {
+            ((int64_t*)(l->orva).data)[o] = rva;
+            rva = pelink__align_up((rva + ((int64_t*)(l->osize).data)[o]), 4096);
+            if (o != 3) {
+                ((int64_t*)(l->ofile).data)[o] = fp;
+                ((int64_t*)(l->oraw).data)[o] = pelink__align_up(((int64_t*)(l->osize).data)[o], 512);
+                fp = (fp + ((int64_t*)(l->oraw).data)[o]);
+            }
+        }
+    }
+    int64_t image_size = rva;
+    Array text = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array rdata = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array data = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = 0; i < ((int64_t*)(l->osize).data)[0]; i++) {
+        ({ uint8_t _e = ((uint8_t)(204)); arr_push(&(text), &_e); });
+    }
+    for (int64_t i = 0; i < ((int64_t*)(l->osize).data)[1]; i++) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(rdata), &_e); });
+    }
+    for (int64_t i = 0; i < ((int64_t*)(l->osize).data)[2]; i++) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(data), &_e); });
+    }
+    for (int64_t si = 0; si < l->secs.len; si++) {
+        LSec s = ((LSec*)(l->secs).data)[si];
+        if (((s.out >= 0) && (s.out != 3)) && (s.raw > 0)) {
+            Array src = ((LObj*)(l->objs).data)[s.obj].b;
+            for (int64_t i = 0; i < s.size; i++) {
+                if (s.out == 0) {
+                    ((uint8_t*)(text).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                } else 
+                if (s.out == 1) {
+                    ((uint8_t*)(rdata).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                } else {
+                    ((uint8_t*)(data).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                }
+            }
+        }
+    }
+    for (int64_t si = 0; si < l->secs.len; si++) {
+        int64_t out = ((LSec*)(l->secs).data)[si].out;
+        if (out == 0) {
+            apply_relocs(l, il, si, (&text));
+        } else 
+        if (out == 1) {
+            apply_relocs(l, il, si, (&rdata));
+        } else 
+        if (out == 2) {
+            apply_relocs(l, il, si, (&data));
+        } else 
+        if ((out == 3) && (reloc_count(l, ((LSec*)(l->secs).data)[si]) > 0)) {
+            lk_fail(l, "relocations in .bss");
+        }
+    }
+    if (!l->ok) {
+        return false;
+    }
+    for (int64_t i = 0; i < l->imp.len; i++) {
+        int64_t at = (l->thunks_at + (8 * i));
+        ((uint8_t*)(text).data)[at] = ((uint8_t)(255));
+        ((uint8_t*)(text).data)[(at + 1)] = ((uint8_t)(37));
+        put32((&text), (at + 2), (iat_slot(l, il, i) - ((((int64_t*)(l->orva).data)[0] + at) + 6)));
+    }
+    int64_t idt_rva = 0;
+    int64_t idt_size = 0;
+    int64_t iat_rva = 0;
+    int64_t iat_size = 0;
+    if (l->imp.len > 0) {
+        int64_t base = ((int64_t*)(l->orva).data)[1];
+        int64_t ilt = il.ilt;
+        int64_t iat = il.iat;
+        int64_t dn = il.dllnames;
+        int64_t k = 0;
+        Array hn = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+        int64_t p = il.names;
+        for (int64_t i = 0; i < l->imp.len; i++) {
+            ({ int64_t _e = p; arr_push(&(hn), &_e); });
+            for (int64_t c = 0; c < str_len(((const char**)(l->imp).data)[i]); c++) {
+                ((uint8_t*)(rdata).data)[((p + 2) + c)] = ((uint8_t)(((int64_t)(((const char**)(l->imp).data)[i][c]))));
+            }
+            p = pelink__align_up((((p + 2) + str_len(((const char**)(l->imp).data)[i])) + 1), 2);
+        }
+        for (int64_t d = 0; d < l->dlls.len; d++) {
+            int64_t cnt = imports_of(l, d);
+            if (cnt > 0) {
+                for (int64_t c = 0; c < str_len(((const char**)(l->dlls).data)[d]); c++) {
+                    ((uint8_t*)(rdata).data)[(dn + c)] = ((uint8_t)(((int64_t)(((const char**)(l->dlls).data)[d][c]))));
+                }
+                int64_t e = (il.idt + (20 * k));
+                put32((&rdata), e, (base + ilt));
+                put32((&rdata), (e + 12), (base + dn));
+                put32((&rdata), (e + 16), (base + iat));
+                for (int64_t i = 0; i < l->imp.len; i++) {
+                    if (((int64_t*)(l->imp_dll).data)[i] == d) {
+                        put64((&rdata), ilt, (base + ((int64_t*)(hn).data)[i]));
+                        put64((&rdata), iat, (base + ((int64_t*)(hn).data)[i]));
+                        ilt += 8;
+                        iat += 8;
+                    }
+                }
+                ilt += 8;
+                iat += 8;
+                dn = ((dn + str_len(((const char**)(l->dlls).data)[d])) + 1);
+                k += 1;
+            }
+        }
+        idt_rva = (base + il.idt);
+        idt_size = (20 * (k + 1));
+        iat_rva = (base + il.iat);
+        iat_size = (il.names - il.iat);
+    }
+    int64_t g = find_global(l, "_strata_start");
+    LSec es = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
+    int64_t entry = ((((int64_t*)(l->orva).data)[es.out] + es.at) + ((int64_t*)(l->gval).data)[g]);
+    Array ob = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    PeOut o = (PeOut){ob};
+    p16((&o), 23117);
+    pzero((&o), 58);
+    p32((&o), 64);
+    p32((&o), 17744);
+    p16((&o), 34404);
+    p16((&o), nout);
+    p32((&o), 0);
+    p32((&o), 0);
+    p32((&o), 0);
+    p16((&o), 240);
+    p16((&o), 35);
+    p16((&o), 523);
+    p8((&o), 2);
+    p8((&o), 0);
+    p32((&o), ((int64_t*)(l->oraw).data)[0]);
+    p32((&o), (((int64_t*)(l->oraw).data)[1] + ((int64_t*)(l->oraw).data)[2]));
+    p32((&o), pelink__align_up(((int64_t*)(l->osize).data)[3], 512));
+    p32((&o), entry);
+    p32((&o), ((int64_t*)(l->orva).data)[0]);
+    p32((&o), 1073741824);
+    p32((&o), 1);
+    p32((&o), 4096);
+    p32((&o), 512);
+    p16((&o), 6);
+    p16((&o), 0);
+    p16((&o), 0);
+    p16((&o), 0);
+    p16((&o), 6);
+    p16((&o), 0);
+    p32((&o), 0);
+    p32((&o), image_size);
+    p32((&o), headers);
+    p32((&o), 0);
+    p16((&o), 3);
+    p16((&o), 33024);
+    p32((&o), 2097152);
+    p32((&o), 0);
+    p32((&o), 4096);
+    p32((&o), 0);
+    p32((&o), 1048576);
+    p32((&o), 0);
+    p32((&o), 4096);
+    p32((&o), 0);
+    p32((&o), 0);
+    p32((&o), 16);
+    for (int64_t d = 0; d < 16; d++) {
+        if (d == 1) {
+            p32((&o), idt_rva);
+            p32((&o), idt_size);
+        } else 
+        if (d == 12) {
+            p32((&o), iat_rva);
+            p32((&o), iat_size);
+        } else {
+            p32((&o), 0);
+            p32((&o), 0);
+        }
+    }
+    Array names = ({ Array _a = arr_make(sizeof(const char*)); { const char* _e = ".text"; arr_push(&_a, &_e); } { const char* _e = ".rdata"; arr_push(&_a, &_e); } { const char* _e = ".data"; arr_push(&_a, &_e); } { const char* _e = ".bss"; arr_push(&_a, &_e); } _a; });
+    Array flags = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 1610612768; arr_push(&_a, &_e); } { int64_t _e = 1073741888; arr_push(&_a, &_e); } { int64_t _e = 3221225536; arr_push(&_a, &_e); } { int64_t _e = 3221225600; arr_push(&_a, &_e); } _a; });
+    for (int64_t s = 0; s < 4; s++) {
+        if (((int64_t*)(l->osize).data)[s] > 0) {
+            pname((&o), ((const char**)(names).data)[s]);
+            p32((&o), ((int64_t*)(l->osize).data)[s]);
+            p32((&o), ((int64_t*)(l->orva).data)[s]);
+            p32((&o), ((int64_t*)(l->oraw).data)[s]);
+            p32((&o), ((int64_t*)(l->ofile).data)[s]);
+            p32((&o), 0);
+            p32((&o), 0);
+            p16((&o), 0);
+            p16((&o), 0);
+            p32((&o), ((int64_t*)(flags).data)[s]);
+        }
+    }
+    while (o.b.len < headers) {
+        p8((&o), 0);
+    }
+    for (int64_t s = 0; s < 3; s++) {
+        if (((int64_t*)(l->osize).data)[s] > 0) {
+            Array src = text;
+            if (s == 1) {
+                src = rdata;
+            } else 
+            if (s == 2) {
+                src = data;
+            }
+            for (int64_t i = 0; i < src.len; i++) {
+                ({ uint8_t _e = ((uint8_t*)(src).data)[i]; arr_push(&(o.b), &_e); });
+            }
+            while (o.b.len < (((int64_t*)(l->ofile).data)[s] + ((int64_t*)(l->oraw).data)[s])) {
+                p8((&o), 0);
+            }
+        }
+    }
+    if (!strata_write_bytes(path, (&o.b))) {
+        lk_fail(l, str_concat("cannot write ", path));
+        return false;
+    }
+    return true;
 }
 
 bool is_text_kind(TokKind k) {
@@ -11322,17 +13599,17 @@ const char* host_arch(void) {
     return strata_host_arch();
 }
 
-bool is_space(char c) {
+bool project__is_space(char c) {
     return (((c == ' ') || (c == '\t')) || (c == '\r'));
 }
 
-const char* trim(const char* s) {
+const char* project__trim(const char* s) {
     int64_t a = 0;
     int64_t b = str_len(s);
-    while ((a < b) && is_space(s[a])) {
+    while ((a < b) && project__is_space(s[a])) {
         a += 1;
     }
-    while ((b > a) && is_space(s[(b - 1)])) {
+    while ((b > a) && project__is_space(s[(b - 1)])) {
         b -= 1;
     }
     return str_sub(s, a, (b - a));
@@ -11400,16 +13677,16 @@ Array toml_array(Toml* t, const char* v) {
             in_str = (!in_str);
         }
         if ((c == ',') && (!in_str)) {
-            if (!str_eq(trim(item), "")) {
-                ({ const char* _e = toml_string(t, trim(item)); arr_push(&(out), &_e); });
+            if (!str_eq(project__trim(item), "")) {
+                ({ const char* _e = toml_string(t, project__trim(item)); arr_push(&(out), &_e); });
             }
             item = "";
         } else {
             item = str_concat(item, str_sub(body, i, 1));
         }
     }
-    if (!str_eq(trim(item), "")) {
-        ({ const char* _e = toml_string(t, trim(item)); arr_push(&(out), &_e); });
+    if (!str_eq(project__trim(item), "")) {
+        ({ const char* _e = toml_string(t, project__trim(item)); arr_push(&(out), &_e); });
     }
     return out;
 }
@@ -11526,7 +13803,7 @@ Project load_project(const char* path) {
     int64_t n = 0;
     while (n < lines.len) {
         t.line = (n + 1);
-        const char* ln = trim(strip_comment(((const char**)(lines).data)[n]));
+        const char* ln = project__trim(strip_comment(((const char**)(lines).data)[n]));
         n += 1;
         if (str_eq(ln, "")) {
         } else 
@@ -11534,7 +13811,7 @@ Project load_project(const char* path) {
             if (ln[(str_len(ln) - 1)] != ']') {
                 toml_error((&t), "a section header needs a closing ']'");
             } else {
-                t.section = trim(str_sub(ln, 1, (str_len(ln) - 2)));
+                t.section = project__trim(str_sub(ln, 1, (str_len(ln) - 2)));
                 const char* s = t.section;
                 if (((((!str_eq(s, "project")) && (!str_eq(s, "build"))) && (!str_eq(s, "windows"))) && (!str_eq(s, "linux"))) && (!str_eq(s, "macos"))) {
                     toml_error((&t), str_concat(str_concat("unknown section [", s), "] (expected [project], [build], [windows], [linux] or [macos])"));
@@ -11550,11 +13827,11 @@ Project load_project(const char* path) {
             if (eq < 0) {
                 toml_error((&t), "expected 'key = value'");
             } else {
-                const char* key = trim(str_sub(ln, 0, eq));
-                const char* val = trim(str_sub(ln, (eq + 1), ((str_len(ln) - eq) - 1)));
+                const char* key = project__trim(str_sub(ln, 0, eq));
+                const char* val = project__trim(str_sub(ln, (eq + 1), ((str_len(ln) - eq) - 1)));
                 if ((str_len(val) > 0) && (val[0] == '[')) {
                     while ((val[(str_len(val) - 1)] != ']') && (n < lines.len)) {
-                        val = str_concat(str_concat(val, " "), trim(strip_comment(((const char**)(lines).data)[n])));
+                        val = str_concat(str_concat(val, " "), project__trim(strip_comment(((const char**)(lines).data)[n])));
                         n += 1;
                     }
                 }
@@ -11755,9 +14032,14 @@ bool run_build(BuildSpec s, const char* libdir) {
         if (str_eq(why, "")) {
             NativeResult nr = native_compile(prog, true, s.release);
             if (nr.ok) {
-                return native_build(s, libdir, prog, nr.asm_text);
+                ObjFile ob = assemble_x64(nr.asm_text);
+                if (ob.ok) {
+                    return native_build(s, libdir, prog, nr.asm_text, (&ob));
+                }
+                why = str_concat("internal error in the assembler: ", ob.err);
+            } else {
+                why = nr.why;
             }
-            why = nr.why;
         }
         if (str_eq(s.backend, "native")) {
             strata_report(str_concat(str_concat(str_concat(basename_of(s.entry), ": error: can't build natively: "), why), " (use --backend c)"));
@@ -11868,12 +14150,12 @@ bool run_build(BuildSpec s, const char* libdir) {
     return true;
 }
 
-bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text) {
-    const char* asm_file = str_concat(stem_of(s.out_c), ".s");
+bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text, ObjFile* ob) {
+    const char* obj_file = str_concat(stem_of(s.out_c), ".o");
     Array argv = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     ({ const char* _e = strata_cc(); arr_push(&(argv), &_e); });
     ({ const char* _e = "-O2"; arr_push(&(argv), &_e); });
-    ({ const char* _e = asm_file; arr_push(&(argv), &_e); });
+    ({ const char* _e = obj_file; arr_push(&(argv), &_e); });
     ({ const char* _e = str_concat(libdir, "/srt.c"); arr_push(&(argv), &_e); });
     ({ const char* _e = str_concat("-I", libdir); arr_push(&(argv), &_e); });
     for (int64_t i = 0; i < s.c_sources.len; i++) {
@@ -11903,6 +14185,17 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
     ({ const char* _e = "-o"; arr_push(&(argv), &_e); });
     ({ const char* _e = s.out_bin; arr_push(&(argv), &_e); });
     const char* cmd = spaced(argv);
+    Array oa2 = os_link_args(prog, s);
+    bool links_c = (((((s.c_sources.len > 0) || (s.libs.len > 0)) || (s.lib_dirs.len > 0)) || (s.frameworks.len > 0)) || (oa2.len > 0));
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        if (((Decl**)(prog.decls).data)[i]->kind == DcLink) {
+            links_c = true;
+        }
+    }
+    bool own = ((!links_c) && strata_file_exists(str_concat(libdir, "/srt.o")));
+    if (own) {
+        cmd = str_concat(str_concat("strata-link ", libdir), "/srt.o");
+    }
     const char* key = "";
     if (!str_eq(s.cache_file, "")) {
         const char* all = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(asm_text, "\n"), cmd), "\n"), s.tool_version), "\n"), strata_read_file(str_concat(libdir, "/srt.c")));
@@ -11916,13 +14209,27 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
             }
             return true;
         }
-        const char* dir = dirname_of(asm_file);
+        const char* dir = dirname_of(obj_file);
         if (!str_eq(dir, ".")) {
             strata_make_dirs(dir);
         }
     }
-    strata_write_file(asm_file, asm_text);
-    if (strata_run_argv((&argv)) != 0) {
+    if (!write_coff(obj_file, ob)) {
+        strata_report(str_concat("error: can't write ", obj_file));
+        return false;
+    }
+    bool linked = false;
+    if (own) {
+        Linker* lk = new_linker();
+        link_add(lk, obj_file, coff_bytes(ob));
+        link_add(lk, "srt.o", strata_read_bytes(str_concat(libdir, "/srt.o")));
+        linked = (lk->ok && link_exe(lk, s.out_bin));
+        if ((!linked) && str_eq(s.backend, "native")) {
+            strata_report(str_concat(str_concat(basename_of(s.entry), ": error: internal error in the linker: "), lk->err));
+            return false;
+        }
+    }
+    if ((!linked) && (strata_run_argv((&argv)) != 0)) {
         return false;
     }
     if (!str_eq(s.cache_file, "")) {
@@ -12143,7 +14450,7 @@ BuildSpec target_spec(Target t, const char* version, bool release, bool force, b
 }
 
 const char* stratac_version(void) {
-    return "2.0.0 (native)";
+    return "2.1.0 (own assembler + linker)";
 }
 
 bool file_exists(const char* p) {
@@ -12253,6 +14560,27 @@ int64_t cmd_native(const char* path, bool show_ir, bool opt) {
     return 0;
 }
 
+int64_t cmd_assemble(const char* path, const char* out) {
+    const char* src = strata_read_file(path);
+    if (str_len(src) == 0) {
+        printf("%s\n", str_concat("error: cannot read ", path));
+        return 1;
+    }
+    ObjFile ob = assemble_x64(src);
+    if (!ob.ok) {
+        printf("%s\n", str_concat(str_concat(basename_of(path), ": error: "), ob.err));
+        return 1;
+    }
+    if (str_eq(out, "")) {
+        out = str_concat(stem_of(path), ".o");
+    }
+    if (!write_coff(out, (&ob))) {
+        printf("%s\n", str_concat("error: cannot write ", out));
+        return 1;
+    }
+    return 0;
+}
+
 BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend) {
     BuildSpec s = target_spec(t, stratac_version(), release, force, quiet);
     s.backend = backend;
@@ -12323,6 +14651,7 @@ int64_t usage(void) {
     printf("%s\n", "  stratac emit   [target]          print the generated C");
     printf("%s\n", "  stratac asm    [target] [--release]   print the generated assembly (native backend)");
     printf("%s\n", "  stratac ir     [target] [--release]   print the native backend's IR");
+    printf("%s\n", "  stratac assemble <file.s> [out.o]     assemble x86-64 (AT&T) into an object file");
     printf("%s\n", "  stratac ast    <file.strata>     parse and print the AST");
     printf("%s\n", "  stratac tokens <file.strata>     print the token stream");
     printf("%s\n", "");
@@ -12390,6 +14719,17 @@ int64_t dmm_main(Array args) {
             return 2;
         }
         return cmd_new(target);
+    }
+    if (str_eq(cmd, "assemble")) {
+        if (!have_target) {
+            printf("%s\n", "usage: stratac assemble <file.s> [out.o]");
+            return 2;
+        }
+        const char* out = "";
+        if (prog_args.len > 0) {
+            out = ((const char**)(prog_args).data)[0];
+        }
+        return cmd_assemble(target, out);
     }
     if (str_eq(cmd, "tokens") || str_eq(cmd, "ast")) {
         if (!have_target) {

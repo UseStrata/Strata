@@ -70,6 +70,12 @@ void section_aux(Out* o, int size, int nrelocs) {
 }
 
 export bool write_coff(string path, ObjFile* f) {
+    u8[dynamic] bytes = coff_bytes(f)
+    return strata_write_bytes(path, &bytes)
+}
+
+// The object file's bytes.
+export u8[dynamic] coff_bytes(ObjFile* f) {
     u8[dynamic] b = []
     u8[dynamic] st = []
     Out o = Out{ b, st }
@@ -132,5 +138,5 @@ export bool write_coff(string path, ObjFile* f) {
     // the string table: its size (including these 4 bytes), then the names
     u32put(&o, 4 + o.strtab.len)
     for i in 0..o.strtab.len { o.b.push(o.strtab[i]) }
-    return strata_write_bytes(path, &o.b)
+    return o.b
 }

@@ -114,6 +114,14 @@ Write-Host "building libstrata.dll ..." -ForegroundColor Cyan
 & $stratac build (Join-Path $here "api") | Out-Null
 if (-not $?) { throw "libstrata.dll build failed" }
 
+# --- lib/srt.o: the native backend's runtime, compiled once -------------------
+# Strata's linker (src/pelink.strata) links natively compiled programs with this, so they
+# need no C compiler at all. It may only call what msvcrt.dll exports (see srt.c).
+Write-Host "building lib\srt.o ..." -ForegroundColor Cyan
+& gcc -c -O2 -fno-asynchronous-unwind-tables -fno-math-errno -fno-builtin-sinf -fno-builtin-cosf `
+    "-I$lib" (Join-Path $lib "srt.c") -o (Join-Path $lib "srt.o")
+if ($LASTEXITCODE -ne 0) { throw "lib\srt.o build failed" }
+
 Write-Host ""
 Write-Host "artifacts in compiler\bin\ :" -ForegroundColor Green
 Get-ChildItem (Join-Path $bin '*') -Include *.exe,*.dll | ForEach-Object { "  {0,-16} {1,8:N0} bytes" -f $_.Name, $_.Length }

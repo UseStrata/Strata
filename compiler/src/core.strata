@@ -25,3 +25,4 @@ export import x64
 export import native
 export import x64asm
 export import coff
+export import pelink
