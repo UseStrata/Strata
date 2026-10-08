@@ -18,6 +18,9 @@ typedef enum { ExIntLit, ExFloatLit, ExStringLit, ExCharLit, ExBoolLit, ExName, 
 typedef enum { StBlock, StVar, StReturn, StExprStmt, StAssign, StIf, StWhile, StForIn, StRegion, StSwitch, StBreak, StContinue } StmtKind;
 typedef enum { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport } DeclKind;
 typedef enum { TcInt, TcFloat, TcBool, TcChar, TcStr, TcVoid, TcStruct, TcArray, TcPointer, TcVec, TcMat, TcQuat, TcDynArray, TcUnknown } TCat;
+typedef enum { KVoid, KI8, KI16, KI32, KI64, KU8, KU16, KU32, KU64, KF32, KF64 } IrTy;
+typedef enum { OConst, OFConst, OCopy, OAdd, OSub, OMul, ODiv, OMod, OAnd, OOr, OXor, OShl, OShr, ONeg, ONot, OCmp, OConv, OSqrt, OLoad, OStore, OSlotAddr, OSymAddr, OCopyMem, OZeroMem, OParam, OCall, ORet, OLabel, OJmp, OBr, ONop } IrOp;
+typedef enum { CEq, CNe, CLt, CLe, CGt, CGe } IrCond;
 typedef struct Token Token;
 typedef struct NameIdx NameIdx;
 typedef struct Lexer Lexer;
@@ -48,6 +51,23 @@ typedef struct LvalueResult LvalueResult;
 typedef struct Codegen Codegen;
 typedef struct BinParts BinParts;
 typedef struct SplitOutput SplitOutput;
+typedef struct Ins Ins;
+typedef struct IrSlot IrSlot;
+typedef struct IrFunc IrFunc;
+typedef struct IrData IrData;
+typedef struct IrProgram IrProgram;
+typedef struct FieldLay FieldLay;
+typedef struct StructLay StructLay;
+typedef struct TInfo TInfo;
+typedef struct LVal LVal;
+typedef struct LVar LVar;
+typedef struct Lower Lower;
+typedef struct FieldRef FieldRef;
+typedef struct Base Base;
+typedef struct Facts Facts;
+typedef struct RegSet RegSet;
+typedef struct X64 X64;
+typedef struct NativeResult NativeResult;
 typedef struct Project Project;
 typedef struct Toml Toml;
 typedef struct BuildSpec BuildSpec;
@@ -297,6 +317,134 @@ struct SplitOutput {
     Array names;
     Array units;
 };
+struct Ins {
+    int64_t op;
+    int64_t ty;
+    int64_t ty2;
+    int64_t dst;
+    int64_t a;
+    int64_t b;
+    int64_t imm;
+    int64_t imm2;
+    const char* sym;
+    Array args;
+};
+struct IrSlot {
+    int64_t size;
+    int64_t align;
+};
+struct IrFunc {
+    const char* name;
+    bool global;
+    Array vtypes;
+    Array slots;
+    Array code;
+    Array param_types;
+    int64_t ret_ty;
+    int64_t labels;
+};
+struct IrData {
+    const char* sym;
+    const char* text;
+};
+struct IrProgram {
+    Array funcs;
+    Array strings;
+};
+struct FieldLay {
+    const char* name;
+    int64_t off;
+    TypeNode* type;
+};
+struct StructLay {
+    const char* name;
+    int64_t size;
+    int64_t align;
+    Array fields;
+    int64_t state;
+};
+struct TInfo {
+    int64_t kind;
+    int64_t ty;
+    int64_t size;
+    int64_t align;
+};
+struct LVal {
+    bool agg;
+    int64_t reg;
+    int64_t ty;
+    TypeNode* t;
+};
+struct LVar {
+    const char* name;
+    bool mem;
+    int64_t reg;
+    int64_t ty;
+    TypeNode* type;
+};
+struct Lower {
+    bool ok;
+    const char* err;
+    IrProgram prog;
+    Array funcs;
+    Array structs;
+    Array enums;
+    Array members;
+    Array member_values;
+    IrFunc f;
+    Array vars;
+    Array scopes;
+    Array addr_taken;
+    Array break_labels;
+    Array cont_labels;
+    Array loop_regions;
+    Array regions;
+    TypeNode* ret_type;
+    int64_t sret;
+    int64_t fn_index;
+};
+struct FieldRef {
+    bool found;
+    int64_t off;
+    TypeNode* type;
+};
+struct Base {
+    int64_t addr;
+    TypeNode* t;
+};
+struct Facts {
+    Array ndef;
+    Array def_at;
+    Array nuse;
+};
+struct RegSet {
+    int64_t int_saved;
+    int64_t float_saved;
+    int64_t int_scratch;
+    int64_t float_scratch;
+};
+struct X64 {
+    Array out;
+    Array data;
+    int64_t floats;
+    int64_t fnum;
+    int64_t loops;
+    Array loc;
+    Array isreg;
+    Array lazy;
+    Array lval;
+    Array lsym;
+    Array nuse;
+    Array slot_off;
+    Array saved;
+    int64_t save_base;
+};
+struct NativeResult {
+    bool ok;
+    const char* why;
+    const char* asm_text;
+    const char* ir;
+};
 struct Project {
     bool ok;
     const char* file;
@@ -338,6 +486,7 @@ struct BuildSpec {
     bool quiet;
     const char* tool_version;
     bool split;
+    const char* backend;
 };
 struct Target {
     bool ok;
@@ -369,7 +518,7 @@ Token fail(Lexer* l);
 void skip_trivia(Lexer* l);
 bool valid_escape(char e, char quote);
 const char* literal_body(Lexer* l);
-Token string_lit(Lexer* l);
+Token lexer__string_lit(Lexer* l);
 Token char_lit(Lexer* l);
 Token number(Lexer* l);
 TokKind keyword_kind(const char* w);
@@ -540,6 +689,215 @@ Array no_parts(void);
 bool header_uses_math(TypeNode* t);
 bool header_uses_array(TypeNode* t);
 const char* generate_header(Program prog, const char* guard, const char* source);
+bool ir_is_float(int64_t t);
+bool ir_is_unsigned(int64_t t);
+int64_t ir_size(int64_t t);
+int64_t ir_norm_imm(int64_t t, int64_t v);
+const char* ir_ty_name(int64_t t);
+Ins new_ins(int64_t op, int64_t ty, int64_t dst, int64_t a, int64_t b);
+IrFunc new_ir_func(const char* name, bool global);
+IrProgram new_ir_program(void);
+int64_t ir_vreg(IrFunc* f, int64_t ty);
+int64_t ir_slot(IrFunc* f, int64_t size, int64_t align);
+int64_t ir_label(IrFunc* f);
+void ir_emit(IrFunc* f, Ins i);
+const char* ir_op_name(int64_t op);
+const char* ir_cond_name(int64_t c);
+const char* v(int64_t r);
+const char* ir_ins_text(Ins i);
+const char* ir_func_text(IrFunc* f);
+const char* ir_program_text(IrProgram* prog);
+int64_t TK_SCALAR(void);
+int64_t TK_AGG(void);
+int64_t TK_VOID(void);
+void lw_fail(Lower* l, int64_t line, const char* msg);
+TypeNode* named(const char* n);
+int64_t prim_ty(const char* n);
+TInfo scalar_info(int64_t ty);
+TInfo agg_info(int64_t size, int64_t align);
+int64_t vec_dim_of(const char* n);
+TInfo tinfo(Lower* l, TypeNode* t);
+int64_t struct_index(Lower* l, const char* name);
+int64_t align_up(int64_t n, int64_t a);
+void layout(Lower* l, int64_t si);
+bool abi_small(int64_t size);
+int64_t abi_int_of(int64_t size);
+int64_t abi_pass_ty(TInfo ti);
+bool abi_sret(TInfo ti);
+int64_t vreg(Lower* l, int64_t ty);
+void emit(Lower* l, Ins i);
+int64_t iconst(Lower* l, int64_t ty, int64_t value);
+int64_t fconst(Lower* l, int64_t ty, const char* text);
+int64_t binop(Lower* l, int64_t op, int64_t ty, int64_t a, int64_t b);
+int64_t unop(Lower* l, int64_t op, int64_t ty, int64_t a);
+int64_t cmp(Lower* l, int64_t cond, int64_t ty, int64_t a, int64_t b);
+void copy_to(Lower* l, int64_t ty, int64_t dst, int64_t src);
+int64_t load(Lower* l, int64_t ty, int64_t addr, int64_t off);
+void store(Lower* l, int64_t ty, int64_t addr, int64_t off, int64_t value);
+void copy_mem(Lower* l, int64_t dst, int64_t src, int64_t size);
+void zero_mem(Lower* l, int64_t dst, int64_t size);
+int64_t temp(Lower* l, int64_t size, int64_t align);
+int64_t addr_plus(Lower* l, int64_t addr, int64_t off);
+void label(Lower* l, int64_t n);
+void jump(Lower* l, int64_t n);
+void branch(Lower* l, int64_t cond, int64_t then_l, int64_t else_l);
+int64_t new_label(Lower* l);
+int64_t call(Lower* l, const char* name, int64_t ret, Array args);
+int64_t call0(Lower* l, const char* name, int64_t ret);
+int64_t call1(Lower* l, const char* name, int64_t ret, int64_t x);
+int64_t call2(Lower* l, const char* name, int64_t ret, int64_t x, int64_t y);
+int64_t call3(Lower* l, const char* name, int64_t ret, int64_t x, int64_t y, int64_t z);
+int64_t conv(Lower* l, int64_t reg, int64_t from, int64_t to);
+int64_t to_bool(Lower* l, LVal v);
+int64_t as_ty(Lower* l, LVal v, int64_t ty, int64_t line);
+const char* type_text(TypeNode* t);
+int64_t arith_ty(int64_t a, int64_t b);
+int64_t promote(int64_t t);
+LVal scalar(int64_t reg, int64_t ty);
+LVal aggregate(int64_t addr, TypeNode* t);
+int64_t digit_val(char c);
+int64_t parse_int(const char* s);
+int64_t char_val(const char* s);
+const char* strip_us(const char* s);
+int64_t lower__string_lit(Lower* l, const char* text);
+void push_scope(Lower* l);
+void pop_scope(Lower* l);
+int64_t find_var(Lower* l, const char* name);
+bool is_addr_taken(Lower* l, const char* name);
+LVar declare(Lower* l, const char* name, TypeNode* t, int64_t line);
+void copy_agg(Lower* l, TypeNode* t, int64_t dst, int64_t src, int64_t size);
+void assign_var(Lower* l, LVar v, LVal val, int64_t line);
+void store_val(Lower* l, TypeNode* t, int64_t addr, int64_t off, LVal val, int64_t line);
+LVal load_val(Lower* l, TypeNode* t, int64_t addr, int64_t off);
+void scan_expr(Lower* l, Expr* e);
+void scan_stmt(Lower* l, Stmt* s);
+bool is_str(TypeNode* t);
+bool is_vec(TypeNode* t);
+bool is_mat(TypeNode* t);
+bool is_quat(TypeNode* t);
+bool is_dynarr(TypeNode* t);
+bool is_ptr(TypeNode* t);
+LVal lower_expr(Lower* l, Expr* e);
+LVal lower_name(Lower* l, Expr* e);
+LVal lower_unary(Lower* l, Expr* e);
+LVal lower_binary(Lower* l, Expr* e);
+int64_t cond_of(const char* op);
+int64_t arith_op(const char* op);
+LVal combine(Lower* l, Expr* e, LVal left);
+LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b);
+FieldRef field_of(Lower* l, TypeNode* t, const char* name);
+Base field_base(Lower* l, Expr* obj);
+LVal lower_field(Lower* l, Expr* e);
+int64_t field_addr(Lower* l, Expr* e);
+int64_t index_addr(Lower* l, Expr* e);
+int64_t lvalue_addr(Lower* l, Expr* e);
+LVal lower_struct_lit(Lower* l, Expr* e);
+TypeNode* elem_of(TypeNode* t);
+void init_array(Lower* l, int64_t addr, TypeNode* elem);
+LVal lower_array_lit(Lower* l, Expr* e);
+LVal lower_cast(Lower* l, Expr* e);
+Decl* find_func(Lower* l, const char* name);
+LVal lower_args_f32(Lower* l, Expr* e, int64_t i);
+int64_t vec_addr(Lower* l, Expr* e, int64_t line);
+int64_t vec_dot(Lower* l, int64_t a, int64_t b, int64_t n);
+LVal lower_call(Lower* l, Expr* e);
+bool is_math_builtin(const char* nm);
+LVal lower_math_builtin(Lower* l, Expr* e, const char* nm);
+LVal call_strata(Lower* l, Decl* d, Expr* e);
+void free_regions(Lower* l, int64_t from);
+void lower_block(Lower* l, Stmt* b);
+void lower_stmt(Lower* l, Stmt* s);
+void loop_body(Lower* l, Stmt* body, int64_t brk, int64_t cont);
+void lower_for(Lower* l, Stmt* s);
+int64_t var_value(Lower* l, LVar v);
+void lower_switch(Lower* l, Stmt* s);
+void lower_assign(Lower* l, Stmt* s);
+LVal combine_values(Lower* l, Expr* e, LVal left, LVal right);
+void lower_return(Lower* l, Stmt* s);
+void begin_function(Lower* l, const char* name, bool global);
+int64_t param(Lower* l, int64_t ty, int64_t index);
+void lower_function(Lower* l, Decl* d);
+void lower_main(Lower* l, Program prog);
+Lower* new_lower(void);
+bool lower_program(Lower* l, Program prog, bool with_main);
+Facts facts(IrFunc* f);
+bool single(Facts* fa, int64_t v);
+bool is_const(IrFunc* f, Facts* fa, int64_t v);
+int64_t const_of(IrFunc* f, Facts* fa, int64_t v);
+bool pure(int64_t op);
+void make_const(IrFunc* f, int64_t k, int64_t ty, int64_t value);
+void make_copy(IrFunc* f, int64_t k, int64_t src);
+void make_jump(IrFunc* f, int64_t k, int64_t target);
+uint64_t uval(int64_t v);
+bool cmp_holds(int64_t cond, int64_t a, int64_t b, bool uns);
+bool fold(IrFunc* f, Facts* fa, int64_t k);
+int64_t resolve(Array* repl, int64_t v);
+bool propagate_copies(IrFunc* f, Facts* fa);
+bool forward_slots(IrFunc* f, Facts* fa);
+bool same_op(Ins x, Ins y);
+bool cse_candidate(int64_t op);
+bool cse(IrFunc* f, Facts* fa);
+bool hoistable(int64_t op);
+bool hoist_loops(IrFunc* f);
+bool coalesce(IrFunc* f);
+bool remove_dead(IrFunc* f);
+Array label_pos(IrFunc* f);
+int64_t next_real(IrFunc* f, int64_t k);
+int64_t final_target(IrFunc* f, Array lp, int64_t n);
+bool clean_flow(IrFunc* f);
+void compact(IrFunc* f);
+void optimize(IrFunc* f);
+int64_t bit(int64_t k);
+bool has(Array* set, int64_t base, int64_t v);
+void add(Array* set, int64_t base, int64_t v);
+Array reads(Ins i);
+Array alloc_regs(IrFunc* f, RegSet rs, Array skip);
+X64 new_x64(void);
+void out(X64* x, const char* s);
+void out_label(X64* x, const char* s);
+int64_t align_to(int64_t n, int64_t a);
+RegSet x64_regs(void);
+int64_t x64_int_regs(void);
+int64_t x64_saved_regs(void);
+const char* reg_name(int64_t k);
+bool in_reg(X64* x, int64_t v);
+int64_t reg_of(X64* x, int64_t v);
+const char* opnd(X64* x, int64_t v);
+const char* sub_reg(const char* r, int64_t size);
+const char* fsuf(int64_t ty);
+const char* slot_mem(X64* x, int64_t slot, int64_t off);
+const char* src(X64* x, int64_t v);
+void get(X64* x, int64_t v, const char* r);
+void put(X64* x, const char* r, int64_t v);
+void fget(X64* x, int64_t ty, int64_t v, const char* r);
+void fput(X64* x, int64_t ty, const char* r, int64_t v);
+const char* mem_at(X64* x, int64_t a, int64_t off);
+const char* work(X64* x, Ins i);
+void norm(X64* x, int64_t ty, const char* r);
+bool fits32(int64_t v);
+const char* float_const(X64* x, int64_t ty, const char* text);
+const char* as_text(const char* s);
+const char* lbl(X64* x, int64_t n);
+const char* int_reg_arg(int64_t i);
+const char* cc_of(int64_t cond, bool is_unsigned);
+int64_t invert(int64_t cond);
+void copy_bytes(X64* x, int64_t size, bool zero);
+const char* load_insn(int64_t ty);
+void branch_cc(X64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next);
+void cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next);
+void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue);
+void float_op(X64* x, Ins i, const char* fop);
+void emit_cmp(X64* x, Ins i);
+void emit_conv(X64* x, Ins i);
+void emit_param(X64* x, Ins i);
+void emit_call(X64* x, IrFunc* f, Ins i);
+void find_lazy(X64* x, IrFunc* f);
+Array x64_lazy(IrFunc* f);
+void x64_function(X64* x, IrFunc* f, Array regs);
+void x64_begin(X64* x);
+const char* x64_finish(X64* x, IrProgram* prog);
+const char* native_target_why(const char* os, const char* arch);
+NativeResult native_compile(Program prog, bool with_main, bool optimize_code);
 bool is_text_kind(TokKind k);
 const char* pad_left(const char* s, int64_t w);
 const char* pad_right(const char* s, int64_t w);
@@ -553,6 +911,7 @@ void pr_stmt(int64_t ind, Stmt* s);
 void pr_decl(Decl* d);
 void print_program(Program prog);
 const char* host_os(void);
+const char* host_arch(void);
 bool is_space(char c);
 const char* trim(const char* s);
 const char* strip_comment(const char* s);
@@ -575,8 +934,10 @@ bool file_present(const char* p);
 const char* spaced(Array pieces);
 bool needs_pic(BuildSpec s);
 Array dll_link_args(const char* out_bin, bool in_rsp);
+Array os_link_args(Program prog, BuildSpec s);
 const char* guard_for(const char* name);
 bool run_build(BuildSpec s, const char* libdir);
+bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text);
 void write_if_changed(const char* path, const char* text);
 const char* fwd_path(const char* p);
 const char* rsp_arg(const char* p);
@@ -592,9 +953,10 @@ int64_t cmd_tokens(const char* path);
 int64_t cmd_ast(const char* path);
 int64_t cmd_check(const char* path);
 int64_t cmd_emit(const char* path);
-BuildSpec cli_spec(Target t, bool release, bool force, bool quiet);
-int64_t cmd_build(Target t, const char* libdir, bool release, bool force);
-int64_t cmd_run(Target t, const char* libdir, bool release, bool force, Array prog_args);
+int64_t cmd_native(const char* path, bool show_ir, bool opt);
+BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend);
+int64_t cmd_build(Target t, const char* libdir, bool release, bool force, const char* backend);
+int64_t cmd_run(Target t, const char* libdir, bool release, bool force, const char* backend, Array prog_args);
 int64_t cmd_new(const char* name);
 int64_t usage(void);
 int64_t dmm_main(Array args);
@@ -792,7 +1154,7 @@ const char* literal_body(Lexer* l) {
     return str_sub(l->src, (l->start + 1), ((l->pos - l->start) - 2));
 }
 
-Token string_lit(Lexer* l) {
+Token lexer__string_lit(Lexer* l) {
     while ((!at_end(l)) && (peek(l) != '"')) {
         char c = peek(l);
         if (c == '\n') {
@@ -1133,7 +1495,7 @@ Token scan_token(Lexer* l) {
         }
         case '"':
         {
-            return string_lit(l);
+            return lexer__string_lit(l);
             break;
         }
         case '\'':
@@ -5067,6 +5429,9 @@ BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
         cg->had_error = true;
         return (BinParts){"", ""};
     }
+    if (str_eq(e->text, "<<") && (e->a->kind == ExIntLit)) {
+        return (BinParts){"((int64_t)", str_concat(str_concat(" << ", b), ")")};
+    }
     return (BinParts){"(", str_concat(str_concat(str_concat(str_concat(" ", e->text), " "), b), ")")};
 }
 
@@ -5791,6 +6156,4737 @@ const char* generate_header(Program prog, const char* guard, const char* source)
     return join_pieces(out);
 }
 
+bool ir_is_float(int64_t t) {
+    return ((t == KF32) || (t == KF64));
+}
+
+bool ir_is_unsigned(int64_t t) {
+    return ((((t == KU8) || (t == KU16)) || (t == KU32)) || (t == KU64));
+}
+
+int64_t ir_size(int64_t t) {
+    if ((t == KI8) || (t == KU8)) {
+        return 1;
+    }
+    if ((t == KI16) || (t == KU16)) {
+        return 2;
+    }
+    if (((t == KI32) || (t == KU32)) || (t == KF32)) {
+        return 4;
+    }
+    if (t == KVoid) {
+        return 0;
+    }
+    return 8;
+}
+
+int64_t ir_norm_imm(int64_t t, int64_t v) {
+    if (t == KI8) {
+        return (((v & 255) ^ 128) - 128);
+    }
+    if (t == KU8) {
+        return (v & 255);
+    }
+    if (t == KI16) {
+        return (((v & 65535) ^ 32768) - 32768);
+    }
+    if (t == KU16) {
+        return (v & 65535);
+    }
+    if (t == KI32) {
+        return (((v & 4294967295) ^ 2147483648) - 2147483648);
+    }
+    if (t == KU32) {
+        return (v & 4294967295);
+    }
+    return v;
+}
+
+const char* ir_ty_name(int64_t t) {
+    switch (t) {
+        case KVoid:
+        {
+            return "void";
+            break;
+        }
+        case KI8:
+        {
+            return "i8";
+            break;
+        }
+        case KI16:
+        {
+            return "i16";
+            break;
+        }
+        case KI32:
+        {
+            return "i32";
+            break;
+        }
+        case KI64:
+        {
+            return "i64";
+            break;
+        }
+        case KU8:
+        {
+            return "u8";
+            break;
+        }
+        case KU16:
+        {
+            return "u16";
+            break;
+        }
+        case KU32:
+        {
+            return "u32";
+            break;
+        }
+        case KU64:
+        {
+            return "u64";
+            break;
+        }
+        case KF32:
+        {
+            return "f32";
+            break;
+        }
+        case KF64:
+        {
+            return "f64";
+            break;
+        }
+    }
+    return "?";
+}
+
+Ins new_ins(int64_t op, int64_t ty, int64_t dst, int64_t a, int64_t b) {
+    Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return (Ins){op, ty, 0, dst, a, b, 0, 0, "", args};
+}
+
+IrFunc new_ir_func(const char* name, bool global) {
+    Array vt = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array sl = ({ Array _a = arr_make(sizeof(IrSlot)); _a; });
+    Array code = ({ Array _a = arr_make(sizeof(Ins)); _a; });
+    Array pt = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return (IrFunc){name, global, vt, sl, code, pt, KVoid, 0};
+}
+
+IrProgram new_ir_program(void) {
+    Array fs = ({ Array _a = arr_make(sizeof(IrFunc)); _a; });
+    Array ds = ({ Array _a = arr_make(sizeof(IrData)); _a; });
+    return (IrProgram){fs, ds};
+}
+
+int64_t ir_vreg(IrFunc* f, int64_t ty) {
+    ({ int64_t _e = ty; arr_push(&(f->vtypes), &_e); });
+    return (f->vtypes.len - 1);
+}
+
+int64_t ir_slot(IrFunc* f, int64_t size, int64_t align) {
+    if (size < 1) {
+        size = 1;
+    }
+    if (align < 1) {
+        align = 1;
+    }
+    ({ IrSlot _e = (IrSlot){size, align}; arr_push(&(f->slots), &_e); });
+    return (f->slots.len - 1);
+}
+
+int64_t ir_label(IrFunc* f) {
+    f->labels += 1;
+    return f->labels;
+}
+
+void ir_emit(IrFunc* f, Ins i) {
+    ({ Ins _e = i; arr_push(&(f->code), &_e); });
+}
+
+const char* ir_op_name(int64_t op) {
+    switch (op) {
+        case OConst:
+        {
+            return "const";
+            break;
+        }
+        case OFConst:
+        {
+            return "fconst";
+            break;
+        }
+        case OCopy:
+        {
+            return "copy";
+            break;
+        }
+        case OAdd:
+        {
+            return "add";
+            break;
+        }
+        case OSub:
+        {
+            return "sub";
+            break;
+        }
+        case OMul:
+        {
+            return "mul";
+            break;
+        }
+        case ODiv:
+        {
+            return "div";
+            break;
+        }
+        case OMod:
+        {
+            return "mod";
+            break;
+        }
+        case OAnd:
+        {
+            return "and";
+            break;
+        }
+        case OOr:
+        {
+            return "or";
+            break;
+        }
+        case OXor:
+        {
+            return "xor";
+            break;
+        }
+        case OShl:
+        {
+            return "shl";
+            break;
+        }
+        case OShr:
+        {
+            return "shr";
+            break;
+        }
+        case ONeg:
+        {
+            return "neg";
+            break;
+        }
+        case ONot:
+        {
+            return "not";
+            break;
+        }
+        case OCmp:
+        {
+            return "cmp";
+            break;
+        }
+        case OConv:
+        {
+            return "conv";
+            break;
+        }
+        case OSqrt:
+        {
+            return "sqrt";
+            break;
+        }
+        case OLoad:
+        {
+            return "load";
+            break;
+        }
+        case OStore:
+        {
+            return "store";
+            break;
+        }
+        case OSlotAddr:
+        {
+            return "slotaddr";
+            break;
+        }
+        case OSymAddr:
+        {
+            return "symaddr";
+            break;
+        }
+        case OCopyMem:
+        {
+            return "copymem";
+            break;
+        }
+        case OZeroMem:
+        {
+            return "zeromem";
+            break;
+        }
+        case OParam:
+        {
+            return "param";
+            break;
+        }
+        case OCall:
+        {
+            return "call";
+            break;
+        }
+        case ORet:
+        {
+            return "ret";
+            break;
+        }
+        case OLabel:
+        {
+            return "label";
+            break;
+        }
+        case OJmp:
+        {
+            return "jmp";
+            break;
+        }
+        case OBr:
+        {
+            return "br";
+            break;
+        }
+        case ONop:
+        {
+            return "nop";
+            break;
+        }
+    }
+    return "?";
+}
+
+const char* ir_cond_name(int64_t c) {
+    switch (c) {
+        case CEq:
+        {
+            return "eq";
+            break;
+        }
+        case CNe:
+        {
+            return "ne";
+            break;
+        }
+        case CLt:
+        {
+            return "lt";
+            break;
+        }
+        case CLe:
+        {
+            return "le";
+            break;
+        }
+        case CGt:
+        {
+            return "gt";
+            break;
+        }
+        case CGe:
+        {
+            return "ge";
+            break;
+        }
+    }
+    return "?";
+}
+
+const char* v(int64_t r) {
+    return str_concat("%", str_from_int(r));
+}
+
+const char* ir_ins_text(Ins i) {
+    const char* d = "";
+    if (i.dst >= 0) {
+        d = str_concat(v(i.dst), " = ");
+    }
+    const char* t = ir_ty_name(i.ty);
+    switch (i.op) {
+        case OConst:
+        {
+            return str_concat(str_concat(str_concat(str_concat(d, "const."), t), " "), str_from_int(i.imm));
+            break;
+        }
+        case OFConst:
+        {
+            return str_concat(str_concat(str_concat(str_concat(d, "fconst."), t), " "), i.sym);
+            break;
+        }
+        case OCopy:
+        {
+            return str_concat(str_concat(str_concat(str_concat(d, "copy."), t), " "), v(i.a));
+            break;
+        }
+        case OCmp:
+        {
+            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, "cmp."), ir_cond_name(i.ty2)), "."), t), " "), v(i.a)), ", "), v(i.b));
+            break;
+        }
+        case OConv:
+        {
+            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, "conv."), ir_ty_name(i.ty2)), "."), t), " "), v(i.a));
+            break;
+        }
+        case ONeg:
+        case ONot:
+        case OSqrt:
+        {
+            return str_concat(str_concat(str_concat(str_concat(str_concat(d, ir_op_name(i.op)), "."), t), " "), v(i.a));
+            break;
+        }
+        case OLoad:
+        {
+            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, "load."), t), " ["), v(i.a)), " + "), str_from_int(i.imm)), "]");
+            break;
+        }
+        case OStore:
+        {
+            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("store.", t), " ["), v(i.a)), " + "), str_from_int(i.imm)), "], "), v(i.b));
+            break;
+        }
+        case OSlotAddr:
+        {
+            return str_concat(str_concat(d, "slotaddr s"), str_from_int(i.imm));
+            break;
+        }
+        case OSymAddr:
+        {
+            return str_concat(str_concat(d, "symaddr "), i.sym);
+            break;
+        }
+        case OCopyMem:
+        {
+            return str_concat(str_concat(str_concat(str_concat(str_concat("copymem ", v(i.a)), ", "), v(i.b)), ", "), str_from_int(i.imm));
+            break;
+        }
+        case OZeroMem:
+        {
+            return str_concat(str_concat(str_concat("zeromem ", v(i.a)), ", "), str_from_int(i.imm));
+            break;
+        }
+        case OParam:
+        {
+            return str_concat(str_concat(str_concat(str_concat(d, "param."), t), " "), str_from_int(i.imm));
+            break;
+        }
+        case OCall:
+        {
+            {
+                Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+                ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(d, "call."), t), " "), i.sym), "("); arr_push(&(p), &_e); });
+                for (int64_t k = 0; k < i.args.len; k++) {
+                    if (k > 0) {
+                        ({ const char* _e = ", "; arr_push(&(p), &_e); });
+                    }
+                    ({ const char* _e = v(((int64_t*)(i.args).data)[k]); arr_push(&(p), &_e); });
+                }
+                ({ const char* _e = ")"; arr_push(&(p), &_e); });
+                return strata_join((&p));
+            }
+            break;
+        }
+        case ORet:
+        {
+            if (i.a < 0) {
+                return "ret";
+            }
+            return str_concat("ret ", v(i.a));
+            break;
+        }
+        case OLabel:
+        {
+            return str_concat(str_concat("L", str_from_int(i.imm)), ":");
+            break;
+        }
+        case OJmp:
+        {
+            return str_concat("jmp L", str_from_int(i.imm));
+            break;
+        }
+        case OBr:
+        {
+            return str_concat(str_concat(str_concat(str_concat(str_concat("br ", v(i.a)), ", L"), str_from_int(i.imm)), ", L"), str_from_int(i.imm2));
+            break;
+        }
+        case ONop:
+        {
+            return "nop";
+            break;
+        }
+    }
+    return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, ir_op_name(i.op)), "."), t), " "), v(i.a)), ", "), v(i.b));
+}
+
+const char* ir_func_text(IrFunc* f) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = str_concat(str_concat("func ", f->name), "("); arr_push(&(p), &_e); });
+    for (int64_t k = 0; k < f->param_types.len; k++) {
+        if (k > 0) {
+            ({ const char* _e = ", "; arr_push(&(p), &_e); });
+        }
+        ({ const char* _e = ir_ty_name(((int64_t*)(f->param_types).data)[k]); arr_push(&(p), &_e); });
+    }
+    ({ const char* _e = str_concat(str_concat(") ", ir_ty_name(f->ret_ty)), "\n"); arr_push(&(p), &_e); });
+    for (int64_t k = 0; k < f->slots.len; k++) {
+        ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("  s", str_from_int(k)), ": "), str_from_int(((IrSlot*)(f->slots).data)[k].size)), " bytes, align "), str_from_int(((IrSlot*)(f->slots).data)[k].align)), "\n"); arr_push(&(p), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (i.op != ONop) {
+            if (i.op == OLabel) {
+                ({ const char* _e = str_concat(ir_ins_text(i), "\n"); arr_push(&(p), &_e); });
+            } else {
+                ({ const char* _e = str_concat(str_concat("    ", ir_ins_text(i)), "\n"); arr_push(&(p), &_e); });
+            }
+        }
+    }
+    return strata_join((&p));
+}
+
+const char* ir_program_text(IrProgram* prog) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t k = 0; k < prog->strings.len; k++) {
+        ({ const char* _e = str_concat(str_concat(str_concat(str_concat("data ", ((IrData*)(prog->strings).data)[k].sym), " = \""), ((IrData*)(prog->strings).data)[k].text), "\"\n"); arr_push(&(p), &_e); });
+    }
+    for (int64_t k = 0; k < prog->funcs.len; k++) {
+        ({ const char* _e = "\n"; arr_push(&(p), &_e); });
+        ({ const char* _e = ir_func_text((&((IrFunc*)(prog->funcs).data)[k])); arr_push(&(p), &_e); });
+    }
+    return strata_join((&p));
+}
+
+int64_t TK_SCALAR(void) {
+    return 0;
+}
+
+int64_t TK_AGG(void) {
+    return 1;
+}
+
+int64_t TK_VOID(void) {
+    return 2;
+}
+
+void lw_fail(Lower* l, int64_t line, const char* msg) {
+    if (l->ok) {
+        l->err = str_concat(str_concat(str_concat("line ", str_from_int(line)), ": "), msg);
+    }
+    l->ok = false;
+}
+
+TypeNode* named(const char* n) {
+    TypeNode* t = new_type(TyNamed, 0, 0);
+    t->name = n;
+    return t;
+}
+
+int64_t prim_ty(const char* n) {
+    if (str_eq(n, "int") || str_eq(n, "i64")) {
+        return KI64;
+    }
+    if (str_eq(n, "i32")) {
+        return KI32;
+    }
+    if (str_eq(n, "i16")) {
+        return KI16;
+    }
+    if (str_eq(n, "i8")) {
+        return KI8;
+    }
+    if (str_eq(n, "uint") || str_eq(n, "u64")) {
+        return KU64;
+    }
+    if (str_eq(n, "u32")) {
+        return KU32;
+    }
+    if (str_eq(n, "u16")) {
+        return KU16;
+    }
+    if (str_eq(n, "u8") || str_eq(n, "bool")) {
+        return KU8;
+    }
+    if (str_eq(n, "char")) {
+        return KI8;
+    }
+    if (str_eq(n, "float") || str_eq(n, "f32")) {
+        return KF32;
+    }
+    if (str_eq(n, "f64")) {
+        return KF64;
+    }
+    if (str_eq(n, "string")) {
+        return KU64;
+    }
+    return (0 - 1);
+}
+
+TInfo scalar_info(int64_t ty) {
+    return (TInfo){TK_SCALAR(), ty, ir_size(ty), ir_size(ty)};
+}
+
+TInfo agg_info(int64_t size, int64_t align) {
+    return (TInfo){TK_AGG(), KVoid, size, align};
+}
+
+int64_t vec_dim_of(const char* n) {
+    if (str_eq(n, "vec2")) {
+        return 2;
+    }
+    if (str_eq(n, "vec3")) {
+        return 3;
+    }
+    if (str_eq(n, "vec4") || str_eq(n, "quat")) {
+        return 4;
+    }
+    return 0;
+}
+
+TInfo tinfo(Lower* l, TypeNode* t) {
+    if (t == 0) {
+        return (TInfo){TK_VOID(), KVoid, 0, 1};
+    }
+    if (((t->kind == TyPointer) || (t->kind == TyArray)) || (t->kind == TyFixedArray)) {
+        return scalar_info(KU64);
+    }
+    if (t->kind == TyDynArray) {
+        return agg_info(32, 8);
+    }
+    const char* n = t->name;
+    if (str_eq(n, "void")) {
+        return (TInfo){TK_VOID(), KVoid, 0, 1};
+    }
+    int64_t p = prim_ty(n);
+    if (p >= 0) {
+        return scalar_info(p);
+    }
+    int64_t d = vec_dim_of(n);
+    if (d > 0) {
+        return agg_info((4 * d), 4);
+    }
+    if (str_eq(n, "mat4")) {
+        return agg_info(64, 4);
+    }
+    if (str_eq(n, "Arena")) {
+        return agg_info(8, 8);
+    }
+    for (int64_t i = 0; i < l->enums.len; i++) {
+        if (str_eq(((const char**)(l->enums).data)[i], n)) {
+            return scalar_info(KI32);
+        }
+    }
+    int64_t si = struct_index(l, n);
+    if (si >= 0) {
+        layout(l, si);
+        return agg_info(((StructLay*)(l->structs).data)[si].size, ((StructLay*)(l->structs).data)[si].align);
+    }
+    lw_fail(l, t->line, str_concat(str_concat("unknown type '", n), "' (a C type? the native backend can't use C headers yet)"));
+    return scalar_info(KI64);
+}
+
+int64_t struct_index(Lower* l, const char* name) {
+    int64_t found = (0 - 1);
+    for (int64_t i = 0; i < l->structs.len; i++) {
+        if (str_eq(((StructLay*)(l->structs).data)[i].name, name)) {
+            found = i;
+        }
+    }
+    return found;
+}
+
+int64_t align_up(int64_t n, int64_t a) {
+    return ((((n + a) - 1) / a) * a);
+}
+
+void layout(Lower* l, int64_t si) {
+    if (((StructLay*)(l->structs).data)[si].state == 2) {
+        return;
+    }
+    if (((StructLay*)(l->structs).data)[si].state == 1) {
+        lw_fail(l, 0, str_concat(str_concat("struct ", ((StructLay*)(l->structs).data)[si].name), " contains itself"));
+        return;
+    }
+    ((StructLay*)(l->structs).data)[si].state = 1;
+    int64_t off = 0;
+    int64_t align = 1;
+    for (int64_t k = 0; k < ((StructLay*)(l->structs).data)[si].fields.len; k++) {
+        TInfo ti = tinfo(l, ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[k].type);
+        off = align_up(off, ti.align);
+        ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[k].off = off;
+        off += ti.size;
+        if (ti.align > align) {
+            align = ti.align;
+        }
+    }
+    ((StructLay*)(l->structs).data)[si].size = align_up(off, align);
+    ((StructLay*)(l->structs).data)[si].align = align;
+    ((StructLay*)(l->structs).data)[si].state = 2;
+}
+
+bool abi_small(int64_t size) {
+    return ((((size == 1) || (size == 2)) || (size == 4)) || (size == 8));
+}
+
+int64_t abi_int_of(int64_t size) {
+    if (size == 1) {
+        return KU8;
+    }
+    if (size == 2) {
+        return KU16;
+    }
+    if (size == 4) {
+        return KU32;
+    }
+    return KU64;
+}
+
+int64_t abi_pass_ty(TInfo ti) {
+    if (ti.kind == TK_SCALAR()) {
+        return ti.ty;
+    }
+    if (abi_small(ti.size)) {
+        return abi_int_of(ti.size);
+    }
+    return KU64;
+}
+
+bool abi_sret(TInfo ti) {
+    return ((ti.kind == TK_AGG()) && (!abi_small(ti.size)));
+}
+
+int64_t vreg(Lower* l, int64_t ty) {
+    return ir_vreg((&l->f), ty);
+}
+
+void emit(Lower* l, Ins i) {
+    ({ Ins _e = i; arr_push(&(l->f.code), &_e); });
+}
+
+int64_t iconst(Lower* l, int64_t ty, int64_t value) {
+    int64_t r = vreg(l, ty);
+    Ins i = new_ins(OConst, ty, r, (0 - 1), (0 - 1));
+    i.imm = value;
+    emit(l, i);
+    return r;
+}
+
+int64_t fconst(Lower* l, int64_t ty, const char* text) {
+    int64_t r = vreg(l, ty);
+    Ins i = new_ins(OFConst, ty, r, (0 - 1), (0 - 1));
+    i.sym = text;
+    emit(l, i);
+    return r;
+}
+
+int64_t binop(Lower* l, int64_t op, int64_t ty, int64_t a, int64_t b) {
+    int64_t r = vreg(l, ty);
+    emit(l, new_ins(op, ty, r, a, b));
+    return r;
+}
+
+int64_t unop(Lower* l, int64_t op, int64_t ty, int64_t a) {
+    int64_t r = vreg(l, ty);
+    emit(l, new_ins(op, ty, r, a, (0 - 1)));
+    return r;
+}
+
+int64_t cmp(Lower* l, int64_t cond, int64_t ty, int64_t a, int64_t b) {
+    int64_t r = vreg(l, KU8);
+    Ins i = new_ins(OCmp, ty, r, a, b);
+    i.ty2 = cond;
+    emit(l, i);
+    return r;
+}
+
+void copy_to(Lower* l, int64_t ty, int64_t dst, int64_t src) {
+    emit(l, new_ins(OCopy, ty, dst, src, (0 - 1)));
+}
+
+int64_t load(Lower* l, int64_t ty, int64_t addr, int64_t off) {
+    int64_t r = vreg(l, ty);
+    Ins i = new_ins(OLoad, ty, r, addr, (0 - 1));
+    i.imm = off;
+    emit(l, i);
+    return r;
+}
+
+void store(Lower* l, int64_t ty, int64_t addr, int64_t off, int64_t value) {
+    Ins i = new_ins(OStore, ty, (0 - 1), addr, value);
+    i.imm = off;
+    emit(l, i);
+}
+
+void copy_mem(Lower* l, int64_t dst, int64_t src, int64_t size) {
+    Ins i = new_ins(OCopyMem, KVoid, (0 - 1), dst, src);
+    i.imm = size;
+    emit(l, i);
+}
+
+void zero_mem(Lower* l, int64_t dst, int64_t size) {
+    Ins i = new_ins(OZeroMem, KVoid, (0 - 1), dst, (0 - 1));
+    i.imm = size;
+    emit(l, i);
+}
+
+int64_t temp(Lower* l, int64_t size, int64_t align) {
+    int64_t s = ir_slot((&l->f), size, align);
+    int64_t r = vreg(l, KU64);
+    Ins i = new_ins(OSlotAddr, KU64, r, (0 - 1), (0 - 1));
+    i.imm = s;
+    emit(l, i);
+    return r;
+}
+
+int64_t addr_plus(Lower* l, int64_t addr, int64_t off) {
+    if (off == 0) {
+        return addr;
+    }
+    return binop(l, OAdd, KU64, addr, iconst(l, KU64, off));
+}
+
+void label(Lower* l, int64_t n) {
+    Ins i = new_ins(OLabel, KVoid, (0 - 1), (0 - 1), (0 - 1));
+    i.imm = n;
+    emit(l, i);
+}
+
+void jump(Lower* l, int64_t n) {
+    Ins i = new_ins(OJmp, KVoid, (0 - 1), (0 - 1), (0 - 1));
+    i.imm = n;
+    emit(l, i);
+}
+
+void branch(Lower* l, int64_t cond, int64_t then_l, int64_t else_l) {
+    Ins i = new_ins(OBr, KVoid, (0 - 1), cond, (0 - 1));
+    i.imm = then_l;
+    i.imm2 = else_l;
+    emit(l, i);
+}
+
+int64_t new_label(Lower* l) {
+    return ir_label((&l->f));
+}
+
+int64_t call(Lower* l, const char* name, int64_t ret, Array args) {
+    int64_t r = (0 - 1);
+    if (ret != KVoid) {
+        r = vreg(l, ret);
+    }
+    Ins i = new_ins(OCall, ret, r, (0 - 1), (0 - 1));
+    i.sym = name;
+    i.args = args;
+    emit(l, i);
+    return r;
+}
+
+int64_t call0(Lower* l, const char* name, int64_t ret) {
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return call(l, name, ret, a);
+}
+
+int64_t call1(Lower* l, const char* name, int64_t ret, int64_t x) {
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    ({ int64_t _e = x; arr_push(&(a), &_e); });
+    return call(l, name, ret, a);
+}
+
+int64_t call2(Lower* l, const char* name, int64_t ret, int64_t x, int64_t y) {
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    ({ int64_t _e = x; arr_push(&(a), &_e); });
+    ({ int64_t _e = y; arr_push(&(a), &_e); });
+    return call(l, name, ret, a);
+}
+
+int64_t call3(Lower* l, const char* name, int64_t ret, int64_t x, int64_t y, int64_t z) {
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    ({ int64_t _e = x; arr_push(&(a), &_e); });
+    ({ int64_t _e = y; arr_push(&(a), &_e); });
+    ({ int64_t _e = z; arr_push(&(a), &_e); });
+    return call(l, name, ret, a);
+}
+
+int64_t conv(Lower* l, int64_t reg, int64_t from, int64_t to) {
+    if (from == to) {
+        return reg;
+    }
+    if ((((ir_size(from) == 8) && (ir_size(to) == 8)) && (!ir_is_float(from))) && (!ir_is_float(to))) {
+        return reg;
+    }
+    int64_t r = vreg(l, to);
+    Ins i = new_ins(OConv, to, r, reg, (0 - 1));
+    i.ty2 = from;
+    emit(l, i);
+    return r;
+}
+
+int64_t to_bool(Lower* l, LVal v) {
+    if (ir_is_float(v.ty)) {
+        return cmp(l, CNe, v.ty, v.reg, fconst(l, v.ty, "0.0"));
+    }
+    return cmp(l, CNe, v.ty, v.reg, iconst(l, v.ty, 0));
+}
+
+int64_t as_ty(Lower* l, LVal v, int64_t ty, int64_t line) {
+    if (v.agg) {
+        lw_fail(l, line, str_concat("expected a value, got a ", type_text(v.t)));
+        return iconst(l, ty, 0);
+    }
+    return conv(l, v.reg, v.ty, ty);
+}
+
+const char* type_text(TypeNode* t) {
+    if (t == 0) {
+        return "?";
+    }
+    if (t->kind == TyPointer) {
+        return str_concat(type_text(t->elem), "*");
+    }
+    if (t->kind == TyDynArray) {
+        return str_concat(type_text(t->elem), "[dynamic]");
+    }
+    return t->name;
+}
+
+int64_t arith_ty(int64_t a, int64_t b) {
+    if ((a == KF64) || (b == KF64)) {
+        return KF64;
+    }
+    if ((a == KF32) || (b == KF32)) {
+        return KF32;
+    }
+    if ((ir_size(a) == 8) || (ir_size(b) == 8)) {
+        if ((a == KU64) || (b == KU64)) {
+            return KU64;
+        }
+        return KI64;
+    }
+    if ((a == KU32) || (b == KU32)) {
+        return KU32;
+    }
+    return KI32;
+}
+
+int64_t promote(int64_t t) {
+    if (ir_is_float(t) || (ir_size(t) == 8)) {
+        return t;
+    }
+    if (t == KU32) {
+        return KU32;
+    }
+    return KI32;
+}
+
+LVal scalar(int64_t reg, int64_t ty) {
+    return (LVal){false, reg, ty, 0};
+}
+
+LVal aggregate(int64_t addr, TypeNode* t) {
+    return (LVal){true, addr, KVoid, t};
+}
+
+int64_t digit_val(char c) {
+    if ((c >= '0') && (c <= '9')) {
+        return (((int64_t)(c)) - ((int64_t)('0')));
+    }
+    if ((c >= 'a') && (c <= 'f')) {
+        return ((((int64_t)(c)) - ((int64_t)('a'))) + 10);
+    }
+    if ((c >= 'A') && (c <= 'F')) {
+        return ((((int64_t)(c)) - ((int64_t)('A'))) + 10);
+    }
+    return 0;
+}
+
+int64_t parse_int(const char* s) {
+    uint64_t v = 0;
+    uint64_t base = 10;
+    int64_t i = 0;
+    int64_t n = str_len(s);
+    if (((n > 2) && (s[0] == '0')) && ((s[1] == 'x') || (s[1] == 'X'))) {
+        base = 16;
+        i = 2;
+    } else 
+    if (((n > 2) && (s[0] == '0')) && ((s[1] == 'b') || (s[1] == 'B'))) {
+        base = 2;
+        i = 2;
+    }
+    while (i < n) {
+        if (s[i] != '_') {
+            v = ((v * base) + ((uint64_t)(digit_val(s[i]))));
+        }
+        i += 1;
+    }
+    return ((int64_t)(v));
+}
+
+int64_t char_val(const char* s) {
+    if (str_len(s) == 0) {
+        return 0;
+    }
+    if ((s[0] != '\\') || (str_len(s) < 2)) {
+        return ((int64_t)(s[0]));
+    }
+    char e = s[1];
+    if (e == 'n') {
+        return 10;
+    }
+    if (e == 't') {
+        return 9;
+    }
+    if (e == 'r') {
+        return 13;
+    }
+    if (e == '0') {
+        return 0;
+    }
+    return ((int64_t)(e));
+}
+
+const char* strip_us(const char* s) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t i = 0; i < str_len(s); i++) {
+        if (s[i] != '_') {
+            ({ const char* _e = str_sub(s, i, 1); arr_push(&(p), &_e); });
+        }
+    }
+    return strata_join((&p));
+}
+
+int64_t lower__string_lit(Lower* l, const char* text) {
+    const char* sym = str_concat(".Lstr", str_from_int(l->prog.strings.len));
+    ({ IrData _e = (IrData){sym, text}; arr_push(&(l->prog.strings), &_e); });
+    int64_t r = vreg(l, KU64);
+    Ins i = new_ins(OSymAddr, KU64, r, (0 - 1), (0 - 1));
+    i.sym = sym;
+    emit(l, i);
+    return r;
+}
+
+void push_scope(Lower* l) {
+    ({ int64_t _e = l->vars.len; arr_push(&(l->scopes), &_e); });
+}
+
+void pop_scope(Lower* l) {
+    l->vars.len = ((int64_t*)(l->scopes).data)[(l->scopes.len - 1)];
+    l->scopes.len = (l->scopes.len - 1);
+}
+
+int64_t find_var(Lower* l, const char* name) {
+    int64_t k = (l->vars.len - 1);
+    int64_t found = (0 - 1);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((LVar*)(l->vars).data)[k].name, name)) {
+            found = k;
+        }
+        k -= 1;
+    }
+    return found;
+}
+
+bool is_addr_taken(Lower* l, const char* name) {
+    bool r = false;
+    for (int64_t i = 0; i < l->addr_taken.len; i++) {
+        if (str_eq(((const char**)(l->addr_taken).data)[i], name)) {
+            r = true;
+        }
+    }
+    return r;
+}
+
+LVar declare(Lower* l, const char* name, TypeNode* t, int64_t line) {
+    TInfo ti = tinfo(l, t);
+    LVar v = (LVar){name, false, (0 - 1), ti.ty, t};
+    if ((ti.kind == TK_AGG()) || ((ti.kind == TK_SCALAR()) && is_addr_taken(l, name))) {
+        v.mem = true;
+        v.reg = temp(l, ti.size, ti.align);
+    } else 
+    if (ti.kind == TK_SCALAR()) {
+        v.reg = vreg(l, ti.ty);
+    } else {
+        lw_fail(l, line, "a variable can't be void");
+        v.reg = vreg(l, KI64);
+    }
+    ({ LVar _e = v; arr_push(&(l->vars), &_e); });
+    return v;
+}
+
+void copy_agg(Lower* l, TypeNode* t, int64_t dst, int64_t src, int64_t size) {
+    int64_t d = 0;
+    if ((t != 0) && (t->kind == TyNamed)) {
+        d = vec_dim_of(t->name);
+    }
+    if ((d > 0) && (size == (4 * d))) {
+        for (int64_t i = 0; i < d; i++) {
+            store(l, KF32, dst, (4 * i), load(l, KF32, src, (4 * i)));
+        }
+    } else {
+        copy_mem(l, dst, src, size);
+    }
+}
+
+void assign_var(Lower* l, LVar v, LVal val, int64_t line) {
+    if (v.mem && (v.ty == KVoid)) {
+        TInfo ti = tinfo(l, v.type);
+        if (!val.agg) {
+            lw_fail(l, line, str_concat("expected a ", type_text(v.type)));
+            return;
+        }
+        copy_agg(l, v.type, v.reg, val.reg, ti.size);
+    } else 
+    if (v.mem) {
+        store(l, v.ty, v.reg, 0, as_ty(l, val, v.ty, line));
+    } else {
+        copy_to(l, v.ty, v.reg, as_ty(l, val, v.ty, line));
+    }
+}
+
+void store_val(Lower* l, TypeNode* t, int64_t addr, int64_t off, LVal val, int64_t line) {
+    TInfo ti = tinfo(l, t);
+    if (ti.kind == TK_AGG()) {
+        if (!val.agg) {
+            lw_fail(l, line, str_concat("expected a ", type_text(t)));
+            return;
+        }
+        copy_agg(l, t, addr_plus(l, addr, off), val.reg, ti.size);
+    } else 
+    if (ti.kind == TK_SCALAR()) {
+        store(l, ti.ty, addr, off, as_ty(l, val, ti.ty, line));
+    }
+}
+
+LVal load_val(Lower* l, TypeNode* t, int64_t addr, int64_t off) {
+    TInfo ti = tinfo(l, t);
+    if (ti.kind == TK_AGG()) {
+        return aggregate(addr_plus(l, addr, off), t);
+    }
+    return scalar(load(l, ti.ty, addr, off), ti.ty);
+}
+
+void scan_expr(Lower* l, Expr* e) {
+    while ((e != 0) && (e->kind == ExBinary)) {
+        scan_expr(l, e->b);
+        e = e->a;
+    }
+    if (e == 0) {
+        return;
+    }
+    if ((((e->kind == ExUnary) && str_eq(e->text, "&")) && (e->a != 0)) && (e->a->kind == ExName)) {
+        ({ const char* _e = e->a->text; arr_push(&(l->addr_taken), &_e); });
+    }
+    scan_expr(l, e->a);
+    scan_expr(l, e->b);
+    for (int64_t i = 0; i < e->items.len; i++) {
+        scan_expr(l, ((Expr**)(e->items).data)[i]);
+    }
+}
+
+void scan_stmt(Lower* l, Stmt* s) {
+    if (s == 0) {
+        return;
+    }
+    scan_expr(l, s->init);
+    scan_expr(l, s->expr);
+    scan_expr(l, s->target);
+    scan_expr(l, s->value);
+    scan_expr(l, s->cond);
+    scan_expr(l, s->iter);
+    scan_expr(l, s->subject);
+    scan_stmt(l, s->then_block);
+    scan_stmt(l, s->else_branch);
+    scan_stmt(l, s->body);
+    for (int64_t i = 0; i < s->stmts.len; i++) {
+        scan_stmt(l, ((Stmt**)(s->stmts).data)[i]);
+    }
+    for (int64_t i = 0; i < s->cases.len; i++) {
+        for (int64_t j = 0; j < ((SwitchCase*)(s->cases).data)[i].values.len; j++) {
+            scan_expr(l, ((Expr**)(((SwitchCase*)(s->cases).data)[i].values).data)[j]);
+        }
+        scan_stmt(l, ((SwitchCase*)(s->cases).data)[i].body);
+    }
+}
+
+bool is_str(TypeNode* t) {
+    return (((t != 0) && (t->kind == TyNamed)) && str_eq(t->name, "string"));
+}
+
+bool is_vec(TypeNode* t) {
+    return (((t != 0) && (t->kind == TyNamed)) && ((str_eq(t->name, "vec2") || str_eq(t->name, "vec3")) || str_eq(t->name, "vec4")));
+}
+
+bool is_mat(TypeNode* t) {
+    return (((t != 0) && (t->kind == TyNamed)) && str_eq(t->name, "mat4"));
+}
+
+bool is_quat(TypeNode* t) {
+    return (((t != 0) && (t->kind == TyNamed)) && str_eq(t->name, "quat"));
+}
+
+bool is_dynarr(TypeNode* t) {
+    return ((t != 0) && (t->kind == TyDynArray));
+}
+
+bool is_ptr(TypeNode* t) {
+    return ((t != 0) && (t->kind == TyPointer));
+}
+
+LVal lower_expr(Lower* l, Expr* e) {
+    if (e == 0) {
+        return scalar(iconst(l, KI64, 0), KI64);
+    }
+    switch (e->kind) {
+        case ExIntLit:
+        {
+            return scalar(iconst(l, KI64, parse_int(e->text)), KI64);
+            break;
+        }
+        case ExFloatLit:
+        {
+            return scalar(fconst(l, KF64, strip_us(e->text)), KF64);
+            break;
+        }
+        case ExCharLit:
+        {
+            return scalar(iconst(l, KI8, char_val(e->text)), KI8);
+            break;
+        }
+        case ExBoolLit:
+        {
+            if (e->bval) {
+                return scalar(iconst(l, KU8, 1), KU8);
+            }
+            return scalar(iconst(l, KU8, 0), KU8);
+            break;
+        }
+        case ExStringLit:
+        {
+            return scalar(lower__string_lit(l, e->text), KU64);
+            break;
+        }
+        case ExName:
+        {
+            return lower_name(l, e);
+            break;
+        }
+        case ExUnary:
+        {
+            return lower_unary(l, e);
+            break;
+        }
+        case ExBinary:
+        {
+            return lower_binary(l, e);
+            break;
+        }
+        case ExCall:
+        {
+            return lower_call(l, e);
+            break;
+        }
+        case ExField:
+        {
+            return lower_field(l, e);
+            break;
+        }
+        case ExIndex:
+        {
+            {
+                int64_t addr = index_addr(l, e);
+                return load_val(l, e->rtype, addr, 0);
+            }
+            break;
+        }
+        case ExArrayLit:
+        {
+            return lower_array_lit(l, e);
+            break;
+        }
+        case ExStructLit:
+        {
+            return lower_struct_lit(l, e);
+            break;
+        }
+        case ExCast:
+        {
+            return lower_cast(l, e);
+            break;
+        }
+        case ExSizeof:
+        {
+            return scalar(iconst(l, KI64, tinfo(l, e->type).size), KI64);
+            break;
+        }
+    }
+    lw_fail(l, e->line, "unsupported expression");
+    return scalar(iconst(l, KI64, 0), KI64);
+}
+
+LVal lower_name(Lower* l, Expr* e) {
+    int64_t k = find_var(l, e->text);
+    if (k >= 0) {
+        LVar v = ((LVar*)(l->vars).data)[k];
+        if (v.ty == KVoid) {
+            return aggregate(v.reg, v.type);
+        }
+        if (v.mem) {
+            return scalar(load(l, v.ty, v.reg, 0), v.ty);
+        }
+        return scalar(v.reg, v.ty);
+    }
+    for (int64_t i = 0; i < l->members.len; i++) {
+        if (str_eq(((const char**)(l->members).data)[i], e->text)) {
+            return scalar(iconst(l, KI32, ((int64_t*)(l->member_values).data)[i]), KI32);
+        }
+    }
+    if (str_eq(e->text, "PI")) {
+        return scalar(fconst(l, KF32, "3.14159265358979323846"), KF32);
+    }
+    if (str_eq(e->text, "null")) {
+        return scalar(iconst(l, KU64, 0), KU64);
+    }
+    lw_fail(l, e->line, str_concat(str_concat("'", e->text), "' is not a Strata name (C names need the C backend for now)"));
+    return scalar(iconst(l, KI64, 0), KI64);
+}
+
+LVal lower_unary(Lower* l, Expr* e) {
+    if (str_eq(e->text, "&")) {
+        int64_t a = lvalue_addr(l, e->a);
+        if (a < 0) {
+            lw_fail(l, e->line, "can't take this address");
+            a = iconst(l, KU64, 0);
+        }
+        return scalar(a, KU64);
+    }
+    if (str_eq(e->text, "*")) {
+        int64_t p = as_ty(l, lower_expr(l, e->a), KU64, e->line);
+        return load_val(l, e->rtype, p, 0);
+    }
+    LVal v = lower_expr(l, e->a);
+    if (str_eq(e->text, "!")) {
+        return scalar(cmp(l, CEq, KU8, to_bool(l, v), iconst(l, KU8, 0)), KU8);
+    }
+    int64_t t = promote(v.ty);
+    int64_t x = as_ty(l, v, t, e->line);
+    if (str_eq(e->text, "-")) {
+        return scalar(unop(l, ONeg, t, x), t);
+    }
+    if (str_eq(e->text, "~")) {
+        return scalar(unop(l, ONot, t, x), t);
+    }
+    lw_fail(l, e->line, str_concat("unsupported operator ", e->text));
+    return v;
+}
+
+LVal lower_binary(Lower* l, Expr* e) {
+    Array spine = ({ Array _a = arr_make(sizeof(Expr*)); _a; });
+    Expr* x = e;
+    while ((x->kind == ExBinary) && (!str_eq(x->text, ".."))) {
+        ({ Expr* _e = x; arr_push(&(spine), &_e); });
+        x = x->a;
+    }
+    LVal acc = lower_expr(l, x);
+    int64_t k = (spine.len - 1);
+    while (k >= 0) {
+        acc = combine(l, ((Expr**)(spine).data)[k], acc);
+        k -= 1;
+    }
+    return acc;
+}
+
+int64_t cond_of(const char* op) {
+    if (str_eq(op, "==")) {
+        return CEq;
+    }
+    if (str_eq(op, "!=")) {
+        return CNe;
+    }
+    if (str_eq(op, "<")) {
+        return CLt;
+    }
+    if (str_eq(op, "<=")) {
+        return CLe;
+    }
+    if (str_eq(op, ">")) {
+        return CGt;
+    }
+    return CGe;
+}
+
+int64_t arith_op(const char* op) {
+    if (str_eq(op, "+")) {
+        return OAdd;
+    }
+    if (str_eq(op, "-")) {
+        return OSub;
+    }
+    if (str_eq(op, "*")) {
+        return OMul;
+    }
+    if (str_eq(op, "/")) {
+        return ODiv;
+    }
+    if (str_eq(op, "%")) {
+        return OMod;
+    }
+    if (str_eq(op, "&")) {
+        return OAnd;
+    }
+    if (str_eq(op, "|")) {
+        return OOr;
+    }
+    if (str_eq(op, "^")) {
+        return OXor;
+    }
+    if (str_eq(op, "<<")) {
+        return OShl;
+    }
+    if (str_eq(op, ">>")) {
+        return OShr;
+    }
+    return (0 - 1);
+}
+
+LVal combine(Lower* l, Expr* e, LVal left) {
+    const char* op = e->text;
+    if (str_eq(op, "&&") || str_eq(op, "||")) {
+        int64_t r = vreg(l, KU8);
+        copy_to(l, KU8, r, to_bool(l, left));
+        int64_t rhs = new_label(l);
+        int64_t done = new_label(l);
+        if (str_eq(op, "&&")) {
+            branch(l, r, rhs, done);
+        } else {
+            branch(l, r, done, rhs);
+        }
+        label(l, rhs);
+        copy_to(l, KU8, r, to_bool(l, lower_expr(l, e->b)));
+        jump(l, done);
+        label(l, done);
+        return scalar(r, KU8);
+    }
+    LVal right = lower_expr(l, e->b);
+    TypeNode* lt = e->a->rtype;
+    TypeNode* rt = e->b->rtype;
+    if (is_mat(lt) || is_quat(lt)) {
+        TypeNode* res = e->rtype;
+        int64_t out = temp(l, tinfo(l, res).size, 4);
+        if (is_mat(lt) && is_mat(rt)) {
+            call3(l, "srt_mat4_mul", KVoid, out, left.reg, right.reg);
+        } else 
+        if (is_mat(lt)) {
+            call3(l, "srt_mat4_mul_vec4", KVoid, out, left.reg, right.reg);
+        } else {
+            call3(l, "srt_quat_mul", KVoid, out, left.reg, right.reg);
+        }
+        return aggregate(out, res);
+    }
+    if (is_vec(lt) || is_vec(rt)) {
+        return vec_binary(l, e, left, right);
+    }
+    if (is_str(lt) || is_str(rt)) {
+        if (str_eq(op, "+")) {
+            return scalar(call2(l, "srt_str_concat", KU64, left.reg, right.reg), KU64);
+        }
+        int64_t eq = call2(l, "srt_str_eq", KI32, left.reg, right.reg);
+        int64_t c = CNe;
+        if (str_eq(op, "!=")) {
+            c = CEq;
+        }
+        return scalar(cmp(l, c, KI32, eq, iconst(l, KI32, 0)), KU8);
+    }
+    if (((((str_eq(op, "==") || str_eq(op, "!=")) || str_eq(op, "<")) || str_eq(op, "<=")) || str_eq(op, ">")) || str_eq(op, ">=")) {
+        int64_t t = arith_ty(promote(left.ty), promote(right.ty));
+        return scalar(cmp(l, cond_of(op), t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), KU8);
+    }
+    int64_t aop = arith_op(op);
+    if (aop < 0) {
+        lw_fail(l, e->line, str_concat("unsupported operator ", op));
+        return left;
+    }
+    int64_t t = arith_ty(promote(left.ty), promote(right.ty));
+    if ((aop == OShl) || (aop == OShr)) {
+        t = promote(left.ty);
+        return scalar(binop(l, aop, t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), t);
+    }
+    return scalar(binop(l, aop, t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), t);
+}
+
+LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
+    TypeNode* res = e->rtype;
+    int64_t n = vec_dim_of(res->name);
+    int64_t out = temp(l, (4 * n), 4);
+    int64_t op = arith_op(e->text);
+    if (a.agg && b.agg) {
+        for (int64_t i = 0; i < n; i++) {
+            int64_t x = load(l, KF32, a.reg, (4 * i));
+            int64_t y = load(l, KF32, b.reg, (4 * i));
+            store(l, KF32, out, (4 * i), binop(l, op, KF32, x, y));
+        }
+    } else {
+        LVal vv = a;
+        LVal sv = b;
+        if (!a.agg) {
+            vv = b;
+            sv = a;
+        }
+        int64_t s = as_ty(l, sv, KF32, e->line);
+        for (int64_t i = 0; i < n; i++) {
+            store(l, KF32, out, (4 * i), binop(l, OMul, KF32, load(l, KF32, vv.reg, (4 * i)), s));
+        }
+    }
+    return aggregate(out, res);
+}
+
+FieldRef field_of(Lower* l, TypeNode* t, const char* name) {
+    if ((t != 0) && (t->kind == TyDynArray)) {
+        if (str_eq(name, "len")) {
+            return (FieldRef){true, 8, named("int")};
+        }
+    } else 
+    if ((t != 0) && (t->kind == TyNamed)) {
+        int64_t d = vec_dim_of(t->name);
+        if ((d > 0) && (str_len(name) == 1)) {
+            int64_t k = (0 - 1);
+            if (str_eq(name, "x")) {
+                k = 0;
+            } else 
+            if (str_eq(name, "y")) {
+                k = 1;
+            } else 
+            if (str_eq(name, "z")) {
+                k = 2;
+            } else 
+            if (str_eq(name, "w")) {
+                k = 3;
+            }
+            if (k >= 0) {
+                return (FieldRef){true, (4 * k), named("float")};
+            }
+        }
+        int64_t si = struct_index(l, t->name);
+        if (si >= 0) {
+            layout(l, si);
+            for (int64_t i = 0; i < ((StructLay*)(l->structs).data)[si].fields.len; i++) {
+                if (str_eq(((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[i].name, name)) {
+                    return (FieldRef){true, ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[i].off, ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[i].type};
+                }
+            }
+        }
+    }
+    return (FieldRef){false, 0, 0};
+}
+
+Base field_base(Lower* l, Expr* obj) {
+    if (is_ptr(obj->rtype)) {
+        int64_t p = as_ty(l, lower_expr(l, obj), KU64, obj->line);
+        return (Base){p, obj->rtype->elem};
+    }
+    int64_t a = lvalue_addr(l, obj);
+    if (a < 0) {
+        LVal v = lower_expr(l, obj);
+        if (!v.agg) {
+            lw_fail(l, obj->line, "this value has no fields");
+            return (Base){iconst(l, KU64, 0), obj->rtype};
+        }
+        a = v.reg;
+    }
+    return (Base){a, obj->rtype};
+}
+
+LVal lower_field(Lower* l, Expr* e) {
+    TypeNode* ot = e->a->rtype;
+    if (is_str(ot) && str_eq(e->field, "len")) {
+        return scalar(call1(l, "srt_str_len", KI64, as_ty(l, lower_expr(l, e->a), KU64, e->line)), KI64);
+    }
+    if (is_vec(ot) && (str_len(e->field) > 1)) {
+        Base b = field_base(l, e->a);
+        int64_t n = str_len(e->field);
+        int64_t out = temp(l, (4 * n), 4);
+        for (int64_t i = 0; i < n; i++) {
+            FieldRef fr = field_of(l, ot, str_sub(e->field, i, 1));
+            store(l, KF32, out, (4 * i), load(l, KF32, b.addr, fr.off));
+        }
+        return aggregate(out, e->rtype);
+    }
+    int64_t a = field_addr(l, e);
+    return load_val(l, e->rtype, a, 0);
+}
+
+int64_t field_addr(Lower* l, Expr* e) {
+    Base b = field_base(l, e->a);
+    FieldRef fr = field_of(l, b.t, e->field);
+    if (!fr.found) {
+        lw_fail(l, e->line, str_concat(str_concat("unsupported field '", e->field), "'"));
+        return b.addr;
+    }
+    return addr_plus(l, b.addr, fr.off);
+}
+
+int64_t index_addr(Lower* l, Expr* e) {
+    TypeNode* ot = e->a->rtype;
+    int64_t idx = as_ty(l, lower_expr(l, e->b), KI64, e->line);
+    int64_t base = (0 - 1);
+    int64_t size = 1;
+    if (is_dynarr(ot)) {
+        Base b = field_base(l, e->a);
+        base = load(l, KU64, b.addr, 0);
+        size = tinfo(l, ot->elem).size;
+    } else 
+    if (is_str(ot)) {
+        base = as_ty(l, lower_expr(l, e->a), KU64, e->line);
+    } else 
+    if (is_ptr(ot) || ((ot != 0) && ((ot->kind == TyArray) || (ot->kind == TyFixedArray)))) {
+        base = as_ty(l, lower_expr(l, e->a), KU64, e->line);
+        size = tinfo(l, ot->elem).size;
+    } else {
+        lw_fail(l, e->line, "can't index this");
+        return iconst(l, KU64, 0);
+    }
+    int64_t off = idx;
+    if (size != 1) {
+        off = binop(l, OMul, KI64, idx, iconst(l, KI64, size));
+    }
+    return binop(l, OAdd, KU64, base, off);
+}
+
+int64_t lvalue_addr(Lower* l, Expr* e) {
+    if (e->kind == ExName) {
+        int64_t k = find_var(l, e->text);
+        if ((k >= 0) && ((LVar*)(l->vars).data)[k].mem) {
+            return ((LVar*)(l->vars).data)[k].reg;
+        }
+        return (0 - 1);
+    }
+    if (e->kind == ExField) {
+        if (is_vec(e->a->rtype) && (str_len(e->field) > 1)) {
+            return (0 - 1);
+        }
+        if (is_str(e->a->rtype)) {
+            return (0 - 1);
+        }
+        return field_addr(l, e);
+    }
+    if (e->kind == ExIndex) {
+        return index_addr(l, e);
+    }
+    if ((e->kind == ExUnary) && str_eq(e->text, "*")) {
+        return as_ty(l, lower_expr(l, e->a), KU64, e->line);
+    }
+    return (0 - 1);
+}
+
+LVal lower_struct_lit(Lower* l, Expr* e) {
+    TypeNode* t = named(e->type_name);
+    TInfo ti = tinfo(l, t);
+    int64_t out = temp(l, ti.size, ti.align);
+    zero_mem(l, out, ti.size);
+    int64_t si = struct_index(l, e->type_name);
+    for (int64_t i = 0; i < e->items.len; i++) {
+        if ((si >= 0) && (i < ((StructLay*)(l->structs).data)[si].fields.len)) {
+            FieldLay fl = ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[i];
+            store_val(l, fl.type, out, fl.off, lower_expr(l, ((Expr**)(e->items).data)[i]), e->line);
+        }
+    }
+    return aggregate(out, t);
+}
+
+TypeNode* elem_of(TypeNode* t) {
+    if (((t != 0) && (t->kind == TyDynArray)) && (t->elem != 0)) {
+        return t->elem;
+    }
+    return named("int");
+}
+
+void init_array(Lower* l, int64_t addr, TypeNode* elem) {
+    zero_mem(l, addr, 32);
+    store(l, KI64, addr, 24, iconst(l, KI64, tinfo(l, elem).size));
+}
+
+LVal lower_array_lit(Lower* l, Expr* e) {
+    TypeNode* elem = elem_of(e->rtype);
+    TInfo ei = tinfo(l, elem);
+    int64_t out = temp(l, 32, 8);
+    init_array(l, out, elem);
+    if (e->items.len > 0) {
+        int64_t tmp = temp(l, ei.size, ei.align);
+        for (int64_t i = 0; i < e->items.len; i++) {
+            store_val(l, elem, tmp, 0, lower_expr(l, ((Expr**)(e->items).data)[i]), e->line);
+            call2(l, "srt_arr_push", KVoid, out, tmp);
+        }
+    }
+    TypeNode* t = new_type(TyDynArray, 0, 0);
+    t->elem = elem;
+    return aggregate(out, t);
+}
+
+LVal lower_cast(Lower* l, Expr* e) {
+    LVal v = lower_expr(l, e->a);
+    TInfo ti = tinfo(l, e->type);
+    if ((ti.kind != TK_SCALAR()) || v.agg) {
+        lw_fail(l, e->line, "unsupported cast");
+        return v;
+    }
+    if ((e->type->kind == TyNamed) && str_eq(e->type->name, "bool")) {
+        return scalar(to_bool(l, v), KU8);
+    }
+    return scalar(conv(l, v.reg, v.ty, ti.ty), ti.ty);
+}
+
+Decl* find_func(Lower* l, const char* name) {
+    Decl* found = 0;
+    for (int64_t i = 0; i < l->funcs.len; i++) {
+        if (str_eq(((Decl**)(l->funcs).data)[i]->name, name)) {
+            found = ((Decl**)(l->funcs).data)[i];
+        }
+    }
+    return found;
+}
+
+LVal lower_args_f32(Lower* l, Expr* e, int64_t i) {
+    return scalar(as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[i]), KF32, e->line), KF32);
+}
+
+int64_t vec_addr(Lower* l, Expr* e, int64_t line) {
+    LVal v = lower_expr(l, e);
+    if (!v.agg) {
+        lw_fail(l, line, "expected a vector");
+        return iconst(l, KU64, 0);
+    }
+    return v.reg;
+}
+
+int64_t vec_dot(Lower* l, int64_t a, int64_t b, int64_t n) {
+    int64_t s = binop(l, OMul, KF32, load(l, KF32, a, 0), load(l, KF32, b, 0));
+    for (int64_t i = 1; i < n; i++) {
+        s = binop(l, OAdd, KF32, s, binop(l, OMul, KF32, load(l, KF32, a, (4 * i)), load(l, KF32, b, (4 * i))));
+    }
+    return s;
+}
+
+LVal lower_call(Lower* l, Expr* e) {
+    Expr* callee = e->a;
+    if (callee->kind == ExField) {
+        if (str_eq(callee->field, "new") && (e->items.len == 1)) {
+            int64_t arena = lvalue_addr(l, callee->a);
+            if (arena < 0) {
+                arena = lower_expr(l, callee->a).reg;
+            }
+            TypeNode* t = ((Expr**)(e->items).data)[0]->rtype;
+            if (t == 0) {
+                t = named(((Expr**)(e->items).data)[0]->text);
+            }
+            int64_t size = tinfo(l, t).size;
+            return scalar(call2(l, "srt_arena_alloc", KU64, arena, iconst(l, KI64, size)), KU64);
+        }
+        if ((str_eq(callee->field, "push") && (e->items.len == 1)) && is_dynarr(callee->a->rtype)) {
+            int64_t hdr = lvalue_addr(l, callee->a);
+            if (hdr < 0) {
+                hdr = lower_expr(l, callee->a).reg;
+            }
+            TypeNode* elem = elem_of(callee->a->rtype);
+            TInfo ei = tinfo(l, elem);
+            int64_t tmp = temp(l, ei.size, ei.align);
+            store_val(l, elem, tmp, 0, lower_expr(l, ((Expr**)(e->items).data)[0]), e->line);
+            call2(l, "srt_arr_push", KVoid, hdr, tmp);
+            return scalar(iconst(l, KI64, 0), KI64);
+        }
+        lw_fail(l, e->line, str_concat("unsupported method call .", callee->field));
+        return scalar(iconst(l, KI64, 0), KI64);
+    }
+    if (callee->kind != ExName) {
+        lw_fail(l, e->line, "unsupported call");
+        return scalar(iconst(l, KI64, 0), KI64);
+    }
+    const char* nm = callee->text;
+    int64_t n = e->items.len;
+    if (str_eq(nm, "print") && (n == 1)) {
+        Expr* arg = ((Expr**)(e->items).data)[0];
+        LVal v = lower_expr(l, arg);
+        if ((arg->kind == ExStringLit) || is_str(arg->rtype)) {
+            call1(l, "srt_print_str", KVoid, v.reg);
+        } else 
+        if (v.agg) {
+            lw_fail(l, e->line, str_concat("can't print a ", type_text(v.t)));
+        } else 
+        if (ir_is_float(v.ty)) {
+            call1(l, "srt_print_f64", KVoid, conv(l, v.reg, v.ty, KF64));
+        } else {
+            call1(l, "srt_print_i64", KVoid, conv(l, v.reg, v.ty, KI64));
+        }
+        return scalar(iconst(l, KI64, 0), KI64);
+    }
+    if (str_eq(nm, "arena") && (n == 0)) {
+        int64_t out = temp(l, 8, 8);
+        zero_mem(l, out, 8);
+        return aggregate(out, named("Arena"));
+    }
+    int64_t dim = vec_dim_of(nm);
+    if ((dim > 0) && (!str_eq(nm, "quat"))) {
+        int64_t out = temp(l, (4 * dim), 4);
+        if (n == 1) {
+            int64_t s = lower_args_f32(l, e, 0).reg;
+            for (int64_t i = 0; i < dim; i++) {
+                store(l, KF32, out, (4 * i), s);
+            }
+        } else {
+            for (int64_t i = 0; i < n; i++) {
+                store(l, KF32, out, (4 * i), lower_args_f32(l, e, i).reg);
+            }
+        }
+        return aggregate(out, named(nm));
+    }
+    if (str_eq(nm, "dot") && (n == 2)) {
+        int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
+        int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
+        int64_t b = vec_addr(l, ((Expr**)(e->items).data)[1], e->line);
+        return scalar(vec_dot(l, a, b, d), KF32);
+    }
+    if (str_eq(nm, "length") && (n == 1)) {
+        int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
+        int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
+        return scalar(unop(l, OSqrt, KF32, vec_dot(l, a, a, d)), KF32);
+    }
+    if (str_eq(nm, "normalize") && (n == 1)) {
+        int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
+        int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
+        int64_t out = temp(l, (4 * d), 4);
+        copy_agg(l, ((Expr**)(e->items).data)[0]->rtype, out, a, (4 * d));
+        int64_t len = unop(l, OSqrt, KF32, vec_dot(l, a, a, d));
+        int64_t scale = new_label(l);
+        int64_t done = new_label(l);
+        branch(l, cmp(l, CEq, KF32, len, fconst(l, KF32, "0.0")), done, scale);
+        label(l, scale);
+        int64_t inv = binop(l, ODiv, KF32, fconst(l, KF32, "1.0"), len);
+        for (int64_t i = 0; i < d; i++) {
+            store(l, KF32, out, (4 * i), binop(l, OMul, KF32, load(l, KF32, out, (4 * i)), inv));
+        }
+        jump(l, done);
+        label(l, done);
+        return aggregate(out, e->rtype);
+    }
+    if (str_eq(nm, "cross") && (n == 2)) {
+        int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
+        int64_t b = vec_addr(l, ((Expr**)(e->items).data)[1], e->line);
+        int64_t out = temp(l, 12, 4);
+        for (int64_t i = 0; i < 3; i++) {
+            int64_t j = ((i + 1) % 3);
+            int64_t k = ((i + 2) % 3);
+            int64_t p = binop(l, OMul, KF32, load(l, KF32, a, (4 * j)), load(l, KF32, b, (4 * k)));
+            int64_t q = binop(l, OMul, KF32, load(l, KF32, a, (4 * k)), load(l, KF32, b, (4 * j)));
+            store(l, KF32, out, (4 * i), binop(l, OSub, KF32, p, q));
+        }
+        return aggregate(out, named("vec3"));
+    }
+    if ((str_eq(nm, "min") || str_eq(nm, "max")) && (n == 2)) {
+        int64_t a = lower_args_f32(l, e, 0).reg;
+        int64_t b = lower_args_f32(l, e, 1).reg;
+        int64_t r = vreg(l, KF32);
+        copy_to(l, KF32, r, b);
+        int64_t take = new_label(l);
+        int64_t done = new_label(l);
+        int64_t c = CLt;
+        if (str_eq(nm, "max")) {
+            c = CGt;
+        }
+        branch(l, cmp(l, c, KF32, a, b), take, done);
+        label(l, take);
+        copy_to(l, KF32, r, a);
+        jump(l, done);
+        label(l, done);
+        return scalar(r, KF32);
+    }
+    if (str_eq(nm, "clamp") && (n == 3)) {
+        int64_t x = lower_args_f32(l, e, 0).reg;
+        int64_t lo = lower_args_f32(l, e, 1).reg;
+        int64_t hi = lower_args_f32(l, e, 2).reg;
+        int64_t r = vreg(l, KF32);
+        int64_t low = new_label(l);
+        int64_t notlow = new_label(l);
+        int64_t high = new_label(l);
+        int64_t done = new_label(l);
+        copy_to(l, KF32, r, x);
+        branch(l, cmp(l, CLt, KF32, x, lo), low, notlow);
+        label(l, low);
+        copy_to(l, KF32, r, lo);
+        jump(l, done);
+        label(l, notlow);
+        branch(l, cmp(l, CGt, KF32, x, hi), high, done);
+        label(l, high);
+        copy_to(l, KF32, r, hi);
+        jump(l, done);
+        label(l, done);
+        return scalar(r, KF32);
+    }
+    if (str_eq(nm, "lerp") && (n == 3)) {
+        int64_t a = lower_args_f32(l, e, 0).reg;
+        int64_t b = lower_args_f32(l, e, 1).reg;
+        int64_t t = lower_args_f32(l, e, 2).reg;
+        return scalar(binop(l, OAdd, KF32, a, binop(l, OMul, KF32, binop(l, OSub, KF32, b, a), t)), KF32);
+    }
+    if (str_eq(nm, "alloc") && (n == 1)) {
+        LVal v = lower_expr(l, ((Expr**)(e->items).data)[0]);
+        TypeNode* t = ((Expr**)(e->items).data)[0]->rtype;
+        TInfo ti = tinfo(l, t);
+        int64_t p = call1(l, "srt_heap_alloc", KU64, iconst(l, KI64, ti.size));
+        store_val(l, t, p, 0, v, e->line);
+        return scalar(p, KU64);
+    }
+    if (str_eq(nm, "substr") && (n == 3)) {
+        int64_t s = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KU64, e->line);
+        int64_t a = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[1]), KI64, e->line);
+        int64_t c = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[2]), KI64, e->line);
+        return scalar(call3(l, "srt_str_sub", KU64, s, a, c), KU64);
+    }
+    if (str_eq(nm, "int_to_str") && (n == 1)) {
+        return scalar(call1(l, "srt_str_from_int", KU64, as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KI64, e->line)), KU64);
+    }
+    if (str_eq(nm, "read_file") && (n == 1)) {
+        return scalar(call1(l, "srt_read_file", KU64, as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KU64, e->line)), KU64);
+    }
+    if (str_eq(nm, "write_file") && (n == 2)) {
+        int64_t p = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KU64, e->line);
+        int64_t d = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[1]), KU64, e->line);
+        return scalar(call2(l, "srt_write_file", KU8, p, d), KU8);
+    }
+    if (str_eq(nm, "cstr") && (n == 1)) {
+        return lower_expr(l, ((Expr**)(e->items).data)[0]);
+    }
+    if (str_eq(nm, "args") && (n == 0)) {
+        int64_t out = temp(l, 32, 8);
+        call1(l, "srt_args", KVoid, out);
+        TypeNode* t = new_type(TyDynArray, 0, 0);
+        t->elem = named("string");
+        return aggregate(out, t);
+    }
+    if (is_math_builtin(nm)) {
+        return lower_math_builtin(l, e, nm);
+    }
+    Decl* d = find_func(l, nm);
+    if (d == 0) {
+        lw_fail(l, e->line, str_concat(str_concat("'", nm), "' is not a Strata function (calling C needs the C backend for now)"));
+        return scalar(iconst(l, KI64, 0), KI64);
+    }
+    return call_strata(l, d, e);
+}
+
+bool is_math_builtin(const char* nm) {
+    return ((((((((((str_eq(nm, "mat4_identity") || str_eq(nm, "quat_identity")) || str_eq(nm, "mat4_translate")) || str_eq(nm, "mat4_scale")) || str_eq(nm, "mat4_rotate")) || str_eq(nm, "quat_axis_angle")) || str_eq(nm, "mat4_perspective")) || str_eq(nm, "mat4_look_at")) || str_eq(nm, "quat_normalize")) || str_eq(nm, "quat_to_mat4")) || str_eq(nm, "quat_rotate"));
+}
+
+LVal lower_math_builtin(Lower* l, Expr* e, const char* nm) {
+    TypeNode* res = e->rtype;
+    int64_t out = temp(l, tinfo(l, res).size, 4);
+    Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    ({ int64_t _e = out; arr_push(&(args), &_e); });
+    for (int64_t i = 0; i < e->items.len; i++) {
+        Expr* a = ((Expr**)(e->items).data)[i];
+        if ((is_vec(a->rtype) || is_quat(a->rtype)) || is_mat(a->rtype)) {
+            ({ int64_t _e = vec_addr(l, a, e->line); arr_push(&(args), &_e); });
+        } else {
+            ({ int64_t _e = as_ty(l, lower_expr(l, a), KF32, e->line); arr_push(&(args), &_e); });
+        }
+    }
+    call(l, str_concat("srt_", nm), KVoid, args);
+    return aggregate(out, res);
+}
+
+LVal call_strata(Lower* l, Decl* d, Expr* e) {
+    TInfo ri = tinfo(l, d->ret);
+    Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    int64_t out = (0 - 1);
+    if (abi_sret(ri)) {
+        out = temp(l, ri.size, ri.align);
+        ({ int64_t _e = out; arr_push(&(args), &_e); });
+    }
+    for (int64_t i = 0; i < e->items.len; i++) {
+        if (i < d->params.len) {
+            TypeNode* pt = ((Param*)(d->params).data)[i].type;
+            TInfo pi = tinfo(l, pt);
+            LVal v = lower_expr(l, ((Expr**)(e->items).data)[i]);
+            if (pi.kind == TK_SCALAR()) {
+                ({ int64_t _e = as_ty(l, v, pi.ty, e->line); arr_push(&(args), &_e); });
+            } else 
+            if (!v.agg) {
+                lw_fail(l, e->line, str_concat("expected a ", type_text(pt)));
+            } else 
+            if (abi_small(pi.size)) {
+                ({ int64_t _e = load(l, abi_int_of(pi.size), v.reg, 0); arr_push(&(args), &_e); });
+            } else {
+                int64_t copy = temp(l, pi.size, pi.align);
+                copy_mem(l, copy, v.reg, pi.size);
+                ({ int64_t _e = copy; arr_push(&(args), &_e); });
+            }
+        }
+    }
+    if (ri.kind == TK_VOID()) {
+        call(l, d->name, KVoid, args);
+        return scalar(iconst(l, KI64, 0), KI64);
+    }
+    if (ri.kind == TK_SCALAR()) {
+        return scalar(call(l, d->name, ri.ty, args), ri.ty);
+    }
+    if (out >= 0) {
+        call(l, d->name, KVoid, args);
+        return aggregate(out, d->ret);
+    }
+    int64_t bits = call(l, d->name, abi_int_of(ri.size), args);
+    int64_t box = temp(l, ri.size, ri.align);
+    store(l, abi_int_of(ri.size), box, 0, bits);
+    return aggregate(box, d->ret);
+}
+
+void free_regions(Lower* l, int64_t from) {
+    int64_t k = (l->regions.len - 1);
+    while (k >= from) {
+        call1(l, "srt_arena_free", KVoid, ((int64_t*)(l->regions).data)[k]);
+        k -= 1;
+    }
+}
+
+void lower_block(Lower* l, Stmt* b) {
+    push_scope(l);
+    if (b != 0) {
+        if (b->kind == StBlock) {
+            for (int64_t i = 0; i < b->stmts.len; i++) {
+                lower_stmt(l, ((Stmt**)(b->stmts).data)[i]);
+            }
+        } else {
+            lower_stmt(l, b);
+        }
+    }
+    pop_scope(l);
+}
+
+void lower_stmt(Lower* l, Stmt* s) {
+    if (s == 0) {
+        return;
+    }
+    switch (s->kind) {
+        case StBlock:
+        {
+            lower_block(l, s);
+            break;
+        }
+        case StVar:
+        {
+            {
+                if (s->type == 0) {
+                    lw_fail(l, s->line, "a variable without a known type");
+                } else 
+                if (s->init != 0) {
+                    LVal v = lower_expr(l, s->init);
+                    LVar lv = declare(l, s->name, s->type, s->line);
+                    assign_var(l, lv, v, s->line);
+                } else {
+                    LVar lv = declare(l, s->name, s->type, s->line);
+                    TInfo ti = tinfo(l, s->type);
+                    if (s->type->kind == TyDynArray) {
+                        init_array(l, lv.reg, s->type->elem);
+                    } else 
+                    if (lv.mem) {
+                        zero_mem(l, lv.reg, ti.size);
+                    } else 
+                    if (ir_is_float(lv.ty)) {
+                        copy_to(l, lv.ty, lv.reg, fconst(l, lv.ty, "0.0"));
+                    } else {
+                        copy_to(l, lv.ty, lv.reg, iconst(l, lv.ty, 0));
+                    }
+                }
+            }
+            break;
+        }
+        case StExprStmt:
+        {
+            lower_expr(l, s->expr);
+            break;
+        }
+        case StAssign:
+        {
+            lower_assign(l, s);
+            break;
+        }
+        case StIf:
+        {
+            {
+                int64_t c = to_bool(l, lower_expr(l, s->cond));
+                int64_t then_l = new_label(l);
+                int64_t else_l = new_label(l);
+                int64_t done = new_label(l);
+                branch(l, c, then_l, else_l);
+                label(l, then_l);
+                lower_block(l, s->then_block);
+                jump(l, done);
+                label(l, else_l);
+                if (s->else_branch != 0) {
+                    lower_block(l, s->else_branch);
+                }
+                jump(l, done);
+                label(l, done);
+            }
+            break;
+        }
+        case StWhile:
+        {
+            {
+                int64_t head = new_label(l);
+                int64_t body = new_label(l);
+                int64_t done = new_label(l);
+                label(l, head);
+                branch(l, to_bool(l, lower_expr(l, s->cond)), body, done);
+                label(l, body);
+                loop_body(l, s->body, done, head);
+                jump(l, head);
+                label(l, done);
+            }
+            break;
+        }
+        case StForIn:
+        {
+            lower_for(l, s);
+            break;
+        }
+        case StSwitch:
+        {
+            lower_switch(l, s);
+            break;
+        }
+        case StRegion:
+        {
+            {
+                push_scope(l);
+                int64_t arena = temp(l, 8, 8);
+                zero_mem(l, arena, 8);
+                if (str_len(s->name) > 0) {
+                    ({ LVar _e = (LVar){s->name, true, arena, KVoid, named("Arena")}; arr_push(&(l->vars), &_e); });
+                }
+                ({ int64_t _e = arena; arr_push(&(l->regions), &_e); });
+                if (s->body != 0) {
+                    for (int64_t i = 0; i < s->body->stmts.len; i++) {
+                        lower_stmt(l, ((Stmt**)(s->body->stmts).data)[i]);
+                    }
+                }
+                l->regions.len = (l->regions.len - 1);
+                call1(l, "srt_arena_free", KVoid, arena);
+                pop_scope(l);
+            }
+            break;
+        }
+        case StBreak:
+        case StContinue:
+        {
+            {
+                int64_t top = (l->break_labels.len - 1);
+                if (top < 0) {
+                    lw_fail(l, s->line, "break/continue outside a loop");
+                } else {
+                    free_regions(l, ((int64_t*)(l->loop_regions).data)[top]);
+                    if (s->kind == StBreak) {
+                        jump(l, ((int64_t*)(l->break_labels).data)[top]);
+                    } else {
+                        jump(l, ((int64_t*)(l->cont_labels).data)[top]);
+                    }
+                    label(l, new_label(l));
+                }
+            }
+            break;
+        }
+        case StReturn:
+        {
+            lower_return(l, s);
+            break;
+        }
+    }
+}
+
+void loop_body(Lower* l, Stmt* body, int64_t brk, int64_t cont) {
+    ({ int64_t _e = brk; arr_push(&(l->break_labels), &_e); });
+    ({ int64_t _e = cont; arr_push(&(l->cont_labels), &_e); });
+    ({ int64_t _e = l->regions.len; arr_push(&(l->loop_regions), &_e); });
+    lower_block(l, body);
+    int64_t top = (l->break_labels.len - 1);
+    l->break_labels.len = top;
+    l->cont_labels.len = top;
+    l->loop_regions.len = top;
+}
+
+void lower_for(Lower* l, Stmt* s) {
+    Expr* it = s->iter;
+    push_scope(l);
+    if (((it != 0) && (it->kind == ExBinary)) && str_eq(it->text, "..")) {
+        LVar i = declare(l, s->name, named("int"), s->line);
+        assign_var(l, i, lower_expr(l, it->a), s->line);
+        int64_t head = new_label(l);
+        int64_t body = new_label(l);
+        int64_t step = new_label(l);
+        int64_t done = new_label(l);
+        label(l, head);
+        int64_t cur = var_value(l, i);
+        int64_t hi = as_ty(l, lower_expr(l, it->b), KI64, s->line);
+        branch(l, cmp(l, CLt, KI64, cur, hi), body, done);
+        label(l, body);
+        loop_body(l, s->body, done, step);
+        label(l, step);
+        assign_var(l, i, scalar(binop(l, OAdd, KI64, var_value(l, i), iconst(l, KI64, 1)), KI64), s->line);
+        jump(l, head);
+        label(l, done);
+    } else 
+    if ((it != 0) && is_dynarr(it->rtype)) {
+        LVal arr = lower_expr(l, it);
+        int64_t hdr = temp(l, 32, 8);
+        copy_mem(l, hdr, arr.reg, 32);
+        TypeNode* elem = elem_of(it->rtype);
+        int64_t size = tinfo(l, elem).size;
+        int64_t idx = vreg(l, KI64);
+        copy_to(l, KI64, idx, iconst(l, KI64, 0));
+        LVar x = declare(l, s->name, elem, s->line);
+        int64_t head = new_label(l);
+        int64_t body = new_label(l);
+        int64_t step = new_label(l);
+        int64_t done = new_label(l);
+        label(l, head);
+        branch(l, cmp(l, CLt, KI64, idx, load(l, KI64, hdr, 8)), body, done);
+        label(l, body);
+        int64_t addr = binop(l, OAdd, KU64, load(l, KU64, hdr, 0), binop(l, OMul, KI64, idx, iconst(l, KI64, size)));
+        assign_var(l, x, load_val(l, elem, addr, 0), s->line);
+        loop_body(l, s->body, done, step);
+        label(l, step);
+        copy_to(l, KI64, idx, binop(l, OAdd, KI64, idx, iconst(l, KI64, 1)));
+        jump(l, head);
+        label(l, done);
+    } else {
+        lw_fail(l, s->line, "unsupported for-in");
+    }
+    pop_scope(l);
+}
+
+int64_t var_value(Lower* l, LVar v) {
+    if (v.mem) {
+        return load(l, v.ty, v.reg, 0);
+    }
+    return v.reg;
+}
+
+void lower_switch(Lower* l, Stmt* s) {
+    LVal subj = lower_expr(l, s->subject);
+    int64_t t = promote(subj.ty);
+    int64_t x = as_ty(l, subj, t, s->line);
+    int64_t done = new_label(l);
+    Array bodies = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    int64_t dflt = done;
+    for (int64_t i = 0; i < s->cases.len; i++) {
+        int64_t b = new_label(l);
+        ({ int64_t _e = b; arr_push(&(bodies), &_e); });
+        if (((SwitchCase*)(s->cases).data)[i].is_default) {
+            dflt = b;
+        }
+    }
+    for (int64_t i = 0; i < s->cases.len; i++) {
+        SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
+        for (int64_t j = 0; j < sc.values.len; j++) {
+            int64_t next = new_label(l);
+            int64_t v = as_ty(l, lower_expr(l, ((Expr**)(sc.values).data)[j]), t, s->line);
+            branch(l, cmp(l, CEq, t, x, v), ((int64_t*)(bodies).data)[i], next);
+            label(l, next);
+        }
+    }
+    jump(l, dflt);
+    for (int64_t i = 0; i < s->cases.len; i++) {
+        label(l, ((int64_t*)(bodies).data)[i]);
+        lower_block(l, ((SwitchCase*)(s->cases).data)[i].body);
+        jump(l, done);
+    }
+    label(l, done);
+}
+
+void lower_assign(Lower* l, Stmt* s) {
+    Expr* tg = s->target;
+    TypeNode* tt = tg->rtype;
+    const char* op = s->op;
+    TInfo ti = tinfo(l, tt);
+    int64_t k = (0 - 1);
+    if (tg->kind == ExName) {
+        k = find_var(l, tg->text);
+    }
+    bool in_reg = ((k >= 0) && (!((LVar*)(l->vars).data)[k].mem));
+    int64_t addr = (0 - 1);
+    if (!in_reg) {
+        addr = lvalue_addr(l, tg);
+        if (addr < 0) {
+            lw_fail(l, s->line, "can't assign to this");
+            return;
+        }
+    }
+    LVal val = lower_expr(l, s->value);
+    if (!str_eq(op, "=")) {
+        LVal cur = scalar((0 - 1), ti.ty);
+        if (ti.kind == TK_AGG()) {
+            cur = aggregate(addr, tt);
+        } else 
+        if (in_reg) {
+            cur = scalar(((LVar*)(l->vars).data)[k].reg, ti.ty);
+        } else {
+            cur = scalar(load(l, ti.ty, addr, 0), ti.ty);
+        }
+        const char* bop = str_sub(op, 0, (str_len(op) - 1));
+        Expr* fake = new_expr(ExBinary, s->line, s->col);
+        fake->text = bop;
+        fake->a = tg;
+        fake->b = s->value;
+        fake->rtype = tt;
+        if (is_vec(tt)) {
+            val = vec_binary(l, fake, cur, val);
+        } else {
+            val = combine_values(l, fake, cur, val);
+        }
+    }
+    if (in_reg) {
+        assign_var(l, ((LVar*)(l->vars).data)[k], val, s->line);
+    } else {
+        store_val(l, tt, addr, 0, val, s->line);
+    }
+}
+
+LVal combine_values(Lower* l, Expr* e, LVal left, LVal right) {
+    int64_t aop = arith_op(e->text);
+    if (aop < 0) {
+        lw_fail(l, e->line, str_concat(str_concat("unsupported operator ", e->text), "="));
+        return left;
+    }
+    int64_t t = arith_ty(promote(left.ty), promote(right.ty));
+    if ((aop == OShl) || (aop == OShr)) {
+        t = promote(left.ty);
+    }
+    return scalar(binop(l, aop, t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), t);
+}
+
+void lower_return(Lower* l, Stmt* s) {
+    TInfo ri = tinfo(l, l->ret_type);
+    if ((s->expr == 0) || (ri.kind == TK_VOID())) {
+        if (s->expr != 0) {
+            lower_expr(l, s->expr);
+        }
+        free_regions(l, 0);
+        int64_t r = (0 - 1);
+        if (ri.kind == TK_SCALAR()) {
+            r = iconst(l, ri.ty, 0);
+        }
+        emit(l, new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)));
+    } else {
+        LVal v = lower_expr(l, s->expr);
+        int64_t r = (0 - 1);
+        if (ri.kind == TK_SCALAR()) {
+            r = as_ty(l, v, ri.ty, s->line);
+        } else 
+        if (!v.agg) {
+            lw_fail(l, s->line, str_concat("expected a ", type_text(l->ret_type)));
+        } else 
+        if (l->sret >= 0) {
+            copy_mem(l, l->sret, v.reg, ri.size);
+            r = l->sret;
+        } else {
+            r = load(l, abi_int_of(ri.size), v.reg, 0);
+        }
+        free_regions(l, 0);
+        emit(l, new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)));
+    }
+    label(l, new_label(l));
+}
+
+void begin_function(Lower* l, const char* name, bool global) {
+    l->f = new_ir_func(name, global);
+    Array vs = ({ Array _a = arr_make(sizeof(LVar)); _a; });
+    l->vars = vs;
+    Array sc = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    l->scopes = sc;
+    Array at = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    l->addr_taken = at;
+    Array r = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    l->regions = r;
+    l->sret = (0 - 1);
+}
+
+int64_t param(Lower* l, int64_t ty, int64_t index) {
+    int64_t r = vreg(l, ty);
+    Ins i = new_ins(OParam, ty, r, (0 - 1), (0 - 1));
+    i.imm = index;
+    emit(l, i);
+    return r;
+}
+
+void lower_function(Lower* l, Decl* d) {
+    begin_function(l, d->name, true);
+    scan_stmt(l, d->body);
+    l->ret_type = d->ret;
+    TInfo ri = tinfo(l, d->ret);
+    int64_t np = 0;
+    if (abi_sret(ri)) {
+        ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+        l->f.ret_ty = KU64;
+        l->sret = param(l, KU64, 0);
+        np = 1;
+    } else 
+    if (ri.kind == TK_AGG()) {
+        l->f.ret_ty = abi_int_of(ri.size);
+    } else 
+    if (ri.kind == TK_SCALAR()) {
+        l->f.ret_ty = ri.ty;
+    }
+    Array incoming = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < d->params.len; i++) {
+        int64_t pty = abi_pass_ty(tinfo(l, ((Param*)(d->params).data)[i].type));
+        ({ int64_t _e = pty; arr_push(&(l->f.param_types), &_e); });
+        ({ int64_t _e = param(l, pty, (np + i)); arr_push(&(incoming), &_e); });
+    }
+    push_scope(l);
+    for (int64_t i = 0; i < d->params.len; i++) {
+        TypeNode* pt = ((Param*)(d->params).data)[i].type;
+        TInfo pi = tinfo(l, pt);
+        LVar v = declare(l, ((Param*)(d->params).data)[i].name, pt, d->line);
+        if (pi.kind == TK_SCALAR()) {
+            assign_var(l, v, scalar(((int64_t*)(incoming).data)[i], pi.ty), d->line);
+        } else 
+        if (abi_small(pi.size)) {
+            store(l, abi_int_of(pi.size), v.reg, 0, ((int64_t*)(incoming).data)[i]);
+        } else {
+            copy_mem(l, v.reg, ((int64_t*)(incoming).data)[i], pi.size);
+        }
+    }
+    lower_block(l, d->body);
+    pop_scope(l);
+    if (ri.kind == TK_VOID()) {
+        emit(l, new_ins(ORet, KVoid, (0 - 1), (0 - 1), (0 - 1)));
+    } else 
+    if (l->sret >= 0) {
+        emit(l, new_ins(ORet, KVoid, (0 - 1), l->sret, (0 - 1)));
+    } else {
+        emit(l, new_ins(ORet, KVoid, (0 - 1), iconst(l, l->f.ret_ty, 0), (0 - 1)));
+    }
+    ({ IrFunc _e = l->f; arr_push(&(l->prog.funcs), &_e); });
+}
+
+void lower_main(Lower* l, Program prog) {
+    begin_function(l, "main", true);
+    for (int64_t i = 0; i < prog.main.len; i++) {
+        scan_stmt(l, ((Stmt**)(prog.main).data)[i]);
+    }
+    l->ret_type = named("i32");
+    l->f.ret_ty = KI32;
+    ({ int64_t _e = KI32; arr_push(&(l->f.param_types), &_e); });
+    ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+    int64_t argc = param(l, KI32, 0);
+    int64_t argv = param(l, KU64, 1);
+    call2(l, "srt_set_args", KVoid, argc, argv);
+    push_scope(l);
+    for (int64_t i = 0; i < prog.main.len; i++) {
+        lower_stmt(l, ((Stmt**)(prog.main).data)[i]);
+    }
+    pop_scope(l);
+    emit(l, new_ins(ORet, KVoid, (0 - 1), iconst(l, KI32, 0), (0 - 1)));
+    ({ IrFunc _e = l->f; arr_push(&(l->prog.funcs), &_e); });
+}
+
+Lower* new_lower(void) {
+    Array fs = ({ Array _a = arr_make(sizeof(Decl*)); _a; });
+    Array ss = ({ Array _a = arr_make(sizeof(StructLay)); _a; });
+    Array es = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array ms = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array mv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array vs = ({ Array _a = arr_make(sizeof(LVar)); _a; });
+    Array sc = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array at = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array bl = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array cl = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lr = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array rg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return ({ Lower _v = (Lower){true, "", new_ir_program(), fs, ss, es, ms, mv, new_ir_func("", false), vs, sc, at, bl, cl, lr, rg, 0, (0 - 1), 0}; Lower* _p = (Lower*)arena_alloc(strata_heap(), sizeof(Lower)); *_p = _v; _p; });
+}
+
+bool lower_program(Lower* l, Program prog, bool with_main) {
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        Decl* d = ((Decl**)(prog.decls).data)[i];
+        if (d->kind == DcInclude) {
+            lw_fail(l, d->line, str_concat(str_concat("imports C header ", d->path), " (the native backend can't read C headers yet)"));
+        }
+        if (d->kind == DcFunc) {
+            ({ Decl* _e = d; arr_push(&(l->funcs), &_e); });
+        }
+        if (d->kind == DcEnum) {
+            ({ const char* _e = d->name; arr_push(&(l->enums), &_e); });
+            for (int64_t m = 0; m < d->members.len; m++) {
+                ({ const char* _e = ((const char**)(d->members).data)[m]; arr_push(&(l->members), &_e); });
+                ({ int64_t _e = m; arr_push(&(l->member_values), &_e); });
+            }
+        }
+        if (d->kind == DcStruct) {
+            Array fl = ({ Array _a = arr_make(sizeof(FieldLay)); _a; });
+            for (int64_t k = 0; k < d->fields.len; k++) {
+                ({ FieldLay _e = (FieldLay){((FieldDef*)(d->fields).data)[k].name, 0, ((FieldDef*)(d->fields).data)[k].type}; arr_push(&(fl), &_e); });
+            }
+            ({ StructLay _e = (StructLay){d->name, 0, 1, fl, 0}; arr_push(&(l->structs), &_e); });
+        }
+    }
+    if (!l->ok) {
+        return false;
+    }
+    for (int64_t i = 0; i < l->funcs.len; i++) {
+        lower_function(l, ((Decl**)(l->funcs).data)[i]);
+    }
+    if (with_main) {
+        lower_main(l, prog);
+    }
+    return l->ok;
+}
+
+Facts facts(IrFunc* f) {
+    Array nd = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array da = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array nu = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < f->vtypes.len; v++) {
+        ({ int64_t _e = 0; arr_push(&(nd), &_e); });
+        ({ int64_t _e = (0 - 1); arr_push(&(da), &_e); });
+        ({ int64_t _e = 0; arr_push(&(nu), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (i.op != ONop) {
+            if (i.dst >= 0) {
+                ((int64_t*)(nd).data)[i.dst] = (((int64_t*)(nd).data)[i.dst] + 1);
+                ((int64_t*)(da).data)[i.dst] = k;
+            }
+            if (i.a >= 0) {
+                ((int64_t*)(nu).data)[i.a] = (((int64_t*)(nu).data)[i.a] + 1);
+            }
+            if (i.b >= 0) {
+                ((int64_t*)(nu).data)[i.b] = (((int64_t*)(nu).data)[i.b] + 1);
+            }
+            for (int64_t j = 0; j < i.args.len; j++) {
+                ((int64_t*)(nu).data)[((int64_t*)(i.args).data)[j]] = (((int64_t*)(nu).data)[((int64_t*)(i.args).data)[j]] + 1);
+            }
+        }
+    }
+    return (Facts){nd, da, nu};
+}
+
+bool single(Facts* fa, int64_t v) {
+    return ((v >= 0) && (((int64_t*)(fa->ndef).data)[v] == 1));
+}
+
+bool is_const(IrFunc* f, Facts* fa, int64_t v) {
+    return (single(fa, v) && (((Ins*)(f->code).data)[((int64_t*)(fa->def_at).data)[v]].op == OConst));
+}
+
+int64_t const_of(IrFunc* f, Facts* fa, int64_t v) {
+    Ins d = ((Ins*)(f->code).data)[((int64_t*)(fa->def_at).data)[v]];
+    return ir_norm_imm(d.ty, d.imm);
+}
+
+bool pure(int64_t op) {
+    return ((((((((((((((((((((op == OConst) || (op == OFConst)) || (op == OCopy)) || (op == OAdd)) || (op == OSub)) || (op == OMul)) || (op == OAnd)) || (op == OOr)) || (op == OXor)) || (op == OShl)) || (op == OShr)) || (op == ONeg)) || (op == ONot)) || (op == OCmp)) || (op == OConv)) || (op == OSqrt)) || (op == OLoad)) || (op == OSlotAddr)) || (op == OSymAddr)) || (op == OParam));
+}
+
+void make_const(IrFunc* f, int64_t k, int64_t ty, int64_t value) {
+    Ins i = new_ins(OConst, ty, ((Ins*)(f->code).data)[k].dst, (0 - 1), (0 - 1));
+    i.imm = ir_norm_imm(ty, value);
+    ((Ins*)(f->code).data)[k] = i;
+}
+
+void make_copy(IrFunc* f, int64_t k, int64_t src) {
+    Ins i = new_ins(OCopy, ((int64_t*)(f->vtypes).data)[((Ins*)(f->code).data)[k].dst], ((Ins*)(f->code).data)[k].dst, src, (0 - 1));
+    ((Ins*)(f->code).data)[k] = i;
+}
+
+void make_jump(IrFunc* f, int64_t k, int64_t target) {
+    Ins i = new_ins(OJmp, KVoid, (0 - 1), (0 - 1), (0 - 1));
+    i.imm = target;
+    ((Ins*)(f->code).data)[k] = i;
+}
+
+uint64_t uval(int64_t v) {
+    return ((uint64_t)(v));
+}
+
+bool cmp_holds(int64_t cond, int64_t a, int64_t b, bool uns) {
+    if (cond == CEq) {
+        return (a == b);
+    }
+    if (cond == CNe) {
+        return (a != b);
+    }
+    if (uns) {
+        uint64_t x = uval(a);
+        uint64_t y = uval(b);
+        if (cond == CLt) {
+            return (x < y);
+        }
+        if (cond == CLe) {
+            return (x <= y);
+        }
+        if (cond == CGt) {
+            return (x > y);
+        }
+        return (x >= y);
+    }
+    if (cond == CLt) {
+        return (a < b);
+    }
+    if (cond == CLe) {
+        return (a <= b);
+    }
+    if (cond == CGt) {
+        return (a > b);
+    }
+    return (a >= b);
+}
+
+bool fold(IrFunc* f, Facts* fa, int64_t k) {
+    Ins i = ((Ins*)(f->code).data)[k];
+    int64_t t = i.ty;
+    int64_t op = i.op;
+    bool ca = is_const(f, fa, i.a);
+    bool cb = is_const(f, fa, i.b);
+    if (((((((((((op == OAdd) || (op == OSub)) || (op == OMul)) || (op == OAnd)) || (op == OOr)) || (op == OXor)) || (op == OShl)) || (op == OShr)) || (op == ODiv)) || (op == OMod)) && (!ir_is_float(t))) {
+        if (ca && cb) {
+            int64_t a = const_of(f, fa, i.a);
+            int64_t b = const_of(f, fa, i.b);
+            bool ok = true;
+            int64_t r = 0;
+            if (op == OAdd) {
+                r = (a + b);
+            } else 
+            if (op == OSub) {
+                r = (a - b);
+            } else 
+            if (op == OMul) {
+                r = (a * b);
+            } else 
+            if (op == OAnd) {
+                r = (a & b);
+            } else 
+            if (op == OOr) {
+                r = (a | b);
+            } else 
+            if (op == OXor) {
+                r = (a ^ b);
+            } else 
+            if ((op == OShl) || (op == OShr)) {
+                if ((b < 0) || (b > 63)) {
+                    ok = false;
+                } else 
+                if (op == OShl) {
+                    r = (a << b);
+                } else 
+                if (ir_is_unsigned(t)) {
+                    r = ((int64_t)((uval(a) >> uval(b))));
+                } else {
+                    r = (a >> b);
+                }
+            } else {
+                if ((b <= 0) || (a < 0)) {
+                    ok = false;
+                } else 
+                if (op == ODiv) {
+                    r = (a / b);
+                } else {
+                    r = (a % b);
+                }
+            }
+            if (ok) {
+                make_const(f, k, t, r);
+                return true;
+            }
+        }
+        if (((cb && ((((((op == OAdd) || (op == OSub)) || (op == OOr)) || (op == OXor)) || (op == OShl)) || (op == OShr))) && (const_of(f, fa, i.b) == 0)) && (((int64_t*)(f->vtypes).data)[i.a] == t)) {
+            make_copy(f, k, i.a);
+            return true;
+        }
+        if (((cb && ((op == OMul) || (op == ODiv))) && (const_of(f, fa, i.b) == 1)) && (((int64_t*)(f->vtypes).data)[i.a] == t)) {
+            make_copy(f, k, i.a);
+            return true;
+        }
+        if (((ca && (op == OAdd)) && (const_of(f, fa, i.a) == 0)) && (((int64_t*)(f->vtypes).data)[i.b] == t)) {
+            make_copy(f, k, i.b);
+            return true;
+        }
+        return false;
+    }
+    if ((op == OCmp) && (!ir_is_float(t))) {
+        if (ca && cb) {
+            bool h = cmp_holds(i.ty2, const_of(f, fa, i.a), const_of(f, fa, i.b), ir_is_unsigned(t));
+            if (h) {
+                make_const(f, k, KU8, 1);
+            } else {
+                make_const(f, k, KU8, 0);
+            }
+            return true;
+        }
+        if (((((i.ty2 == CNe) && cb) && (const_of(f, fa, i.b) == 0)) && single(fa, i.a)) && (((Ins*)(f->code).data)[((int64_t*)(fa->def_at).data)[i.a]].op == OCmp)) {
+            make_copy(f, k, i.a);
+            return true;
+        }
+        return false;
+    }
+    if ((((op == ONeg) || (op == ONot)) && (!ir_is_float(t))) && ca) {
+        int64_t a = const_of(f, fa, i.a);
+        if (op == ONeg) {
+            make_const(f, k, t, (0 - a));
+        } else {
+            make_const(f, k, t, (~a));
+        }
+        return true;
+    }
+    if ((((op == OConv) && ca) && (!ir_is_float(t))) && (!ir_is_float(i.ty2))) {
+        make_const(f, k, t, const_of(f, fa, i.a));
+        return true;
+    }
+    if ((((op == OConv) && ca) && ir_is_float(t)) && (!ir_is_float(i.ty2))) {
+        int64_t c = const_of(f, fa, i.a);
+        if ((c > (0 - 16777216)) && (c < 16777216)) {
+            Ins fc = new_ins(OFConst, t, i.dst, (0 - 1), (0 - 1));
+            fc.sym = str_concat(str_from_int(c), ".0");
+            ((Ins*)(f->code).data)[k] = fc;
+            return true;
+        }
+    }
+    if ((op == OBr) && ca) {
+        if (const_of(f, fa, i.a) != 0) {
+            make_jump(f, k, i.imm);
+        } else {
+            make_jump(f, k, i.imm2);
+        }
+        return true;
+    }
+    if (((op == OLoad) || (op == OStore)) && single(fa, i.a)) {
+        Ins d = ((Ins*)(f->code).data)[((int64_t*)(fa->def_at).data)[i.a]];
+        if (((d.op == OAdd) && single(fa, d.a)) && is_const(f, fa, d.b)) {
+            int64_t c = const_of(f, fa, d.b);
+            if (((c + i.imm) >= (0 - 2147483648)) && ((c + i.imm) <= 2147483647)) {
+                ((Ins*)(f->code).data)[k].a = d.a;
+                ((Ins*)(f->code).data)[k].imm = (i.imm + c);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+int64_t resolve(Array* repl, int64_t v) {
+    while ((v >= 0) && (((int64_t*)(repl[0]).data)[v] != v)) {
+        v = ((int64_t*)(repl[0]).data)[v];
+    }
+    return v;
+}
+
+bool propagate_copies(IrFunc* f, Facts* fa) {
+    Array repl = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < f->vtypes.len; v++) {
+        ({ int64_t _e = v; arr_push(&(repl), &_e); });
+    }
+    bool any = false;
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if ((((i.op == OCopy) && single(fa, i.dst)) && single(fa, i.a)) && (((int64_t*)(f->vtypes).data)[i.a] == ((int64_t*)(f->vtypes).data)[i.dst])) {
+            ((int64_t*)(repl).data)[i.dst] = i.a;
+            any = true;
+        }
+    }
+    if (!any) {
+        return false;
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        if (((Ins*)(f->code).data)[k].a >= 0) {
+            ((Ins*)(f->code).data)[k].a = resolve((&repl), ((Ins*)(f->code).data)[k].a);
+        }
+        if (((Ins*)(f->code).data)[k].b >= 0) {
+            ((Ins*)(f->code).data)[k].b = resolve((&repl), ((Ins*)(f->code).data)[k].b);
+        }
+        for (int64_t j = 0; j < ((Ins*)(f->code).data)[k].args.len; j++) {
+            ((int64_t*)(((Ins*)(f->code).data)[k].args).data)[j] = resolve((&repl), ((int64_t*)(((Ins*)(f->code).data)[k].args).data)[j]);
+        }
+    }
+    return true;
+}
+
+bool forward_slots(IrFunc* f, Facts* fa) {
+    int64_t ns = f->slots.len;
+    if (ns == 0) {
+        return false;
+    }
+    Array slot_of = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < f->vtypes.len; v++) {
+        ({ int64_t _e = (0 - 1); arr_push(&(slot_of), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if ((i.op == OSlotAddr) && single(fa, i.dst)) {
+            ((int64_t*)(slot_of).data)[i.dst] = i.imm;
+        }
+    }
+    Array escaped = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t s = 0; s < ns; s++) {
+        ({ int64_t _e = 0; arr_push(&(escaped), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (i.op != ONop) {
+            if ((((i.a >= 0) && (((int64_t*)(slot_of).data)[i.a] >= 0)) && (i.op != OLoad)) && (i.op != OStore)) {
+                ((int64_t*)(escaped).data)[((int64_t*)(slot_of).data)[i.a]] = 1;
+            }
+            if ((i.b >= 0) && (((int64_t*)(slot_of).data)[i.b] >= 0)) {
+                ((int64_t*)(escaped).data)[((int64_t*)(slot_of).data)[i.b]] = 1;
+            }
+            for (int64_t j = 0; j < i.args.len; j++) {
+                if (((int64_t*)(slot_of).data)[((int64_t*)(i.args).data)[j]] >= 0) {
+                    ((int64_t*)(escaped).data)[((int64_t*)(slot_of).data)[((int64_t*)(i.args).data)[j]]] = 1;
+                }
+            }
+        }
+    }
+    bool changed = false;
+    Array es = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array eo = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array et = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array ev = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        int64_t op = i.op;
+        if ((((op == OLabel) || (op == OJmp)) || (op == OBr)) || (op == ORet)) {
+            es.len = 0;
+            eo.len = 0;
+            et.len = 0;
+            ev.len = 0;
+        } else 
+        if ((((op == OLoad) || (op == OStore)) && (((int64_t*)(slot_of).data)[i.a] >= 0)) && (((int64_t*)(escaped).data)[((int64_t*)(slot_of).data)[i.a]] == 0)) {
+            int64_t s = ((int64_t*)(slot_of).data)[i.a];
+            int64_t off = i.imm;
+            int64_t size = ir_size(i.ty);
+            if (op == OLoad) {
+                int64_t found = (0 - 1);
+                for (int64_t e = 0; e < es.len; e++) {
+                    if (((((int64_t*)(es).data)[e] == s) && (((int64_t*)(eo).data)[e] == off)) && (((int64_t*)(et).data)[e] == i.ty)) {
+                        found = ((int64_t*)(ev).data)[e];
+                    }
+                }
+                if ((found >= 0) && (((int64_t*)(f->vtypes).data)[found] == ((int64_t*)(f->vtypes).data)[i.dst])) {
+                    make_copy(f, k, found);
+                    changed = true;
+                } else 
+                if (single(fa, i.dst) && (es.len < 256)) {
+                    ({ int64_t _e = s; arr_push(&(es), &_e); });
+                    ({ int64_t _e = off; arr_push(&(eo), &_e); });
+                    ({ int64_t _e = i.ty; arr_push(&(et), &_e); });
+                    ({ int64_t _e = i.dst; arr_push(&(ev), &_e); });
+                }
+            } else {
+                Array ks = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+                for (int64_t e = 0; e < es.len; e++) {
+                    if (!(((((int64_t*)(es).data)[e] == s) && (((int64_t*)(eo).data)[e] < (off + size))) && (off < (((int64_t*)(eo).data)[e] + ir_size(((int64_t*)(et).data)[e]))))) {
+                        ({ int64_t _e = e; arr_push(&(ks), &_e); });
+                    }
+                }
+                Array ns2 = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+                Array no2 = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+                Array nt2 = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+                Array nv2 = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+                for (int64_t q = 0; q < ks.len; q++) {
+                    ({ int64_t _e = ((int64_t*)(es).data)[((int64_t*)(ks).data)[q]]; arr_push(&(ns2), &_e); });
+                    ({ int64_t _e = ((int64_t*)(eo).data)[((int64_t*)(ks).data)[q]]; arr_push(&(no2), &_e); });
+                    ({ int64_t _e = ((int64_t*)(et).data)[((int64_t*)(ks).data)[q]]; arr_push(&(nt2), &_e); });
+                    ({ int64_t _e = ((int64_t*)(ev).data)[((int64_t*)(ks).data)[q]]; arr_push(&(nv2), &_e); });
+                }
+                es = ns2;
+                eo = no2;
+                et = nt2;
+                ev = nv2;
+                if (single(fa, i.b) && (es.len < 256)) {
+                    ({ int64_t _e = s; arr_push(&(es), &_e); });
+                    ({ int64_t _e = off; arr_push(&(eo), &_e); });
+                    ({ int64_t _e = i.ty; arr_push(&(et), &_e); });
+                    ({ int64_t _e = i.b; arr_push(&(ev), &_e); });
+                }
+            }
+        }
+    }
+    Array loads = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t s = 0; s < ns; s++) {
+        ({ int64_t _e = 0; arr_push(&(loads), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if ((i.op == OLoad) && (((int64_t*)(slot_of).data)[i.a] >= 0)) {
+            ((int64_t*)(loads).data)[((int64_t*)(slot_of).data)[i.a]] = (((int64_t*)(loads).data)[((int64_t*)(slot_of).data)[i.a]] + 1);
+        }
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if ((((i.op == OStore) && (((int64_t*)(slot_of).data)[i.a] >= 0)) && (((int64_t*)(escaped).data)[((int64_t*)(slot_of).data)[i.a]] == 0)) && (((int64_t*)(loads).data)[((int64_t*)(slot_of).data)[i.a]] == 0)) {
+            ((Ins*)(f->code).data)[k] = new_ins(ONop, KVoid, (0 - 1), (0 - 1), (0 - 1));
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool same_op(Ins x, Ins y) {
+    return (((((((x.op == y.op) && (x.ty == y.ty)) && (x.ty2 == y.ty2)) && (x.a == y.a)) && (x.b == y.b)) && (x.imm == y.imm)) && str_eq(x.sym, y.sym));
+}
+
+bool cse_candidate(int64_t op) {
+    return ((((((((((((((((((op == OConst) || (op == OFConst)) || (op == OAdd)) || (op == OSub)) || (op == OMul)) || (op == OAnd)) || (op == OOr)) || (op == OXor)) || (op == OShl)) || (op == OShr)) || (op == ONeg)) || (op == ONot)) || (op == OCmp)) || (op == OConv)) || (op == OSqrt)) || (op == OSlotAddr)) || (op == OSymAddr)) || (op == OLoad));
+}
+
+bool cse(IrFunc* f, Facts* fa) {
+    bool changed = false;
+    Array seen = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        int64_t op = i.op;
+        if ((((op == OLabel) || (op == OJmp)) || (op == OBr)) || (op == ORet)) {
+            seen.len = 0;
+        } else 
+        if ((((op == OStore) || (op == OCall)) || (op == OCopyMem)) || (op == OZeroMem)) {
+            Array keep = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+            for (int64_t q = 0; q < seen.len; q++) {
+                if (((Ins*)(f->code).data)[((int64_t*)(seen).data)[q]].op != OLoad) {
+                    ({ int64_t _e = ((int64_t*)(seen).data)[q]; arr_push(&(keep), &_e); });
+                }
+            }
+            seen = keep;
+        } else 
+        if ((i.dst >= 0) && (!single(fa, i.dst))) {
+            Array keep = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+            for (int64_t q = 0; q < seen.len; q++) {
+                Ins s = ((Ins*)(f->code).data)[((int64_t*)(seen).data)[q]];
+                if ((s.a != i.dst) && (s.b != i.dst)) {
+                    ({ int64_t _e = ((int64_t*)(seen).data)[q]; arr_push(&(keep), &_e); });
+                }
+            }
+            seen = keep;
+        } else 
+        if (cse_candidate(op) && single(fa, i.dst)) {
+            int64_t found = (0 - 1);
+            int64_t q = (seen.len - 1);
+            int64_t stop = (seen.len - 200);
+            while (((q >= 0) && (q >= stop)) && (found < 0)) {
+                if (same_op(((Ins*)(f->code).data)[((int64_t*)(seen).data)[q]], i)) {
+                    found = ((int64_t*)(seen).data)[q];
+                }
+                q -= 1;
+            }
+            if ((found >= 0) && (((int64_t*)(f->vtypes).data)[((Ins*)(f->code).data)[found].dst] == ((int64_t*)(f->vtypes).data)[i.dst])) {
+                make_copy(f, k, ((Ins*)(f->code).data)[found].dst);
+                changed = true;
+            } else {
+                ({ int64_t _e = k; arr_push(&(seen), &_e); });
+            }
+        }
+    }
+    return changed;
+}
+
+bool hoistable(int64_t op) {
+    return (((((((((((((((((op == OConst) || (op == OFConst)) || (op == OAdd)) || (op == OSub)) || (op == OMul)) || (op == OAnd)) || (op == OOr)) || (op == OXor)) || (op == OShl)) || (op == OShr)) || (op == ONeg)) || (op == ONot)) || (op == OCmp)) || (op == OConv)) || (op == OSqrt)) || (op == OSlotAddr)) || (op == OSymAddr));
+}
+
+bool hoist_loops(IrFunc* f) {
+    Facts fa = facts(f);
+    int64_t n = f->code.len;
+    Array lp = label_pos(f);
+    Array move_to = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < n; k++) {
+        ({ int64_t _e = (0 - 1); arr_push(&(move_to), &_e); });
+    }
+    bool any = false;
+    Array back = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array fwd = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t z = 0; z < (f->labels + 1); z++) {
+        ({ int64_t _e = (0 - 1); arr_push(&(back), &_e); });
+        ({ int64_t _e = 0; arr_push(&(fwd), &_e); });
+    }
+    for (int64_t k = 0; k < n; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if ((i.op == OJmp) || (i.op == OBr)) {
+            Array ts = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+            ({ int64_t _e = i.imm; arr_push(&(ts), &_e); });
+            if (i.op == OBr) {
+                ({ int64_t _e = i.imm2; arr_push(&(ts), &_e); });
+            }
+            for (int64_t z = 0; z < ts.len; z++) {
+                int64_t p = ((int64_t*)(lp).data)[((int64_t*)(ts).data)[z]];
+                if ((p >= 0) && (k > p)) {
+                    ((int64_t*)(back).data)[((int64_t*)(ts).data)[z]] = k;
+                }
+                if ((p >= 0) && (k < p)) {
+                    ((int64_t*)(fwd).data)[((int64_t*)(ts).data)[z]] = 1;
+                }
+            }
+        }
+    }
+    for (int64_t p = 0; p < n; p++) {
+        if (((Ins*)(f->code).data)[p].op == OLabel) {
+            int64_t lab = ((Ins*)(f->code).data)[p].imm;
+            int64_t q = ((int64_t*)(back).data)[lab];
+            bool outside_entry = (((int64_t*)(fwd).data)[lab] == 1);
+            int64_t prev = (p - 1);
+            while ((prev >= 0) && (((Ins*)(f->code).data)[prev].op == ONop)) {
+                prev = (prev - 1);
+            }
+            bool falls_in = (((((prev >= 0) && (((Ins*)(f->code).data)[prev].op != OJmp)) && (((Ins*)(f->code).data)[prev].op != ORet)) && (((Ins*)(f->code).data)[prev].op != OBr)) && (((Ins*)(f->code).data)[prev].op != OLabel));
+            if (((q > p) && (!outside_entry)) && falls_in) {
+                for (int64_t k = (p + 1); k < q; k++) {
+                    Ins i = ((Ins*)(f->code).data)[k];
+                    if (((((((int64_t*)(move_to).data)[k] < 0) && hoistable(i.op)) && single((&fa), i.dst)) && ((i.a < 0) || (single((&fa), i.a) && ((((int64_t*)(fa.def_at).data)[i.a] < p) || (((int64_t*)(move_to).data)[((int64_t*)(fa.def_at).data)[i.a]] == p))))) && ((i.b < 0) || (single((&fa), i.b) && ((((int64_t*)(fa.def_at).data)[i.b] < p) || (((int64_t*)(move_to).data)[((int64_t*)(fa.def_at).data)[i.b]] == p))))) {
+                        ((int64_t*)(move_to).data)[k] = p;
+                        any = true;
+                    }
+                }
+            }
+        }
+    }
+    if (!any) {
+        return false;
+    }
+    Array code = ({ Array _a = arr_make(sizeof(Ins)); _a; });
+    for (int64_t k = 0; k < n; k++) {
+        if (((Ins*)(f->code).data)[k].op == OLabel) {
+            for (int64_t j = (k + 1); j < n; j++) {
+                if (((int64_t*)(move_to).data)[j] == k) {
+                    ({ Ins _e = ((Ins*)(f->code).data)[j]; arr_push(&(code), &_e); });
+                }
+            }
+        }
+        if (((int64_t*)(move_to).data)[k] < 0) {
+            ({ Ins _e = ((Ins*)(f->code).data)[k]; arr_push(&(code), &_e); });
+        }
+    }
+    f->code = code;
+    return true;
+}
+
+bool coalesce(IrFunc* f) {
+    Facts fa = facts(f);
+    bool changed = false;
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (((((i.op != ONop) && (i.op != OCopy)) && (i.dst >= 0)) && single((&fa), i.dst)) && (((int64_t*)(fa.nuse).data)[i.dst] == 1)) {
+            int64_t j = next_real(f, (k + 1));
+            if (j >= 0) {
+                Ins c = ((Ins*)(f->code).data)[j];
+                if (((c.op == OCopy) && (c.a == i.dst)) && (((int64_t*)(f->vtypes).data)[c.dst] == ((int64_t*)(f->vtypes).data)[i.dst])) {
+                    ((Ins*)(f->code).data)[k].dst = c.dst;
+                    ((Ins*)(f->code).data)[j] = new_ins(ONop, KVoid, (0 - 1), (0 - 1), (0 - 1));
+                    changed = true;
+                }
+            }
+        }
+    }
+    return changed;
+}
+
+bool remove_dead(IrFunc* f) {
+    bool changed = false;
+    bool again = true;
+    while (again) {
+        again = false;
+        Facts fa = facts(f);
+        for (int64_t k = 0; k < f->code.len; k++) {
+            Ins i = ((Ins*)(f->code).data)[k];
+            if ((((i.op != ONop) && (i.dst >= 0)) && (((int64_t*)(fa.nuse).data)[i.dst] == 0)) && pure(i.op)) {
+                ((Ins*)(f->code).data)[k] = new_ins(ONop, KVoid, (0 - 1), (0 - 1), (0 - 1));
+                again = true;
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
+Array label_pos(IrFunc* f) {
+    Array lp = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t n = 0; n < (f->labels + 1); n++) {
+        ({ int64_t _e = (0 - 1); arr_push(&(lp), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        if (((Ins*)(f->code).data)[k].op == OLabel) {
+            ((int64_t*)(lp).data)[((Ins*)(f->code).data)[k].imm] = k;
+        }
+    }
+    return lp;
+}
+
+int64_t next_real(IrFunc* f, int64_t k) {
+    int64_t r = (0 - 1);
+    while ((k < f->code.len) && (r < 0)) {
+        if (((Ins*)(f->code).data)[k].op != ONop) {
+            r = k;
+        }
+        k += 1;
+    }
+    return r;
+}
+
+int64_t final_target(IrFunc* f, Array lp, int64_t n) {
+    int64_t hops = 0;
+    bool going = true;
+    while (going && (hops < 32)) {
+        going = false;
+        int64_t k = (((int64_t*)(lp).data)[n] + 1);
+        int64_t r = (0 - 1);
+        while ((k < f->code.len) && (r < 0)) {
+            int64_t op = ((Ins*)(f->code).data)[k].op;
+            if ((op != ONop) && (op != OLabel)) {
+                r = k;
+            }
+            k += 1;
+        }
+        if (((r >= 0) && (((Ins*)(f->code).data)[r].op == OJmp)) && (((Ins*)(f->code).data)[r].imm != n)) {
+            n = ((Ins*)(f->code).data)[r].imm;
+            going = true;
+            hops += 1;
+        }
+    }
+    return n;
+}
+
+bool clean_flow(IrFunc* f) {
+    bool changed = false;
+    Array lp = label_pos(f);
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (i.op == OJmp) {
+            int64_t t = final_target(f, lp, i.imm);
+            if (t != i.imm) {
+                ((Ins*)(f->code).data)[k].imm = t;
+                changed = true;
+            }
+        } else 
+        if (i.op == OBr) {
+            int64_t t1 = final_target(f, lp, i.imm);
+            int64_t t2 = final_target(f, lp, i.imm2);
+            if ((t1 != i.imm) || (t2 != i.imm2)) {
+                ((Ins*)(f->code).data)[k].imm = t1;
+                ((Ins*)(f->code).data)[k].imm2 = t2;
+                changed = true;
+            }
+            if (t1 == t2) {
+                make_jump(f, k, t1);
+                changed = true;
+            }
+        }
+    }
+    bool dead = false;
+    for (int64_t k = 0; k < f->code.len; k++) {
+        int64_t op = ((Ins*)(f->code).data)[k].op;
+        if (op == OLabel) {
+            dead = false;
+        } else 
+        if (dead && (op != ONop)) {
+            ((Ins*)(f->code).data)[k] = new_ins(ONop, KVoid, (0 - 1), (0 - 1), (0 - 1));
+            changed = true;
+        } else 
+        if ((op == OJmp) || (op == ORet)) {
+            dead = true;
+        }
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        if (((Ins*)(f->code).data)[k].op == OJmp) {
+            int64_t n = ((Ins*)(f->code).data)[k].imm;
+            int64_t j = (k + 1);
+            bool found = false;
+            bool stop = false;
+            while ((j < f->code.len) && (!stop)) {
+                int64_t op = ((Ins*)(f->code).data)[j].op;
+                if ((op == OLabel) && (((Ins*)(f->code).data)[j].imm == n)) {
+                    found = true;
+                    stop = true;
+                } else 
+                if ((op != OLabel) && (op != ONop)) {
+                    stop = true;
+                }
+                j += 1;
+            }
+            if (found) {
+                ((Ins*)(f->code).data)[k] = new_ins(ONop, KVoid, (0 - 1), (0 - 1), (0 - 1));
+                changed = true;
+            }
+        }
+    }
+    Array used = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t n = 0; n < (f->labels + 1); n++) {
+        ({ int64_t _e = 0; arr_push(&(used), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (i.op == OJmp) {
+            ((int64_t*)(used).data)[i.imm] = 1;
+        }
+        if (i.op == OBr) {
+            ((int64_t*)(used).data)[i.imm] = 1;
+            ((int64_t*)(used).data)[i.imm2] = 1;
+        }
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        if ((((Ins*)(f->code).data)[k].op == OLabel) && (((int64_t*)(used).data)[((Ins*)(f->code).data)[k].imm] == 0)) {
+            ((Ins*)(f->code).data)[k] = new_ins(ONop, KVoid, (0 - 1), (0 - 1), (0 - 1));
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+void compact(IrFunc* f) {
+    Array code = ({ Array _a = arr_make(sizeof(Ins)); _a; });
+    for (int64_t k = 0; k < f->code.len; k++) {
+        if (((Ins*)(f->code).data)[k].op != ONop) {
+            ({ Ins _e = ((Ins*)(f->code).data)[k]; arr_push(&(code), &_e); });
+        }
+    }
+    f->code = code;
+}
+
+void optimize(IrFunc* f) {
+    int64_t rounds = 0;
+    bool changed = true;
+    while (changed && (rounds < 8)) {
+        changed = false;
+        Facts fa = facts(f);
+        for (int64_t k = 0; k < f->code.len; k++) {
+            if ((((Ins*)(f->code).data)[k].op != ONop) && fold(f, (&fa), k)) {
+                changed = true;
+            }
+        }
+        fa = facts(f);
+        if (forward_slots(f, (&fa))) {
+            changed = true;
+        }
+        fa = facts(f);
+        if (cse(f, (&fa))) {
+            changed = true;
+        }
+        fa = facts(f);
+        if (propagate_copies(f, (&fa))) {
+            changed = true;
+        }
+        if (remove_dead(f)) {
+            changed = true;
+        }
+        if (clean_flow(f)) {
+            changed = true;
+        }
+        if (hoist_loops(f)) {
+            changed = true;
+        }
+        rounds += 1;
+    }
+    coalesce(f);
+    compact(f);
+}
+
+int64_t bit(int64_t k) {
+    uint64_t one = 1;
+    return ((int64_t)((one << uval(k))));
+}
+
+bool has(Array* set, int64_t base, int64_t v) {
+    return (((((int64_t*)(set[0]).data)[(base + (v / 64))] >> (v % 64)) & 1) == 1);
+}
+
+void add(Array* set, int64_t base, int64_t v) {
+    ((int64_t*)(set[0]).data)[(base + (v / 64))] = (((int64_t*)(set[0]).data)[(base + (v / 64))] | bit((v % 64)));
+}
+
+Array reads(Ins i) {
+    Array r = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    if (i.a >= 0) {
+        ({ int64_t _e = i.a; arr_push(&(r), &_e); });
+    }
+    if (i.b >= 0) {
+        ({ int64_t _e = i.b; arr_push(&(r), &_e); });
+    }
+    for (int64_t j = 0; j < i.args.len; j++) {
+        ({ int64_t _e = ((int64_t*)(i.args).data)[j]; arr_push(&(r), &_e); });
+    }
+    return r;
+}
+
+Array alloc_regs(IrFunc* f, RegSet rs, Array skip) {
+    int64_t nv = f->vtypes.len;
+    int64_t n = f->code.len;
+    Array result = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < nv; v++) {
+        ({ int64_t _e = (0 - 1); arr_push(&(result), &_e); });
+    }
+    if (n == 0) {
+        return result;
+    }
+    Array bstart = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array bend = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array block_of_label = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t x = 0; x < (f->labels + 1); x++) {
+        ({ int64_t _e = (0 - 1); arr_push(&(block_of_label), &_e); });
+    }
+    int64_t cur = 0;
+    for (int64_t k = 0; k < n; k++) {
+        int64_t op = ((Ins*)(f->code).data)[k].op;
+        if ((op == OLabel) && (k > cur)) {
+            ({ int64_t _e = cur; arr_push(&(bstart), &_e); });
+            ({ int64_t _e = (k - 1); arr_push(&(bend), &_e); });
+            cur = k;
+        }
+        if (op == OLabel) {
+            ((int64_t*)(block_of_label).data)[((Ins*)(f->code).data)[k].imm] = bstart.len;
+        }
+        if (((op == OJmp) || (op == OBr)) || (op == ORet)) {
+            ({ int64_t _e = cur; arr_push(&(bstart), &_e); });
+            ({ int64_t _e = k; arr_push(&(bend), &_e); });
+            cur = (k + 1);
+        }
+    }
+    if (cur < n) {
+        ({ int64_t _e = cur; arr_push(&(bstart), &_e); });
+        ({ int64_t _e = (n - 1); arr_push(&(bend), &_e); });
+    }
+    int64_t nb = bstart.len;
+    Array s1 = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array s2 = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t b = 0; b < nb; b++) {
+        Ins last = ((Ins*)(f->code).data)[((int64_t*)(bend).data)[b]];
+        int64_t x1 = (0 - 1);
+        int64_t x2 = (0 - 1);
+        if (last.op == OJmp) {
+            x1 = ((int64_t*)(block_of_label).data)[last.imm];
+        } else 
+        if (last.op == OBr) {
+            x1 = ((int64_t*)(block_of_label).data)[last.imm];
+            x2 = ((int64_t*)(block_of_label).data)[last.imm2];
+        } else 
+        if ((last.op != ORet) && ((b + 1) < nb)) {
+            x1 = (b + 1);
+        }
+        ({ int64_t _e = x1; arr_push(&(s1), &_e); });
+        ({ int64_t _e = x2; arr_push(&(s2), &_e); });
+    }
+    int64_t w = ((nv + 63) / 64);
+    if ((nb * w) > 4000000) {
+        return result;
+    }
+    Array use = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array def = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lin = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lout = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t z = 0; z < (nb * w); z++) {
+        ({ int64_t _e = 0; arr_push(&(use), &_e); });
+        ({ int64_t _e = 0; arr_push(&(def), &_e); });
+        ({ int64_t _e = 0; arr_push(&(lin), &_e); });
+        ({ int64_t _e = 0; arr_push(&(lout), &_e); });
+    }
+    for (int64_t b = 0; b < nb; b++) {
+        for (int64_t k = ((int64_t*)(bstart).data)[b]; k < (((int64_t*)(bend).data)[b] + 1); k++) {
+            Ins i = ((Ins*)(f->code).data)[k];
+            Array rs = reads(i);
+            for (int64_t j = 0; j < rs.len; j++) {
+                if (!has((&def), (b * w), ((int64_t*)(rs).data)[j])) {
+                    add((&use), (b * w), ((int64_t*)(rs).data)[j]);
+                }
+            }
+            if (i.dst >= 0) {
+                add((&def), (b * w), i.dst);
+            }
+        }
+    }
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        int64_t b = (nb - 1);
+        while (b >= 0) {
+            for (int64_t q = 0; q < w; q++) {
+                int64_t o = 0;
+                if (((int64_t*)(s1).data)[b] >= 0) {
+                    o = (o | ((int64_t*)(lin).data)[((((int64_t*)(s1).data)[b] * w) + q)]);
+                }
+                if (((int64_t*)(s2).data)[b] >= 0) {
+                    o = (o | ((int64_t*)(lin).data)[((((int64_t*)(s2).data)[b] * w) + q)]);
+                }
+                int64_t ni = (((int64_t*)(use).data)[((b * w) + q)] | (o & (~((int64_t*)(def).data)[((b * w) + q)])));
+                if ((o != ((int64_t*)(lout).data)[((b * w) + q)]) || (ni != ((int64_t*)(lin).data)[((b * w) + q)])) {
+                    changed = true;
+                }
+                ((int64_t*)(lout).data)[((b * w) + q)] = o;
+                ((int64_t*)(lin).data)[((b * w) + q)] = ni;
+            }
+            b -= 1;
+        }
+    }
+    Array start = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array end = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < nv; v++) {
+        ({ int64_t _e = (n + 1); arr_push(&(start), &_e); });
+        ({ int64_t _e = (0 - 1); arr_push(&(end), &_e); });
+    }
+    for (int64_t b = 0; b < nb; b++) {
+        for (int64_t q = 0; q < w; q++) {
+            int64_t wi = ((int64_t*)(lin).data)[((b * w) + q)];
+            int64_t wo = ((int64_t*)(lout).data)[((b * w) + q)];
+            if ((wi != 0) || (wo != 0)) {
+                for (int64_t t = 0; t < 64; t++) {
+                    int64_t v = ((q * 64) + t);
+                    if (((wi >> t) & 1) == 1) {
+                        if (((int64_t*)(bstart).data)[b] < ((int64_t*)(start).data)[v]) {
+                            ((int64_t*)(start).data)[v] = ((int64_t*)(bstart).data)[b];
+                        }
+                        if (((int64_t*)(bstart).data)[b] > ((int64_t*)(end).data)[v]) {
+                            ((int64_t*)(end).data)[v] = ((int64_t*)(bstart).data)[b];
+                        }
+                    }
+                    if (((wo >> t) & 1) == 1) {
+                        if (((int64_t*)(bstart).data)[b] < ((int64_t*)(start).data)[v]) {
+                            ((int64_t*)(start).data)[v] = ((int64_t*)(bstart).data)[b];
+                        }
+                        if (((int64_t*)(bend).data)[b] > ((int64_t*)(end).data)[v]) {
+                            ((int64_t*)(end).data)[v] = ((int64_t*)(bend).data)[b];
+                        }
+                    }
+                }
+            }
+        }
+        for (int64_t k = ((int64_t*)(bstart).data)[b]; k < (((int64_t*)(bend).data)[b] + 1); k++) {
+            Ins i = ((Ins*)(f->code).data)[k];
+            Array rs = reads(i);
+            if (i.dst >= 0) {
+                ({ int64_t _e = i.dst; arr_push(&(rs), &_e); });
+            }
+            for (int64_t j = 0; j < rs.len; j++) {
+                int64_t v = ((int64_t*)(rs).data)[j];
+                if (k < ((int64_t*)(start).data)[v]) {
+                    ((int64_t*)(start).data)[v] = k;
+                }
+                if (k > ((int64_t*)(end).data)[v]) {
+                    ((int64_t*)(end).data)[v] = k;
+                }
+            }
+        }
+    }
+    Array count = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < (n + 2); k++) {
+        ({ int64_t _e = 0; arr_push(&(count), &_e); });
+    }
+    for (int64_t v = 0; v < nv; v++) {
+        if ((v < skip.len) && (((int64_t*)(skip).data)[v] == 1)) {
+            ((int64_t*)(end).data)[v] = (0 - 1);
+        }
+    }
+    for (int64_t v = 0; v < nv; v++) {
+        if (((int64_t*)(end).data)[v] >= 0) {
+            ((int64_t*)(count).data)[((int64_t*)(start).data)[v]] = (((int64_t*)(count).data)[((int64_t*)(start).data)[v]] + 1);
+        }
+    }
+    Array first = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    int64_t acc = 0;
+    for (int64_t k = 0; k < (n + 2); k++) {
+        ({ int64_t _e = acc; arr_push(&(first), &_e); });
+        acc += ((int64_t*)(count).data)[k];
+    }
+    Array order = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t z = 0; z < acc; z++) {
+        ({ int64_t _e = 0; arr_push(&(order), &_e); });
+    }
+    Array fill = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < (n + 2); k++) {
+        ({ int64_t _e = ((int64_t*)(first).data)[k]; arr_push(&(fill), &_e); });
+    }
+    for (int64_t v = 0; v < nv; v++) {
+        if (((int64_t*)(end).data)[v] >= 0) {
+            ((int64_t*)(order).data)[((int64_t*)(fill).data)[((int64_t*)(start).data)[v]]] = v;
+            ((int64_t*)(fill).data)[((int64_t*)(start).data)[v]] = (((int64_t*)(fill).data)[((int64_t*)(start).data)[v]] + 1);
+        }
+    }
+    Array calls = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    int64_t nc = 0;
+    for (int64_t k = 0; k < (n + 2); k++) {
+        ({ int64_t _e = nc; arr_push(&(calls), &_e); });
+        if ((k < n) && (((Ins*)(f->code).data)[k].op == OCall)) {
+            nc += 1;
+        }
+    }
+    int64_t nsaved = (rs.int_saved + rs.float_saved);
+    int64_t total = ((nsaved + rs.int_scratch) + rs.float_scratch);
+    Array owner = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t r = 0; r < total; r++) {
+        ({ int64_t _e = (0 - 1); arr_push(&(owner), &_e); });
+    }
+    for (int64_t z = 0; z < order.len; z++) {
+        int64_t v = ((int64_t*)(order).data)[z];
+        bool flt = ir_is_float(((int64_t*)(f->vtypes).data)[v]);
+        int64_t lo = 0;
+        int64_t hi = rs.int_saved;
+        int64_t slo = nsaved;
+        int64_t shi = (nsaved + rs.int_scratch);
+        if (flt) {
+            lo = rs.int_saved;
+            hi = nsaved;
+            slo = (nsaved + rs.int_scratch);
+            shi = total;
+        }
+        for (int64_t r = 0; r < total; r++) {
+            if ((((int64_t*)(owner).data)[r] >= 0) && (((int64_t*)(end).data)[((int64_t*)(owner).data)[r]] <= ((int64_t*)(start).data)[v])) {
+                ((int64_t*)(owner).data)[r] = (0 - 1);
+            }
+        }
+        bool spans = ((((int64_t*)(calls).data)[((int64_t*)(end).data)[v]] - ((int64_t*)(calls).data)[(((int64_t*)(start).data)[v] + 1)]) > 0);
+        int64_t got = (0 - 1);
+        if (!spans) {
+            for (int64_t r = slo; r < shi; r++) {
+                if ((got < 0) && (((int64_t*)(owner).data)[r] < 0)) {
+                    got = r;
+                }
+            }
+        }
+        for (int64_t r = lo; r < hi; r++) {
+            if ((got < 0) && (((int64_t*)(owner).data)[r] < 0)) {
+                got = r;
+            }
+        }
+        if (got < 0) {
+            int64_t far = (0 - 1);
+            for (int64_t r = lo; r < hi; r++) {
+                if ((far < 0) || (((int64_t*)(end).data)[((int64_t*)(owner).data)[r]] > ((int64_t*)(end).data)[((int64_t*)(owner).data)[far]])) {
+                    far = r;
+                }
+            }
+            if ((far >= 0) && (((int64_t*)(end).data)[((int64_t*)(owner).data)[far]] > ((int64_t*)(end).data)[v])) {
+                ((int64_t*)(result).data)[((int64_t*)(owner).data)[far]] = (0 - 1);
+                got = far;
+            }
+        }
+        if (got >= 0) {
+            ((int64_t*)(owner).data)[got] = v;
+            ((int64_t*)(result).data)[v] = got;
+        }
+    }
+    return result;
+}
+
+X64 new_x64(void) {
+    Array o = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array d = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array r = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lz = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array ls = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array nu = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array b = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array c = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return (X64){o, d, 0, 0, 0, a, r, lz, lv, ls, nu, b, c, 0};
+}
+
+void out(X64* x, const char* s) {
+    ({ const char* _e = str_concat(str_concat("\t", s), "\n"); arr_push(&(x->out), &_e); });
+}
+
+void out_label(X64* x, const char* s) {
+    ({ const char* _e = str_concat(s, ":\n"); arr_push(&(x->out), &_e); });
+}
+
+int64_t align_to(int64_t n, int64_t a) {
+    return ((((n + a) - 1) / a) * a);
+}
+
+RegSet x64_regs(void) {
+    return (RegSet){7, 10, 1, 2};
+}
+
+int64_t x64_int_regs(void) {
+    return 7;
+}
+
+int64_t x64_saved_regs(void) {
+    return 17;
+}
+
+const char* reg_name(int64_t k) {
+    if (k == 17) {
+        return "%r10";
+    }
+    if (k == 18) {
+        return "%xmm4";
+    }
+    if (k == 19) {
+        return "%xmm5";
+    }
+    if (k == 0) {
+        return "%rbx";
+    }
+    if (k == 1) {
+        return "%rsi";
+    }
+    if (k == 2) {
+        return "%rdi";
+    }
+    if (k == 3) {
+        return "%r12";
+    }
+    if (k == 4) {
+        return "%r13";
+    }
+    if (k == 5) {
+        return "%r14";
+    }
+    if (k == 6) {
+        return "%r15";
+    }
+    return str_concat("%xmm", str_from_int(((k - 7) + 6)));
+}
+
+bool in_reg(X64* x, int64_t v) {
+    return (((int64_t*)(x->isreg).data)[v] == 1);
+}
+
+int64_t reg_of(X64* x, int64_t v) {
+    return ((int64_t*)(x->loc).data)[v];
+}
+
+const char* opnd(X64* x, int64_t v) {
+    if (in_reg(x, v)) {
+        return reg_name(reg_of(x, v));
+    }
+    return str_concat(str_from_int(((int64_t*)(x->loc).data)[v]), "(%rbp)");
+}
+
+const char* sub_reg(const char* r, int64_t size) {
+    if (size == 8) {
+        return r;
+    }
+    if (((str_eq(r, "%rax") || str_eq(r, "%rbx")) || str_eq(r, "%rcx")) || str_eq(r, "%rdx")) {
+        const char* c = str_sub(r, 2, 1);
+        if (size == 4) {
+            return str_concat(str_concat("%e", c), "x");
+        }
+        if (size == 2) {
+            return str_concat(str_concat("%", c), "x");
+        }
+        return str_concat(str_concat("%", c), "l");
+    }
+    if (str_eq(r, "%rsi") || str_eq(r, "%rdi")) {
+        const char* c = str_sub(r, 2, 2);
+        if (size == 4) {
+            return str_concat("%e", c);
+        }
+        if (size == 2) {
+            return str_concat("%", c);
+        }
+        return str_concat(str_concat("%", c), "l");
+    }
+    if (size == 4) {
+        return str_concat(r, "d");
+    }
+    if (size == 2) {
+        return str_concat(r, "w");
+    }
+    return str_concat(r, "b");
+}
+
+const char* fsuf(int64_t ty) {
+    if (ty == KF64) {
+        return "sd";
+    }
+    return "ss";
+}
+
+const char* slot_mem(X64* x, int64_t slot, int64_t off) {
+    return str_concat(str_from_int((((int64_t*)(x->slot_off).data)[slot] + off)), "(%rbp)");
+}
+
+const char* src(X64* x, int64_t v) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[v];
+    if (lz == 1) {
+        return str_concat("$", str_from_int(((int64_t*)(x->lval).data)[v]));
+    }
+    if (lz == 2) {
+        out(x, str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", %r11"));
+        return "%r11";
+    }
+    if (lz == 3) {
+        out(x, str_concat(str_concat("leaq ", ((const char**)(x->lsym).data)[v]), "(%rip), %r11"));
+        return "%r11";
+    }
+    return opnd(x, v);
+}
+
+void get(X64* x, int64_t v, const char* r) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[v];
+    if (lz == 1) {
+        if (((int64_t*)(x->lval).data)[v] == 0) {
+            out(x, str_concat(str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "), sub_reg(r, 4)));
+        } else {
+            out(x, str_concat(str_concat(str_concat("movq $", str_from_int(((int64_t*)(x->lval).data)[v])), ", "), r));
+        }
+    } else 
+    if (lz == 2) {
+        out(x, str_concat(str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", "), r));
+    } else 
+    if (lz == 3) {
+        out(x, str_concat(str_concat(str_concat("leaq ", ((const char**)(x->lsym).data)[v]), "(%rip), "), r));
+    } else 
+    if (!str_eq(opnd(x, v), r)) {
+        out(x, str_concat(str_concat(str_concat("movq ", opnd(x, v)), ", "), r));
+    }
+}
+
+void put(X64* x, const char* r, int64_t v) {
+    const char* o = opnd(x, v);
+    if (!str_eq(o, r)) {
+        out(x, str_concat(str_concat(str_concat("movq ", r), ", "), o));
+    }
+}
+
+void fget(X64* x, int64_t ty, int64_t v, const char* r) {
+    if (in_reg(x, v)) {
+        if (!str_eq(opnd(x, v), r)) {
+            out(x, str_concat(str_concat(str_concat("movaps ", opnd(x, v)), ", "), r));
+        }
+    } else {
+        out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(ty)), " "), opnd(x, v)), ", "), r));
+    }
+}
+
+void fput(X64* x, int64_t ty, const char* r, int64_t v) {
+    if (in_reg(x, v)) {
+        if (!str_eq(opnd(x, v), r)) {
+            out(x, str_concat(str_concat(str_concat("movaps ", r), ", "), opnd(x, v)));
+        }
+    } else {
+        out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(ty)), " "), r), ", "), opnd(x, v)));
+    }
+}
+
+const char* mem_at(X64* x, int64_t a, int64_t off) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[a];
+    if (lz == 2) {
+        return slot_mem(x, ((int64_t*)(x->lval).data)[a], off);
+    }
+    if (lz == 3) {
+        return str_concat(str_concat(str_concat(((const char**)(x->lsym).data)[a], "+"), str_from_int(off)), "(%rip)");
+    }
+    if (in_reg(x, a)) {
+        return str_concat(str_concat(str_concat(str_from_int(off), "("), reg_name(reg_of(x, a))), ")");
+    }
+    get(x, a, "%rax");
+    return str_concat(str_from_int(off), "(%rax)");
+}
+
+const char* work(X64* x, Ins i) {
+    if (in_reg(x, i.dst) && (!(((i.b >= 0) && in_reg(x, i.b)) && (reg_of(x, i.b) == reg_of(x, i.dst))))) {
+        return reg_name(reg_of(x, i.dst));
+    }
+    return "%rax";
+}
+
+void norm(X64* x, int64_t ty, const char* r) {
+    if (ty == KI8) {
+        out(x, str_concat(str_concat(str_concat("movsbq ", sub_reg(r, 1)), ", "), r));
+    } else 
+    if (ty == KU8) {
+        out(x, str_concat(str_concat(str_concat("movzbl ", sub_reg(r, 1)), ", "), sub_reg(r, 4)));
+    } else 
+    if (ty == KI16) {
+        out(x, str_concat(str_concat(str_concat("movswq ", sub_reg(r, 2)), ", "), r));
+    } else 
+    if (ty == KU16) {
+        out(x, str_concat(str_concat(str_concat("movzwl ", sub_reg(r, 2)), ", "), sub_reg(r, 4)));
+    } else 
+    if (ty == KI32) {
+        out(x, str_concat(str_concat(str_concat("movslq ", sub_reg(r, 4)), ", "), r));
+    } else 
+    if (ty == KU32) {
+        out(x, str_concat(str_concat(str_concat("movl ", sub_reg(r, 4)), ", "), sub_reg(r, 4)));
+    }
+}
+
+bool fits32(int64_t v) {
+    return ((v >= (0 - 2147483648)) && (v <= 2147483647));
+}
+
+const char* float_const(X64* x, int64_t ty, const char* text) {
+    const char* name = str_concat(".LCf", str_from_int(x->floats));
+    x->floats += 1;
+    if (ty == KF64) {
+        ({ const char* _e = str_concat(str_concat(str_concat(str_concat("\t.p2align 3\n", name), ":\n\t.double "), text), "\n"); arr_push(&(x->data), &_e); });
+    } else {
+        ({ const char* _e = str_concat(str_concat(str_concat(str_concat("\t.p2align 2\n", name), ":\n\t.float "), text), "\n"); arr_push(&(x->data), &_e); });
+    }
+    return name;
+}
+
+const char* as_text(const char* s) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    int64_t i = 0;
+    int64_t n = str_len(s);
+    while (i < n) {
+        if ((s[i] == '\\') && ((i + 1) < n)) {
+            if (s[(i + 1)] == '0') {
+                ({ const char* _e = "\\000"; arr_push(&(p), &_e); });
+            } else 
+            if (s[(i + 1)] == '\'') {
+                ({ const char* _e = "'"; arr_push(&(p), &_e); });
+            } else {
+                ({ const char* _e = str_sub(s, i, 2); arr_push(&(p), &_e); });
+            }
+            i += 2;
+        } else {
+            ({ const char* _e = str_sub(s, i, 1); arr_push(&(p), &_e); });
+            i += 1;
+        }
+    }
+    return strata_join((&p));
+}
+
+const char* lbl(X64* x, int64_t n) {
+    return str_concat(str_concat(str_concat(".L", str_from_int(x->fnum)), "_"), str_from_int(n));
+}
+
+const char* int_reg_arg(int64_t i) {
+    if (i == 0) {
+        return "%rcx";
+    }
+    if (i == 1) {
+        return "%rdx";
+    }
+    if (i == 2) {
+        return "%r8";
+    }
+    return "%r9";
+}
+
+const char* cc_of(int64_t cond, bool is_unsigned) {
+    if (cond == CEq) {
+        return "e";
+    }
+    if (cond == CNe) {
+        return "ne";
+    }
+    if (is_unsigned) {
+        if (cond == CLt) {
+            return "b";
+        }
+        if (cond == CLe) {
+            return "be";
+        }
+        if (cond == CGt) {
+            return "a";
+        }
+        return "ae";
+    }
+    if (cond == CLt) {
+        return "l";
+    }
+    if (cond == CLe) {
+        return "le";
+    }
+    if (cond == CGt) {
+        return "g";
+    }
+    return "ge";
+}
+
+int64_t invert(int64_t cond) {
+    if (cond == CEq) {
+        return CNe;
+    }
+    if (cond == CNe) {
+        return CEq;
+    }
+    if (cond == CLt) {
+        return CGe;
+    }
+    if (cond == CLe) {
+        return CGt;
+    }
+    if (cond == CGt) {
+        return CLe;
+    }
+    return CLt;
+}
+
+void copy_bytes(X64* x, int64_t size, bool zero) {
+    int64_t off = 0;
+    if (zero) {
+        out(x, "xorl %edx, %edx");
+    }
+    if (size > 128) {
+        int64_t words = (size / 8);
+        const char* l = str_concat(str_concat(str_concat(".Lm", str_from_int(x->fnum)), "_"), str_from_int(x->loops));
+        x->loops += 1;
+        out(x, str_concat(str_concat("movq $", str_from_int(words)), ", %r8"));
+        out_label(x, l);
+        if (!zero) {
+            out(x, "movq (%rcx), %rdx");
+            out(x, "addq $8, %rcx");
+        }
+        out(x, "movq %rdx, (%rax)");
+        out(x, "addq $8, %rax");
+        out(x, "decq %r8");
+        out(x, str_concat("jnz ", l));
+        size = (size - (words * 8));
+    }
+    while ((off + 8) <= size) {
+        if (!zero) {
+            out(x, str_concat(str_concat("movq ", str_from_int(off)), "(%rcx), %rdx"));
+        }
+        out(x, str_concat(str_concat("movq %rdx, ", str_from_int(off)), "(%rax)"));
+        off += 8;
+    }
+    if ((off + 4) <= size) {
+        if (!zero) {
+            out(x, str_concat(str_concat("movl ", str_from_int(off)), "(%rcx), %edx"));
+        }
+        out(x, str_concat(str_concat("movl %edx, ", str_from_int(off)), "(%rax)"));
+        off += 4;
+    }
+    if ((off + 2) <= size) {
+        if (!zero) {
+            out(x, str_concat(str_concat("movw ", str_from_int(off)), "(%rcx), %dx"));
+        }
+        out(x, str_concat(str_concat("movw %dx, ", str_from_int(off)), "(%rax)"));
+        off += 2;
+    }
+    if (off < size) {
+        if (!zero) {
+            out(x, str_concat(str_concat("movb ", str_from_int(off)), "(%rcx), %dl"));
+        }
+        out(x, str_concat(str_concat("movb %dl, ", str_from_int(off)), "(%rax)"));
+    }
+}
+
+const char* load_insn(int64_t ty) {
+    if (ty == KI8) {
+        return "movsbq";
+    }
+    if (ty == KU8) {
+        return "movzbq";
+    }
+    if (ty == KI16) {
+        return "movswq";
+    }
+    if (ty == KU16) {
+        return "movzwq";
+    }
+    if (ty == KI32) {
+        return "movslq";
+    }
+    return "movq";
+}
+
+void branch_cc(X64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next) {
+    if (e == next) {
+        out(x, str_concat(str_concat(str_concat("j", cc), " "), lbl(x, t)));
+    } else 
+    if ((t == next) && (!str_eq(ncc, ""))) {
+        out(x, str_concat(str_concat(str_concat("j", ncc), " "), lbl(x, e)));
+    } else {
+        out(x, str_concat(str_concat(str_concat("j", cc), " "), lbl(x, t)));
+        out(x, str_concat("jmp ", lbl(x, e)));
+    }
+}
+
+void cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next) {
+    int64_t ty = i.ty;
+    int64_t c = i.ty2;
+    if (ir_is_float(ty)) {
+        const char* s = fsuf(ty);
+        if ((c == CLt) || (c == CLe)) {
+            fget(x, ty, i.b, "%xmm0");
+            fget(x, ty, i.a, "%xmm1");
+        } else {
+            fget(x, ty, i.a, "%xmm0");
+            fget(x, ty, i.b, "%xmm1");
+        }
+        out(x, str_concat(str_concat("ucomi", s), " %xmm1, %xmm0"));
+        if ((c == CGt) || (c == CLt)) {
+            branch_cc(x, "a", "", t, e, next);
+        } else 
+        if ((c == CGe) || (c == CLe)) {
+            branch_cc(x, "ae", "", t, e, next);
+        } else 
+        if (c == CEq) {
+            out(x, str_concat("jp ", lbl(x, e)));
+            branch_cc(x, "e", "ne", t, e, next);
+        } else {
+            out(x, str_concat("jp ", lbl(x, t)));
+            branch_cc(x, "ne", "e", t, e, next);
+        }
+        return;
+    }
+    const char* a = "%rax";
+    if (in_reg(x, i.a) && (((int64_t*)(x->lazy).data)[i.a] == 0)) {
+        a = opnd(x, i.a);
+    } else {
+        get(x, i.a, "%rax");
+    }
+    out(x, str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a));
+    bool u = ir_is_unsigned(ty);
+    branch_cc(x, cc_of(c, u), cc_of(invert(c), u), t, e, next);
+}
+
+void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
+    Ins i = ((Ins*)(f->code).data)[k];
+    int64_t t = i.ty;
+    int64_t next = (0 - 1);
+    if (((k + 1) < f->code.len) && (((Ins*)(f->code).data)[(k + 1)].op == OLabel)) {
+        next = ((Ins*)(f->code).data)[(k + 1)].imm;
+    }
+    if ((i.dst >= 0) && (((int64_t*)(x->lazy).data)[i.dst] != 0)) {
+        return;
+    }
+    switch (i.op) {
+        case OConst:
+        {
+            {
+                int64_t v = ir_norm_imm(t, i.imm);
+                if (fits32(v)) {
+                    if (in_reg(x, i.dst) && (v == 0)) {
+                        const char* r = opnd(x, i.dst);
+                        out(x, str_concat(str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "), sub_reg(r, 4)));
+                    } else {
+                        out(x, str_concat(str_concat(str_concat("movq $", str_from_int(v)), ", "), opnd(x, i.dst)));
+                    }
+                } else {
+                    out(x, str_concat(str_concat("movabsq $", str_from_int(v)), ", %rax"));
+                    put(x, "%rax", i.dst);
+                }
+            }
+            break;
+        }
+        case OFConst:
+        {
+            {
+                const char* c = float_const(x, t, i.sym);
+                if (in_reg(x, i.dst)) {
+                    out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), "), opnd(x, i.dst)));
+                } else {
+                    out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), %xmm0"));
+                    fput(x, t, "%xmm0", i.dst);
+                }
+            }
+            break;
+        }
+        case OCopy:
+        {
+            if (ir_is_float(t)) {
+                fget(x, t, i.a, "%xmm0");
+                fput(x, t, "%xmm0", i.dst);
+            } else 
+            if (in_reg(x, i.dst)) {
+                get(x, i.a, opnd(x, i.dst));
+            } else 
+            if (((int64_t*)(x->lazy).data)[i.a] == 1) {
+                out(x, str_concat(str_concat(str_concat("movq ", src(x, i.a)), ", "), opnd(x, i.dst)));
+            } else {
+                get(x, i.a, "%rax");
+                put(x, "%rax", i.dst);
+            }
+            break;
+        }
+        case OAdd:
+        case OSub:
+        case OMul:
+        case OAnd:
+        case OOr:
+        case OXor:
+        {
+            if (ir_is_float(t)) {
+                const char* fop = "add";
+                if (i.op == OSub) {
+                    fop = "sub";
+                } else 
+                if (i.op == OMul) {
+                    fop = "mul";
+                }
+                float_op(x, i, fop);
+            } else {
+                const char* op = "addq";
+                if (i.op == OSub) {
+                    op = "subq";
+                } else 
+                if (i.op == OMul) {
+                    op = "imulq";
+                } else 
+                if (i.op == OAnd) {
+                    op = "andq";
+                } else 
+                if (i.op == OOr) {
+                    op = "orq";
+                } else 
+                if (i.op == OXor) {
+                    op = "xorq";
+                }
+                const char* w = work(x, i);
+                get(x, i.a, w);
+                out(x, str_concat(str_concat(str_concat(str_concat(op, " "), src(x, i.b)), ", "), w));
+                norm(x, t, w);
+                put(x, w, i.dst);
+            }
+            break;
+        }
+        case ODiv:
+        case OMod:
+        {
+            if (ir_is_float(t)) {
+                float_op(x, i, "div");
+            } else {
+                get(x, i.a, "%rax");
+                get(x, i.b, "%rcx");
+                if (ir_is_unsigned(t)) {
+                    out(x, "xorl %edx, %edx");
+                    out(x, "divq %rcx");
+                } else {
+                    out(x, "cqto");
+                    out(x, "idivq %rcx");
+                }
+                const char* r = "%rax";
+                if (i.op == OMod) {
+                    r = "%rdx";
+                }
+                norm(x, t, r);
+                put(x, r, i.dst);
+            }
+            break;
+        }
+        case OShl:
+        case OShr:
+        {
+            {
+                const char* w = work(x, i);
+                get(x, i.a, w);
+                const char* op = "shlq";
+                if (i.op == OShr) {
+                    if (ir_is_unsigned(t)) {
+                        op = "shrq";
+                    } else {
+                        op = "sarq";
+                    }
+                }
+                if (((int64_t*)(x->lazy).data)[i.b] == 1) {
+                    out(x, str_concat(str_concat(str_concat(str_concat(op, " "), src(x, i.b)), ", "), w));
+                } else {
+                    get(x, i.b, "%rcx");
+                    out(x, str_concat(str_concat(op, " %cl, "), w));
+                }
+                norm(x, t, w);
+                put(x, w, i.dst);
+            }
+            break;
+        }
+        case ONeg:
+        {
+            if (t == KF32) {
+                fget(x, t, i.a, "%xmm0");
+                out(x, "movd %xmm0, %eax");
+                out(x, "xorl $0x80000000, %eax");
+                out(x, "movd %eax, %xmm0");
+                fput(x, t, "%xmm0", i.dst);
+            } else 
+            if (t == KF64) {
+                fget(x, t, i.a, "%xmm0");
+                out(x, "movq %xmm0, %rax");
+                out(x, "btcq $63, %rax");
+                out(x, "movq %rax, %xmm0");
+                fput(x, t, "%xmm0", i.dst);
+            } else {
+                const char* w = work(x, i);
+                get(x, i.a, w);
+                out(x, str_concat("negq ", w));
+                norm(x, t, w);
+                put(x, w, i.dst);
+            }
+            break;
+        }
+        case ONot:
+        {
+            {
+                const char* w = work(x, i);
+                get(x, i.a, w);
+                out(x, str_concat("notq ", w));
+                norm(x, t, w);
+                put(x, w, i.dst);
+            }
+            break;
+        }
+        case OSqrt:
+        {
+            fget(x, t, i.a, "%xmm1");
+            out(x, str_concat(str_concat("sqrt", fsuf(t)), " %xmm1, %xmm0"));
+            fput(x, t, "%xmm0", i.dst);
+            break;
+        }
+        case OCmp:
+        {
+            {
+                if (((((k + 1) < f->code.len) && (((Ins*)(f->code).data)[(k + 1)].op == OBr)) && (((Ins*)(f->code).data)[(k + 1)].a == i.dst)) && (((int64_t*)(x->nuse).data)[i.dst] == 1)) {
+                    int64_t nx = (0 - 1);
+                    if (((k + 2) < f->code.len) && (((Ins*)(f->code).data)[(k + 2)].op == OLabel)) {
+                        nx = ((Ins*)(f->code).data)[(k + 2)].imm;
+                    }
+                    cmp_branch(x, i, ((Ins*)(f->code).data)[(k + 1)].imm, ((Ins*)(f->code).data)[(k + 1)].imm2, nx);
+                } else {
+                    emit_cmp(x, i);
+                }
+            }
+            break;
+        }
+        case OConv:
+        {
+            emit_conv(x, i);
+            break;
+        }
+        case OLoad:
+        {
+            if (ir_is_float(t)) {
+                const char* m = mem_at(x, i.a, i.imm);
+                if (in_reg(x, i.dst)) {
+                    out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", "), opnd(x, i.dst)));
+                } else {
+                    out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"));
+                    fput(x, t, "%xmm0", i.dst);
+                }
+            } else {
+                const char* m = mem_at(x, i.a, i.imm);
+                const char* w = "%rax";
+                if (in_reg(x, i.dst)) {
+                    w = opnd(x, i.dst);
+                }
+                if (t == KU32) {
+                    out(x, str_concat(str_concat(str_concat("movl ", m), ", "), sub_reg(w, 4)));
+                } else {
+                    out(x, str_concat(str_concat(str_concat(str_concat(load_insn(t), " "), m), ", "), w));
+                }
+                put(x, w, i.dst);
+            }
+            break;
+        }
+        case OStore:
+        {
+            {
+                const char* m = mem_at(x, i.a, i.imm);
+                if (ir_is_float(t)) {
+                    if (in_reg(x, i.b)) {
+                        out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), opnd(x, i.b)), ", "), m));
+                    } else {
+                        fget(x, t, i.b, "%xmm0");
+                        out(x, str_concat(str_concat(str_concat("mov", fsuf(t)), " %xmm0, "), m));
+                    }
+                } else {
+                    int64_t sz = ir_size(t);
+                    const char* mv = "movq";
+                    if (sz == 1) {
+                        mv = "movb";
+                    } else 
+                    if (sz == 2) {
+                        mv = "movw";
+                    } else 
+                    if (sz == 4) {
+                        mv = "movl";
+                    }
+                    if (((int64_t*)(x->lazy).data)[i.b] == 1) {
+                        out(x, str_concat(str_concat(str_concat(str_concat(mv, " "), src(x, i.b)), ", "), m));
+                    } else 
+                    if (in_reg(x, i.b) && (((int64_t*)(x->lazy).data)[i.b] == 0)) {
+                        out(x, str_concat(str_concat(str_concat(str_concat(mv, " "), sub_reg(opnd(x, i.b), sz)), ", "), m));
+                    } else {
+                        get(x, i.b, "%rcx");
+                        out(x, str_concat(str_concat(str_concat(str_concat(mv, " "), sub_reg("%rcx", sz)), ", "), m));
+                    }
+                }
+            }
+            break;
+        }
+        case OSlotAddr:
+        {
+            out(x, str_concat(str_concat("leaq ", slot_mem(x, i.imm, 0)), ", %rax"));
+            put(x, "%rax", i.dst);
+            break;
+        }
+        case OSymAddr:
+        {
+            out(x, str_concat(str_concat("leaq ", i.sym), "(%rip), %rax"));
+            put(x, "%rax", i.dst);
+            break;
+        }
+        case OCopyMem:
+        {
+            get(x, i.a, "%rax");
+            get(x, i.b, "%rcx");
+            copy_bytes(x, i.imm, false);
+            break;
+        }
+        case OZeroMem:
+        {
+            get(x, i.a, "%rax");
+            copy_bytes(x, i.imm, true);
+            break;
+        }
+        case OParam:
+        {
+            emit_param(x, i);
+            break;
+        }
+        case OCall:
+        {
+            emit_call(x, f, i);
+            break;
+        }
+        case ORet:
+        {
+            if (i.a >= 0) {
+                int64_t rt = f->ret_ty;
+                if (ir_is_float(rt)) {
+                    fget(x, rt, i.a, "%xmm0");
+                } else {
+                    get(x, i.a, "%rax");
+                }
+            }
+            if ((k + 1) < f->code.len) {
+                out(x, str_concat("jmp ", epilogue));
+            }
+            break;
+        }
+        case OLabel:
+        {
+            out_label(x, lbl(x, i.imm));
+            break;
+        }
+        case OJmp:
+        {
+            if (i.imm != next) {
+                out(x, str_concat("jmp ", lbl(x, i.imm)));
+            }
+            break;
+        }
+        case OBr:
+        {
+            if (((int64_t*)(x->lazy).data)[i.a] == 1) {
+                if (((int64_t*)(x->lval).data)[i.a] != 0) {
+                    out(x, str_concat("jmp ", lbl(x, i.imm)));
+                } else {
+                    out(x, str_concat("jmp ", lbl(x, i.imm2)));
+                }
+            } else {
+                out(x, str_concat("cmpq $0, ", opnd(x, i.a)));
+                branch_cc(x, "ne", "e", i.imm, i.imm2, next);
+            }
+            break;
+        }
+        case ONop:
+        {
+            {
+            }
+            break;
+        }
+    }
+}
+
+void float_op(X64* x, Ins i, const char* fop) {
+    int64_t t = i.ty;
+    const char* w = "%xmm0";
+    if (in_reg(x, i.dst) && (!(in_reg(x, i.b) && (reg_of(x, i.b) == reg_of(x, i.dst))))) {
+        w = opnd(x, i.dst);
+    }
+    fget(x, t, i.a, w);
+    out(x, str_concat(str_concat(str_concat(str_concat(str_concat(fop, fsuf(t)), " "), opnd(x, i.b)), ", "), w));
+    fput(x, t, w, i.dst);
+}
+
+void emit_cmp(X64* x, Ins i) {
+    int64_t t = i.ty;
+    if (ir_is_float(t)) {
+        const char* s = fsuf(t);
+        int64_t c = i.ty2;
+        if ((c == CLt) || (c == CLe)) {
+            fget(x, t, i.b, "%xmm0");
+            fget(x, t, i.a, "%xmm1");
+            out(x, str_concat(str_concat("ucomi", s), " %xmm1, %xmm0"));
+            if (c == CLt) {
+                out(x, "seta %al");
+            } else {
+                out(x, "setae %al");
+            }
+        } else {
+            fget(x, t, i.a, "%xmm0");
+            fget(x, t, i.b, "%xmm1");
+            out(x, str_concat(str_concat("ucomi", s), " %xmm1, %xmm0"));
+            if (c == CGt) {
+                out(x, "seta %al");
+            } else 
+            if (c == CGe) {
+                out(x, "setae %al");
+            } else 
+            if (c == CEq) {
+                out(x, "sete %al");
+                out(x, "setnp %cl");
+                out(x, "andb %cl, %al");
+            } else {
+                out(x, "setne %al");
+                out(x, "setp %cl");
+                out(x, "orb %cl, %al");
+            }
+        }
+    } else {
+        const char* a = "%rax";
+        if (in_reg(x, i.a) && (((int64_t*)(x->lazy).data)[i.a] == 0)) {
+            a = opnd(x, i.a);
+        } else {
+            get(x, i.a, "%rax");
+        }
+        out(x, str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a));
+        out(x, str_concat(str_concat("set", cc_of(i.ty2, ir_is_unsigned(t))), " %al"));
+    }
+    out(x, "movzbl %al, %eax");
+    put(x, "%rax", i.dst);
+}
+
+void emit_conv(X64* x, Ins i) {
+    int64_t to = i.ty;
+    int64_t from = i.ty2;
+    if (ir_is_float(from) && ir_is_float(to)) {
+        fget(x, from, i.a, "%xmm1");
+        out(x, str_concat(str_concat(str_concat(str_concat("cvt", fsuf(from)), "2"), fsuf(to)), " %xmm1, %xmm0"));
+        fput(x, to, "%xmm0", i.dst);
+    } else 
+    if (ir_is_float(to)) {
+        get(x, i.a, "%rax");
+        out(x, str_concat(str_concat("cvtsi2", fsuf(to)), "q %rax, %xmm0"));
+        fput(x, to, "%xmm0", i.dst);
+    } else 
+    if (ir_is_float(from)) {
+        fget(x, from, i.a, "%xmm0");
+        out(x, str_concat(str_concat("cvtt", fsuf(from)), "2siq %xmm0, %rax"));
+        norm(x, to, "%rax");
+        put(x, "%rax", i.dst);
+    } else {
+        const char* w = "%rax";
+        if (in_reg(x, i.dst)) {
+            w = opnd(x, i.dst);
+        }
+        get(x, i.a, w);
+        norm(x, to, w);
+        put(x, w, i.dst);
+    }
+}
+
+void emit_param(X64* x, Ins i) {
+    int64_t t = i.ty;
+    int64_t k = i.imm;
+    if (k < 4) {
+        if (ir_is_float(t)) {
+            fput(x, t, str_concat("%xmm", str_from_int(k)), i.dst);
+        } else {
+            const char* r = int_reg_arg(k);
+            norm(x, t, r);
+            put(x, r, i.dst);
+        }
+    } else {
+        const char* m = str_concat(str_from_int((16 + (8 * k))), "(%rbp)");
+        if (ir_is_float(t)) {
+            out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"));
+            fput(x, t, "%xmm0", i.dst);
+        } else {
+            out(x, str_concat(str_concat("movq ", m), ", %rax"));
+            norm(x, t, "%rax");
+            put(x, "%rax", i.dst);
+        }
+    }
+}
+
+void emit_call(X64* x, IrFunc* f, Ins i) {
+    int64_t n = i.args.len;
+    for (int64_t k = 4; k < n; k++) {
+        int64_t a = ((int64_t*)(i.args).data)[k];
+        int64_t at = ((int64_t*)(f->vtypes).data)[a];
+        if (ir_is_float(at)) {
+            fget(x, at, a, "%xmm0");
+            out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(at)), " %xmm0, "), str_from_int((8 * k))), "(%rsp)"));
+        } else 
+        if (((int64_t*)(x->lazy).data)[a] == 1) {
+            out(x, str_concat(str_concat(str_concat(str_concat("movq ", src(x, a)), ", "), str_from_int((8 * k))), "(%rsp)"));
+        } else {
+            get(x, a, "%rax");
+            out(x, str_concat(str_concat("movq %rax, ", str_from_int((8 * k))), "(%rsp)"));
+        }
+    }
+    for (int64_t k = 0; k < n; k++) {
+        if (k < 4) {
+            int64_t a = ((int64_t*)(i.args).data)[k];
+            int64_t at = ((int64_t*)(f->vtypes).data)[a];
+            if (ir_is_float(at)) {
+                fget(x, at, a, str_concat("%xmm", str_from_int(k)));
+            } else {
+                get(x, a, int_reg_arg(k));
+            }
+        }
+    }
+    out(x, str_concat("call ", i.sym));
+    if (i.dst >= 0) {
+        if (ir_is_float(i.ty)) {
+            fput(x, i.ty, "%xmm0", i.dst);
+        } else {
+            norm(x, i.ty, "%rax");
+            put(x, "%rax", i.dst);
+        }
+    }
+}
+
+void find_lazy(X64* x, IrFunc* f) {
+    int64_t nv = f->vtypes.len;
+    Array ndef = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array nuse = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lz = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array ls = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t v = 0; v < nv; v++) {
+        ({ int64_t _e = 0; arr_push(&(ndef), &_e); });
+        ({ int64_t _e = 0; arr_push(&(nuse), &_e); });
+        ({ int64_t _e = 0; arr_push(&(lz), &_e); });
+        ({ int64_t _e = 0; arr_push(&(lv), &_e); });
+        ({ const char* _e = ""; arr_push(&(ls), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (i.op != ONop) {
+            if (i.dst >= 0) {
+                ((int64_t*)(ndef).data)[i.dst] = (((int64_t*)(ndef).data)[i.dst] + 1);
+            }
+            if (i.a >= 0) {
+                ((int64_t*)(nuse).data)[i.a] = (((int64_t*)(nuse).data)[i.a] + 1);
+            }
+            if (i.b >= 0) {
+                ((int64_t*)(nuse).data)[i.b] = (((int64_t*)(nuse).data)[i.b] + 1);
+            }
+            for (int64_t j = 0; j < i.args.len; j++) {
+                ((int64_t*)(nuse).data)[((int64_t*)(i.args).data)[j]] = (((int64_t*)(nuse).data)[((int64_t*)(i.args).data)[j]] + 1);
+            }
+        }
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if ((i.dst >= 0) && (((int64_t*)(ndef).data)[i.dst] == 1)) {
+            if ((i.op == OConst) && fits32(ir_norm_imm(i.ty, i.imm))) {
+                ((int64_t*)(lz).data)[i.dst] = 1;
+                ((int64_t*)(lv).data)[i.dst] = ir_norm_imm(i.ty, i.imm);
+            } else 
+            if (i.op == OSlotAddr) {
+                ((int64_t*)(lz).data)[i.dst] = 2;
+                ((int64_t*)(lv).data)[i.dst] = i.imm;
+            } else 
+            if (i.op == OSymAddr) {
+                ((int64_t*)(lz).data)[i.dst] = 3;
+                ((const char**)(ls).data)[i.dst] = i.sym;
+            }
+        }
+    }
+    x->lazy = lz;
+    x->lval = lv;
+    x->lsym = ls;
+    x->nuse = nuse;
+}
+
+Array x64_lazy(IrFunc* f) {
+    X64 x = new_x64();
+    find_lazy((&x), f);
+    Array r = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < x.lazy.len; v++) {
+        if (((int64_t*)(x.lazy).data)[v] != 0) {
+            ({ int64_t _e = 1; arr_push(&(r), &_e); });
+        } else {
+            ({ int64_t _e = 0; arr_push(&(r), &_e); });
+        }
+    }
+    return r;
+}
+
+void x64_function(X64* x, IrFunc* f, Array regs) {
+    int64_t nv = f->vtypes.len;
+    find_lazy(x, f);
+    Array used = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < x64_saved_regs(); k++) {
+        ({ int64_t _e = 0; arr_push(&(used), &_e); });
+    }
+    for (int64_t v = 0; v < regs.len; v++) {
+        if (((((int64_t*)(regs).data)[v] >= 0) && (((int64_t*)(regs).data)[v] < x64_saved_regs())) && (((int64_t*)(x->lazy).data)[v] == 0)) {
+            ((int64_t*)(used).data)[((int64_t*)(regs).data)[v]] = 1;
+        }
+    }
+    Array saved = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < used.len; k++) {
+        if (((int64_t*)(used).data)[k] == 1) {
+            ({ int64_t _e = k; arr_push(&(saved), &_e); });
+        }
+    }
+    x->saved = saved;
+    int64_t nint = 0;
+    int64_t nflt = 0;
+    for (int64_t k = 0; k < saved.len; k++) {
+        if (((int64_t*)(saved).data)[k] < x64_int_regs()) {
+            nint += 1;
+        } else {
+            nflt += 1;
+        }
+    }
+    int64_t cur = (8 * nint);
+    cur = align_to((cur + (16 * nflt)), 16);
+    x->save_base = (0 - cur);
+    Array loc = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array isreg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < nv; v++) {
+        if (((int64_t*)(x->lazy).data)[v] != 0) {
+            ({ int64_t _e = 0; arr_push(&(loc), &_e); });
+            ({ int64_t _e = 0; arr_push(&(isreg), &_e); });
+        } else 
+        if ((v < regs.len) && (((int64_t*)(regs).data)[v] >= 0)) {
+            ({ int64_t _e = ((int64_t*)(regs).data)[v]; arr_push(&(loc), &_e); });
+            ({ int64_t _e = 1; arr_push(&(isreg), &_e); });
+        } else {
+            cur += 8;
+            ({ int64_t _e = (0 - cur); arr_push(&(loc), &_e); });
+            ({ int64_t _e = 0; arr_push(&(isreg), &_e); });
+        }
+    }
+    x->loc = loc;
+    x->isreg = isreg;
+    Array so = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t s = 0; s < f->slots.len; s++) {
+        int64_t al = ((IrSlot*)(f->slots).data)[s].align;
+        if (al > 16) {
+            al = 16;
+        }
+        cur = align_to((cur + ((IrSlot*)(f->slots).data)[s].size), al);
+        ({ int64_t _e = (0 - cur); arr_push(&(so), &_e); });
+    }
+    x->slot_off = so;
+    int64_t outgoing = 32;
+    for (int64_t k = 0; k < f->code.len; k++) {
+        if ((((Ins*)(f->code).data)[k].op == OCall) && ((8 * ((Ins*)(f->code).data)[k].args.len) > outgoing)) {
+            outgoing = (8 * ((Ins*)(f->code).data)[k].args.len);
+        }
+    }
+    int64_t frame = (align_to((cur + outgoing), 16) - (8 * nint));
+    out(x, ".p2align 4");
+    if (f->global) {
+        out(x, str_concat(".globl ", f->name));
+    }
+    out_label(x, f->name);
+    out(x, "pushq %rbp");
+    out(x, "movq %rsp, %rbp");
+    for (int64_t k = 0; k < saved.len; k++) {
+        if (((int64_t*)(saved).data)[k] < x64_int_regs()) {
+            out(x, str_concat("pushq ", reg_name(((int64_t*)(saved).data)[k])));
+        }
+    }
+    int64_t left = frame;
+    while (left > 4096) {
+        out(x, "subq $4096, %rsp");
+        out(x, "orq $0, (%rsp)");
+        left = (left - 4096);
+    }
+    if (left > 0) {
+        out(x, str_concat(str_concat("subq $", str_from_int(left)), ", %rsp"));
+    }
+    int64_t fs = 0;
+    for (int64_t k = 0; k < saved.len; k++) {
+        if (((int64_t*)(saved).data)[k] >= x64_int_regs()) {
+            out(x, str_concat(str_concat(str_concat(str_concat("movups ", reg_name(((int64_t*)(saved).data)[k])), ", "), str_from_int((x->save_base + (16 * fs)))), "(%rbp)"));
+            fs += 1;
+        }
+    }
+    const char* epilogue = str_concat(".Lret", str_from_int(x->fnum));
+    int64_t k = 0;
+    while (k < f->code.len) {
+        emit_ins(x, f, k, epilogue);
+        if ((((((((Ins*)(f->code).data)[k].op == OCmp) && ((k + 1) < f->code.len)) && (((Ins*)(f->code).data)[(k + 1)].op == OBr)) && (((Ins*)(f->code).data)[(k + 1)].a == ((Ins*)(f->code).data)[k].dst)) && (((int64_t*)(x->nuse).data)[((Ins*)(f->code).data)[k].dst] == 1)) && (((int64_t*)(x->lazy).data)[((Ins*)(f->code).data)[k].dst] == 0)) {
+            k += 1;
+        }
+        k += 1;
+    }
+    out_label(x, epilogue);
+    fs = 0;
+    for (int64_t k2 = 0; k2 < saved.len; k2++) {
+        if (((int64_t*)(saved).data)[k2] >= x64_int_regs()) {
+            out(x, str_concat(str_concat(str_concat("movups ", str_from_int((x->save_base + (16 * fs)))), "(%rbp), "), reg_name(((int64_t*)(saved).data)[k2])));
+            fs += 1;
+        }
+    }
+    if (nint > 0) {
+        out(x, str_concat(str_concat("leaq ", str_from_int((0 - (8 * nint)))), "(%rbp), %rsp"));
+        int64_t r = (saved.len - 1);
+        while (r >= 0) {
+            if (((int64_t*)(saved).data)[r] < x64_int_regs()) {
+                out(x, str_concat("popq ", reg_name(((int64_t*)(saved).data)[r])));
+            }
+            r -= 1;
+        }
+        out(x, "popq %rbp");
+    } else {
+        out(x, "leave");
+    }
+    out(x, "ret");
+    x->fnum += 1;
+}
+
+void x64_begin(X64* x) {
+    ({ const char* _e = "# Generated by stratac (x86-64, Windows). Do not edit.\n"; arr_push(&(x->out), &_e); });
+    out(x, ".text");
+}
+
+const char* x64_finish(X64* x, IrProgram* prog) {
+    if ((prog->strings.len > 0) || (x->data.len > 0)) {
+        out(x, ".section .rdata,\"dr\"");
+        for (int64_t k = 0; k < prog->strings.len; k++) {
+            ({ const char* _e = str_concat(str_concat(str_concat(((IrData*)(prog->strings).data)[k].sym, ":\n\t.asciz \""), as_text(((IrData*)(prog->strings).data)[k].text)), "\"\n"); arr_push(&(x->out), &_e); });
+        }
+        for (int64_t k = 0; k < x->data.len; k++) {
+            ({ const char* _e = ((const char**)(x->data).data)[k]; arr_push(&(x->out), &_e); });
+        }
+    }
+    return strata_join((&x->out));
+}
+
+const char* native_target_why(const char* os, const char* arch) {
+    if (str_eq(os, "windows") && str_eq(arch, "x86_64")) {
+        return "";
+    }
+    return str_concat(str_concat(str_concat(str_concat("the native backend targets x86-64 Windows so far (this is ", arch), " "), os), ")");
+}
+
+NativeResult native_compile(Program prog, bool with_main, bool optimize_code) {
+    Lower* l = new_lower();
+    if (!lower_program(l, prog, with_main)) {
+        return (NativeResult){false, l->err, "", ""};
+    }
+    X64 x = new_x64();
+    x64_begin((&x));
+    Array irt = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t i = 0; i < l->prog.funcs.len; i++) {
+        IrFunc* f = (&((IrFunc*)(l->prog.funcs).data)[i]);
+        Array regs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+        if (optimize_code) {
+            optimize(f);
+            regs = alloc_regs(f, x64_regs(), x64_lazy(f));
+        }
+        x64_function((&x), f, regs);
+    }
+    const char* asm_text = x64_finish((&x), (&l->prog));
+    return (NativeResult){true, "", asm_text, ir_program_text((&l->prog))};
+}
+
 bool is_text_kind(TokKind k) {
     switch (k) {
         case TkIdent:
@@ -6222,6 +11318,10 @@ const char* host_os(void) {
     return strata_host_os();
 }
 
+const char* host_arch(void) {
+    return strata_host_arch();
+}
+
 bool is_space(char c) {
     return (((c == ' ') || (c == '\t')) || (c == '\r'));
 }
@@ -6494,7 +11594,7 @@ const char* dll_ext(void) {
 
 BuildSpec spec_for_file(const char* path, const char* version, bool quiet) {
     const char* stem = stem_of(path);
-    return (BuildSpec){path, str_concat(stem, ".c"), str_concat(stem, exe_ext()), false, true, no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), "", false, quiet, version, false};
+    return (BuildSpec){path, str_concat(stem, ".c"), str_concat(stem, exe_ext()), false, true, no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), "", false, quiet, version, false, "auto"};
 }
 
 BuildSpec spec_for_project(Project p, const char* version, bool release, bool force, bool quiet) {
@@ -6504,7 +11604,7 @@ BuildSpec spec_for_project(Project p, const char* version, bool release, bool fo
     if (str_eq(p.output, "dll")) {
         ext = dll_ext();
     }
-    BuildSpec s = (BuildSpec){str_concat(str_concat(root, "/"), p.entry), str_concat(str_concat(str_concat(out, "/"), p.name), ".c"), str_concat(str_concat(str_concat(out, "/"), p.name), ext), str_eq(p.output, "dll"), (release || p.release), p.defines, no_strings(), no_strings(), p.libs, no_strings(), p.frameworks, str_concat(out, "/.strata-cache"), force, quiet, version, p.split};
+    BuildSpec s = (BuildSpec){str_concat(str_concat(root, "/"), p.entry), str_concat(str_concat(str_concat(out, "/"), p.name), ".c"), str_concat(str_concat(str_concat(out, "/"), p.name), ext), str_eq(p.output, "dll"), (release || p.release), p.defines, no_strings(), no_strings(), p.libs, no_strings(), p.frameworks, str_concat(out, "/.strata-cache"), force, quiet, version, p.split, "auto"};
     for (int64_t i = 0; i < p.include_dirs.len; i++) {
         ({ const char* _e = str_concat(str_concat(root, "/"), ((const char**)(p.include_dirs).data)[i]); arr_push(&(s.include_dirs), &_e); });
     }
@@ -6582,6 +11682,36 @@ Array dll_link_args(const char* out_bin, bool in_rsp) {
     return a;
 }
 
+Array os_link_args(Program prog, BuildSpec s) {
+    Array a = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    bool window = false;
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        Decl* d = ((Decl**)(prog.decls).data)[i];
+        if ((d->kind == DcInclude) && str_eq(basename_of(d->path), "crossplatform.h")) {
+            window = true;
+        }
+    }
+    for (int64_t i = 0; i < s.defines.len; i++) {
+        const char* def = ((const char**)(s.defines).data)[i];
+        if (str_eq(def, "STRATA_CROSSPLATFORM_NO_WINDOW") || ((str_len(def) > 31) && str_eq(str_sub(def, 0, 31), "STRATA_CROSSPLATFORM_NO_WINDOW="))) {
+            window = false;
+        }
+    }
+    if (window) {
+        const char* os = host_os();
+        if (str_eq(os, "windows")) {
+            ({ const char* _e = "-luser32"; arr_push(&(a), &_e); });
+        } else 
+        if (str_eq(os, "macos")) {
+            ({ const char* _e = "-framework"; arr_push(&(a), &_e); });
+            ({ const char* _e = "Cocoa"; arr_push(&(a), &_e); });
+        } else {
+            ({ const char* _e = "-lX11"; arr_push(&(a), &_e); });
+        }
+    }
+    return a;
+}
+
 const char* guard_for(const char* name) {
     const char* upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const char* lower = "abcdefghijklmnopqrstuvwxyz";
@@ -6616,6 +11746,23 @@ bool run_build(BuildSpec s, const char* libdir) {
         Stmt* st = ((Stmt**)(prog.main).data)[0];
         strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(basename_of(s.entry), ":"), str_from_int(st->line)), ":"), str_from_int(st->col)), ": error: a dll has no main, so its entry file can't contain top-level code"));
         return false;
+    }
+    if (!str_eq(s.backend, "c")) {
+        const char* why = native_target_why(host_os(), host_arch());
+        if (str_eq(why, "") && s.dll) {
+            why = "the native backend doesn't build dlls yet";
+        }
+        if (str_eq(why, "")) {
+            NativeResult nr = native_compile(prog, true, s.release);
+            if (nr.ok) {
+                return native_build(s, libdir, prog, nr.asm_text);
+            }
+            why = nr.why;
+        }
+        if (str_eq(s.backend, "native")) {
+            strata_report(str_concat(str_concat(str_concat(basename_of(s.entry), ": error: can't build natively: "), why), " (use --backend c)"));
+            return false;
+        }
     }
     if (s.split) {
         return run_split_build(s, libdir, prog);
@@ -6665,6 +11812,10 @@ bool run_build(BuildSpec s, const char* libdir) {
         ({ const char* _e = "-framework"; arr_push(&(argv), &_e); });
         ({ const char* _e = ((const char**)(s.frameworks).data)[i]; arr_push(&(argv), &_e); });
     }
+    Array oa = os_link_args(prog, s);
+    for (int64_t i = 0; i < oa.len; i++) {
+        ({ const char* _e = ((const char**)(oa).data)[i]; arr_push(&(argv), &_e); });
+    }
     if (s.dll) {
         Array da = dll_link_args(s.out_bin, false);
         for (int64_t i = 0; i < da.len; i++) {
@@ -6713,6 +11864,72 @@ bool run_build(BuildSpec s, const char* libdir) {
     }
     if (!s.quiet) {
         strata_report(str_concat("built ", s.out_bin));
+    }
+    return true;
+}
+
+bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text) {
+    const char* asm_file = str_concat(stem_of(s.out_c), ".s");
+    Array argv = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = strata_cc(); arr_push(&(argv), &_e); });
+    ({ const char* _e = "-O2"; arr_push(&(argv), &_e); });
+    ({ const char* _e = asm_file; arr_push(&(argv), &_e); });
+    ({ const char* _e = str_concat(libdir, "/srt.c"); arr_push(&(argv), &_e); });
+    ({ const char* _e = str_concat("-I", libdir); arr_push(&(argv), &_e); });
+    for (int64_t i = 0; i < s.c_sources.len; i++) {
+        ({ const char* _e = ((const char**)(s.c_sources).data)[i]; arr_push(&(argv), &_e); });
+    }
+    for (int64_t i = 0; i < s.include_dirs.len; i++) {
+        ({ const char* _e = str_concat("-I", ((const char**)(s.include_dirs).data)[i]); arr_push(&(argv), &_e); });
+    }
+    for (int64_t i = 0; i < s.defines.len; i++) {
+        ({ const char* _e = str_concat("-D", ((const char**)(s.defines).data)[i]); arr_push(&(argv), &_e); });
+    }
+    for (int64_t i = 0; i < s.lib_dirs.len; i++) {
+        ({ const char* _e = str_concat("-L", ((const char**)(s.lib_dirs).data)[i]); arr_push(&(argv), &_e); });
+    }
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        if (((Decl**)(prog.decls).data)[i]->kind == DcLink) {
+            ({ const char* _e = str_concat("-l", ((Decl**)(prog.decls).data)[i]->path); arr_push(&(argv), &_e); });
+        }
+    }
+    for (int64_t i = 0; i < s.libs.len; i++) {
+        ({ const char* _e = str_concat("-l", ((const char**)(s.libs).data)[i]); arr_push(&(argv), &_e); });
+    }
+    Array oa = os_link_args(prog, s);
+    for (int64_t i = 0; i < oa.len; i++) {
+        ({ const char* _e = ((const char**)(oa).data)[i]; arr_push(&(argv), &_e); });
+    }
+    ({ const char* _e = "-o"; arr_push(&(argv), &_e); });
+    ({ const char* _e = s.out_bin; arr_push(&(argv), &_e); });
+    const char* cmd = spaced(argv);
+    const char* key = "";
+    if (!str_eq(s.cache_file, "")) {
+        const char* all = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(asm_text, "\n"), cmd), "\n"), s.tool_version), "\n"), strata_read_file(str_concat(libdir, "/srt.c")));
+        for (int64_t i = 0; i < s.c_sources.len; i++) {
+            all = str_concat(str_concat(all, "\n"), strata_read_file(((const char**)(s.c_sources).data)[i]));
+        }
+        key = fingerprint(all);
+        if (((!s.force) && str_eq(strata_read_file(s.cache_file), key)) && file_present(s.out_bin)) {
+            if (!s.quiet) {
+                strata_report(str_concat("up to date: ", s.out_bin));
+            }
+            return true;
+        }
+        const char* dir = dirname_of(asm_file);
+        if (!str_eq(dir, ".")) {
+            strata_make_dirs(dir);
+        }
+    }
+    strata_write_file(asm_file, asm_text);
+    if (strata_run_argv((&argv)) != 0) {
+        return false;
+    }
+    if (!str_eq(s.cache_file, "")) {
+        strata_write_file(s.cache_file, key);
+    }
+    if (!s.quiet) {
+        strata_report(str_concat(str_concat("built ", s.out_bin), " (native)"));
     }
     return true;
 }
@@ -6853,6 +12070,10 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     for (int64_t i = 0; i < s.frameworks.len; i++) {
         ({ const char* _e = str_concat(str_concat("-framework ", ((const char**)(s.frameworks).data)[i]), "\n"); arr_push(&(args), &_e); });
     }
+    Array oa = os_link_args(prog, s);
+    for (int64_t i = 0; i < oa.len; i++) {
+        ({ const char* _e = str_concat(((const char**)(oa).data)[i], "\n"); arr_push(&(args), &_e); });
+    }
     if (s.dll) {
         Array da = dll_link_args(s.out_bin, true);
         for (int64_t i = 0; i < da.len; i++) {
@@ -6922,7 +12143,7 @@ BuildSpec target_spec(Target t, const char* version, bool release, bool force, b
 }
 
 const char* stratac_version(void) {
-    return "1.6.0 (cross-platform)";
+    return "2.0.0 (native)";
 }
 
 bool file_exists(const char* p) {
@@ -7008,19 +12229,45 @@ int64_t cmd_emit(const char* path) {
     return 0;
 }
 
-BuildSpec cli_spec(Target t, bool release, bool force, bool quiet) {
-    return target_spec(t, stratac_version(), release, force, quiet);
+int64_t cmd_native(const char* path, bool show_ir, bool opt) {
+    LoadResult lr = load_program(path);
+    if (!lr.ok) {
+        return 1;
+    }
+    Program prog = lr.prog;
+    Checker* ck = new_checker(basename_of(path));
+    ck_check(ck, prog);
+    if (ck->had_error) {
+        return 1;
+    }
+    NativeResult nr = native_compile(prog, true, opt);
+    if (!nr.ok) {
+        printf("%s\n", str_concat(str_concat(basename_of(path), ": error: can't compile natively: "), nr.why));
+        return 1;
+    }
+    if (show_ir) {
+        printf(("%s"), (nr.ir));
+    } else {
+        printf(("%s"), (nr.asm_text));
+    }
+    return 0;
 }
 
-int64_t cmd_build(Target t, const char* libdir, bool release, bool force) {
-    if (run_build(cli_spec(t, release, force, false), libdir)) {
+BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend) {
+    BuildSpec s = target_spec(t, stratac_version(), release, force, quiet);
+    s.backend = backend;
+    return s;
+}
+
+int64_t cmd_build(Target t, const char* libdir, bool release, bool force, const char* backend) {
+    if (run_build(cli_spec(t, release, force, false, backend), libdir)) {
         return 0;
     }
     return 1;
 }
 
-int64_t cmd_run(Target t, const char* libdir, bool release, bool force, Array prog_args) {
-    BuildSpec spec = cli_spec(t, release, force, true);
+int64_t cmd_run(Target t, const char* libdir, bool release, bool force, const char* backend, Array prog_args) {
+    BuildSpec spec = cli_spec(t, release, force, true, backend);
     if (spec.dll) {
         printf("%s\n", "error: this project builds a dll; there's nothing to run");
         return 1;
@@ -7070,15 +12317,20 @@ int64_t usage(void) {
     printf("%s\n", "stratac - the Strata compiler");
     printf("%s\n", "usage:");
     printf("%s\n", "  stratac new    <name>            create a project (strata.toml + src/main.strata)");
-    printf("%s\n", "  stratac run    [target] [--release] [--force] [-- args]   build and run");
-    printf("%s\n", "  stratac build  [target] [--release] [--force]             build an exe or dll");
+    printf("%s\n", "  stratac run    [target] [--release] [--force] [--backend b] [-- args]   build and run");
+    printf("%s\n", "  stratac build  [target] [--release] [--force] [--backend b]             build an exe or dll");
     printf("%s\n", "  stratac check  [target]          type-check only");
     printf("%s\n", "  stratac emit   [target]          print the generated C");
+    printf("%s\n", "  stratac asm    [target] [--release]   print the generated assembly (native backend)");
+    printf("%s\n", "  stratac ir     [target] [--release]   print the native backend's IR");
     printf("%s\n", "  stratac ast    <file.strata>     parse and print the AST");
     printf("%s\n", "  stratac tokens <file.strata>     print the token stream");
     printf("%s\n", "");
     printf("%s\n", "target: a .strata file, a project folder, a strata.toml, or nothing (the project");
     printf("%s\n", "in the current folder). Projects are cached: unchanged builds skip the C compiler.");
+    printf("%s\n", "");
+    printf("%s\n", "backend: native (Strata's own x86-64 code; --release optimizes it), c (C, then gcc),");
+    printf("%s\n", "or auto (the default: native when it can build the program, else c).");
     return 2;
 }
 
@@ -7096,14 +12348,23 @@ int64_t dmm_main(Array args) {
     bool release = false;
     bool force = false;
     bool rest_mode = false;
+    const char* backend = "auto";
+    bool backend_next = false;
     Array prog_args = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 2; i < args.len; i++) {
         const char* a = ((const char**)(args).data)[i];
         if (rest_mode) {
             ({ const char* _e = a; arr_push(&(prog_args), &_e); });
         } else 
+        if (backend_next) {
+            backend = a;
+            backend_next = false;
+        } else 
         if (str_eq(a, "--")) {
             rest_mode = true;
+        } else 
+        if (str_eq(a, "--backend")) {
+            backend_next = true;
         } else 
         if (str_eq(a, "--release")) {
             release = true;
@@ -7119,6 +12380,10 @@ int64_t dmm_main(Array args) {
         }
     }
     const char* libdir = resolve_libdir(((const char**)(args).data)[0]);
+    if (backend_next || (((!str_eq(backend, "auto")) && (!str_eq(backend, "native"))) && (!str_eq(backend, "c")))) {
+        printf("%s\n", "error: --backend takes native, c or auto");
+        return 2;
+    }
     if (str_eq(cmd, "new")) {
         if (!have_target) {
             printf("%s\n", "usage: stratac new <name>");
@@ -7135,7 +12400,7 @@ int64_t dmm_main(Array args) {
         }
         return cmd_ast(target);
     }
-    if ((((!str_eq(cmd, "check")) && (!str_eq(cmd, "emit"))) && (!str_eq(cmd, "build"))) && (!str_eq(cmd, "run"))) {
+    if ((((((!str_eq(cmd, "check")) && (!str_eq(cmd, "emit"))) && (!str_eq(cmd, "asm"))) && (!str_eq(cmd, "ir"))) && (!str_eq(cmd, "build"))) && (!str_eq(cmd, "run"))) {
         return usage();
     }
     Target t = resolve_target(target);
@@ -7148,10 +12413,16 @@ int64_t dmm_main(Array args) {
     if (str_eq(cmd, "emit")) {
         return cmd_emit(t.file);
     }
-    if (str_eq(cmd, "build")) {
-        return cmd_build(t, libdir, release, force);
+    if (str_eq(cmd, "asm")) {
+        return cmd_native(t.file, false, release);
     }
-    return cmd_run(t, libdir, release, force, prog_args);
+    if (str_eq(cmd, "ir")) {
+        return cmd_native(t.file, true, release);
+    }
+    if (str_eq(cmd, "build")) {
+        return cmd_build(t, libdir, release, force, backend);
+    }
+    return cmd_run(t, libdir, release, force, backend, prog_args);
 }
 
 int main(int strata_argc_, char** strata_argv_) {

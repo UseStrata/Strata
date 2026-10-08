@@ -336,6 +336,8 @@ BinParts gen_binary(Codegen* cg, Expr* e, string b) {
         cg.had_error = true
         return BinParts{ "", "" }
     }
+    // a C integer literal is a 32-bit int, a Strata one 64-bit: `1 << 40` must not overflow
+    if e.text == "<<" && e.a.kind == ExIntLit { return BinParts{ "((int64_t)", " << " + b + ")" } }
     return BinParts{ "(", " " + e.text + " " + b + ")" }
 }
 

@@ -1,0 +1,98 @@
+// abi.strata - calling conventions and arithmetic corners: what the native backend must
+// get exactly right (it prints the same as the C backend's build).
+
+struct Small { i32 a; i32 b }              // 8 bytes: passed in a register
+struct Odd { u8 a; u8 b; u8 c }            // 3 bytes: passed by pointer to a copy
+struct Big { int a; int b; int c; float f } // 32 bytes: by pointer, returned through one
+
+Small make_small(int a, int b) { return Small{ cast<i32>(a), cast<i32>(b) } }
+int sum_small(Small s) { return s.a + s.b }
+Odd make_odd(u8 a) { return Odd{ a, a + 1, a + 2 } }
+int sum_odd(Odd o) { return o.a + o.b + o.c }
+Big make_big(int x) { return Big{ x, x * 2, x * 3, 0.5 } }
+float big_total(Big b) { return cast<float>(b.a + b.b + b.c) + b.f }
+
+// the callee changes its copy; the caller's value must not change
+int bump(Big b) { b.a = 1000; return b.a }
+
+// seven arguments: four in registers, three on the stack; floats mixed in
+float mix(int a, float b, int c, f64 d, i32 e, float f, u8 g) {
+    return cast<float>(a) + b + cast<float>(c) + cast<float>(d) + cast<float>(e) + f + cast<float>(g)
+}
+f64 halve(f64 x) { return x / 2.0 }
+vec3 scale3(vec3 v, float s) { return v * s }
+vec2 swap2(vec2 v) { return vec2(v.y, v.x) }
+
+print(sum_small(make_small(3, 4)))         // 7
+print(sum_odd(make_odd(10)))               // 33
+print(big_total(make_big(2)))              // 12.5
+var big = make_big(5)
+print(bump(big))                           // 1000
+print(big.a)                               // 5
+print(mix(1, 2.5, 3, 4.25, 5, 6.5, 7))     // 29.25
+print(halve(5.0))                          // 2.5
+var v = scale3(vec3(1, 2, 3), 2.0)
+print(v.z)                                 // 6
+var w = swap2(vec2(1, 9))
+print(w.x)                                 // 9
+
+// narrow and unsigned integers wrap like C's
+u8 b = 250
+b += 10
+print(b)                                   // 4
+i8 sb = 127
+sb += 1
+print(sb)                                  // -128
+i32 big32 = 2147483647
+big32 += 1
+print(big32)                               // -2147483648
+u64 h = 1469598103934665603
+h = h * 1099511628211
+print(cast<int>(h))                        // -3876273466924498567 or so
+u32 m = 4000000000
+print(m / 3)                               // 1333333333
+print(m % 7)                               // 4000000000 % 7
+print(0 - 7 / 2)                           // -3
+print((0 - 7) % 3)                         // -1
+print((0 - 16) >> 2)                       // -4
+u64 big_u = cast<u64>(0 - 1)
+print(cast<int>(big_u >> 60))              // 15
+print(1 << 40)                             // 1099511627776
+print(~5)                                  // -6
+print(6 & 3 | 8 ^ 1)                       // 11
+
+// floats: comparisons, NaN-free conversions, negation
+float neg = 0.0 - 2.5
+print(0.0 - neg)                           // 2.5
+print(cast<int>(neg))                      // -2
+print(neg < 0.0)                           // 1
+print(neg >= 0.0)                          // 0
+print(cast<f64>(1.0) / 3.0)                // 0.333333
+
+// chars and strings
+string s = "abc"
+print(cast<int>(s[1]))                     // 98
+char c = 'z'
+print(c > 'a')                             // 1
+print(s + "!" == "abc!")                   // 1
+print(substr("hello", 1, 3))               // ell
+print(int_to_str(0 - 42) + "x")            // -42x
+
+// short-circuit evaluation
+bool t(int k) { return k > 0 }
+print(t(1) && t(2))                        // 1
+print(t(0) && t(2))                        // 0
+print(t(0) || t(3))                        // 1
+
+// pointers and addresses
+int x = 5
+int* px = &x
+*px = 9
+print(x)                                   // 9
+var arr = [1, 2, 3]
+arr.push(4)
+
+print(arr.len)                             // 4
+int* first = &arr[0]
+*first = 40
+print(arr[0])                              // 40

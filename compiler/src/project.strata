@@ -56,6 +56,8 @@ export struct Project {
 // The platform stratac is running on: "windows", "macos" or "linux" (lib/crossplatform.h).
 // Picks the [windows] / [linux] / [macos] section of a project file.
 export string host_os() { return strata_host_os() }
+// The CPU stratac runs on (and, so far, builds for): "x86_64", "arm64" or "unknown".
+export string host_arch() { return strata_host_arch() }
 
 // ---- small string helpers --------------------------------------------------
 

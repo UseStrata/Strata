@@ -95,6 +95,8 @@ static inline const char* strata_join(const Array* parts) {
 
 /* "windows", "macos" or "linux" */
 static inline const char* strata_host_os(void) { return PlatformName(); }
+/* "x86_64", "arm64" or "unknown" */
+static inline const char* strata_host_arch(void) { return PlatformArch(); }
 
 /* The C compiler builds run: $STRATA_CC if set (one program name or path, e.g. "clang"),
  * else gcc on Windows (MinGW) and cc elsewhere (gcc or clang). */

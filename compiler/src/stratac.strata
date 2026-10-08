@@ -87,19 +87,35 @@ int cmd_emit(string path) {
     return 0
 }
 
-BuildSpec cli_spec(Target t, bool release, bool force, bool quiet) {
-    return target_spec(t, stratac_version(), release, force, quiet)
+// `stratac asm` / `stratac ir`: the native backend's output (`opt`: optimized)
+int cmd_native(string path, bool show_ir, bool opt) {
+    LoadResult lr = load_program(path)
+    if (!lr.ok) { return 1; }
+    Program prog = lr.prog
+    Checker* ck = new_checker(basename_of(path))
+    ck_check(ck, prog)
+    if (ck.had_error) { return 1; }
+    NativeResult nr = native_compile(prog, true, opt)
+    if !nr.ok { print(basename_of(path) + ": error: can't compile natively: " + nr.why); return 1 }
+    if show_ir { printf(cstr("%s"), cstr(nr.ir)) } else { printf(cstr("%s"), cstr(nr.asm_text)) }
+    return 0
+}
+
+BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, string backend) {
+    BuildSpec s = target_spec(t, stratac_version(), release, force, quiet)
+    s.backend = backend
+    return s
 }
 
 // ---- build / run / new --------------------------------------------------------
 
-int cmd_build(Target t, string libdir, bool release, bool force) {
-    if run_build(cli_spec(t, release, force, false), libdir) { return 0 }
+int cmd_build(Target t, string libdir, bool release, bool force, string backend) {
+    if run_build(cli_spec(t, release, force, false, backend), libdir) { return 0 }
     return 1
 }
 
-int cmd_run(Target t, string libdir, bool release, bool force, string[dynamic] prog_args) {
-    BuildSpec spec = cli_spec(t, release, force, true)
+int cmd_run(Target t, string libdir, bool release, bool force, string backend, string[dynamic] prog_args) {
+    BuildSpec spec = cli_spec(t, release, force, true, backend)
     if spec.dll { print("error: this project builds a dll; there's nothing to run"); return 1 }
     if !run_build(spec, libdir) { return 1 }
     // a bare `prog` would be searched for on PATH, not in the current folder
@@ -148,15 +164,20 @@ int usage() {
     print("stratac - the Strata compiler")
     print("usage:")
     print("  stratac new    <name>            create a project (strata.toml + src/main.strata)")
-    print("  stratac run    [target] [--release] [--force] [-- args]   build and run")
-    print("  stratac build  [target] [--release] [--force]             build an exe or dll")
+    print("  stratac run    [target] [--release] [--force] [--backend b] [-- args]   build and run")
+    print("  stratac build  [target] [--release] [--force] [--backend b]             build an exe or dll")
     print("  stratac check  [target]          type-check only")
     print("  stratac emit   [target]          print the generated C")
+    print("  stratac asm    [target] [--release]   print the generated assembly (native backend)")
+    print("  stratac ir     [target] [--release]   print the native backend's IR")
     print("  stratac ast    <file.strata>     parse and print the AST")
     print("  stratac tokens <file.strata>     print the token stream")
     print("")
     print("target: a .strata file, a project folder, a strata.toml, or nothing (the project")
     print("in the current folder). Projects are cached: unchanged builds skip the C compiler.")
+    print("")
+    print("backend: native (Strata's own x86-64 code; --release optimizes it), c (C, then gcc),")
+    print("or auto (the default: native when it can build the program, else c).")
     return 2
 }
 
@@ -174,17 +195,25 @@ int dmm_main(string[dynamic] args) {
     bool release = false
     bool force = false
     bool rest_mode = false
+    string backend = "auto"
+    bool backend_next = false
     string[dynamic] prog_args = []
     for i in 2..args.len {
         string a = args[i]
         if rest_mode { prog_args.push(a) }
+        else if backend_next { backend = a; backend_next = false }
         else if a == "--" { rest_mode = true }
+        else if a == "--backend" { backend_next = true }
         else if a == "--release" { release = true }
         else if a == "--force" { force = true }
         else if !have_target { target = a; have_target = true }
         else { prog_args.push(a) }
     }
     string libdir = resolve_libdir(args[0])
+    if backend_next || (backend != "auto" && backend != "native" && backend != "c") {
+        print("error: --backend takes native, c or auto")
+        return 2
+    }
 
     if cmd == "new" {
         if !have_target { print("usage: stratac new <name>"); return 2 }
@@ -195,14 +224,16 @@ int dmm_main(string[dynamic] args) {
         if cmd == "tokens" { return cmd_tokens(target) }
         return cmd_ast(target)
     }
-    if cmd != "check" && cmd != "emit" && cmd != "build" && cmd != "run" { return usage() }
+    if cmd != "check" && cmd != "emit" && cmd != "asm" && cmd != "ir" && cmd != "build" && cmd != "run" { return usage() }
 
     Target t = resolve_target(target)
     if !t.ok { return 1 }
     if cmd == "check" { return cmd_check(t.file) }
     if cmd == "emit"  { return cmd_emit(t.file) }
-    if cmd == "build" { return cmd_build(t, libdir, release, force) }
-    return cmd_run(t, libdir, release, force, prog_args)
+    if cmd == "asm"   { return cmd_native(t.file, false, release) }
+    if cmd == "ir"    { return cmd_native(t.file, true, release) }
+    if cmd == "build" { return cmd_build(t, libdir, release, force, backend) }
+    return cmd_run(t, libdir, release, force, backend, prog_args)
 }
 
 // entry point (translated from D--'s `int main(str[] args)`)

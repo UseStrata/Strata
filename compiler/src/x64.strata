@@ -1,0 +1,762 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/x64.strata - IR -> x86-64 assembly (GNU as, AT&T syntax) for Windows x64. CORE.
+//
+// The first native target. Each function gets a frame:
+//
+//     [rbp + 16 ...]   incoming arguments 5+ (above the caller's 32-byte shadow space)
+//     [rbp + 8]        return address
+//     [rbp]            the caller's rbp
+//     [rbp - ...]      saved callee-saved registers, vregs the register allocator left in
+//                      memory, stack slots
+//     [rsp ...]        outgoing arguments (32 bytes of shadow space, then arguments 5+)
+//
+// Registers: the allocator (opt.strata, `alloc_regs`) may give a vreg one of the
+// callee-saved registers (rbx, rsi, rdi, r12-r15 / xmm6-xmm15), which calls leave alone,
+// or - if it doesn't live across a call - r10, xmm4 or xmm5; the rest live in memory.
+// rax, rcx, rdx, r8, r11 and xmm0-xmm1 are the emitter's own scratch.
+//
+// Some vregs never need a home at all ("lazy"): a single-definition integer constant that
+// fits in 32 bits is used as an immediate; the address of a stack slot or of data is
+// folded into the memory operand that uses it (or made with `lea` where it's needed).
+// Every read of an integer vreg therefore goes through `src` / `get`, never `opnd`.
+//
+// A comparison whose only use is the branch right after it becomes compare + jump.
+//
+// The Windows x64 convention: arguments 1-4 in rcx, rdx, r8, r9 (or xmm0-3 for floats, by
+// position), the rest on the stack; results in rax / xmm0; the stack 16-byte aligned at
+// every call; a frame bigger than a page touches each page in order (the guard page).
+
+import ir
+import opt     // RegSet
+import "strata_host.h"   // strata_join
+
+export struct X64 {
+    string[dynamic] out
+    string[dynamic] data
+    int             floats      // float constants handed out
+    int             fnum        // the function being emitted (for local label names)
+    int             loops       // copy loops handed out
+    // the function being emitted
+    int[dynamic]    loc         // per vreg: its rbp offset (negative), or its register number
+    int[dynamic]    isreg       // per vreg: 1 if `loc` is a register
+    int[dynamic]    lazy        // per vreg: 0 normal, 1 immediate, 2 slot address, 3 data address
+    int[dynamic]    lval        // per lazy vreg: the immediate / the slot number
+    string[dynamic] lsym        // per lazy vreg: the data symbol
+    int[dynamic]    nuse        // per vreg: how many operands read it
+    int[dynamic]    slot_off    // per slot: its rbp offset
+    int[dynamic]    saved       // callee-saved registers this function uses (register numbers)
+    int             save_base   // rbp offset of the xmm save area
+}
+
+export X64 new_x64() {
+    string[dynamic] o = []
+    string[dynamic] d = []
+    int[dynamic] a = []
+    int[dynamic] r = []
+    int[dynamic] lz = []
+    int[dynamic] lv = []
+    string[dynamic] ls = []
+    int[dynamic] nu = []
+    int[dynamic] b = []
+    int[dynamic] c = []
+    return X64{ o, d, 0, 0, 0, a, r, lz, lv, ls, nu, b, c, 0 }
+}
+
+void out(X64* x, string s) { x.out.push("\t" + s + "\n") }
+void out_label(X64* x, string s) { x.out.push(s + ":\n") }
+
+int align_to(int n, int a) { return (n + a - 1) / a * a }
+
+// ---- registers --------------------------------------------------------------------------
+// Allocatable registers are numbered (see RegSet): 0-6 integer callee-saved, 7-16
+// xmm6-xmm15 (callee-saved), 17 r10, 18-19 xmm4-xmm5 (both scratch).
+
+export RegSet x64_regs() { return RegSet{ 7, 10, 1, 2 } }
+int x64_int_regs() { return 7 }
+int x64_saved_regs() { return 17 }   // registers below this number must be saved if used
+
+string reg_name(int k) {
+    if k == 17 { return "%r10" }
+    if k == 18 { return "%xmm4" }
+    if k == 19 { return "%xmm5" }
+    if k == 0 { return "%rbx" }
+    if k == 1 { return "%rsi" }
+    if k == 2 { return "%rdi" }
+    if k == 3 { return "%r12" }
+    if k == 4 { return "%r13" }
+    if k == 5 { return "%r14" }
+    if k == 6 { return "%r15" }
+    return "%xmm" + int_to_str(k - 7 + 6)
+}
+
+bool in_reg(X64* x, int v) { return x.isreg[v] == 1 }
+int reg_of(X64* x, int v) { return x.loc[v] }
+
+// A vreg's home: its register or its memory (for writing it, and for float reads).
+string opnd(X64* x, int v) {
+    if in_reg(x, v) { return reg_name(reg_of(x, v)) }
+    return int_to_str(x.loc[v]) + "(%rbp)"
+}
+
+// The 32/16/8-bit names of an integer register.
+string sub_reg(string r, int size) {
+    if size == 8 { return r }
+    if r == "%rax" || r == "%rbx" || r == "%rcx" || r == "%rdx" {
+        string c = substr(r, 2, 1)   // a b c d
+        if size == 4 { return "%e" + c + "x" }
+        if size == 2 { return "%" + c + "x" }
+        return "%" + c + "l"
+    }
+    if r == "%rsi" || r == "%rdi" {
+        string c = substr(r, 2, 2)   // si di
+        if size == 4 { return "%e" + c }
+        if size == 2 { return "%" + c }
+        return "%" + c + "l"
+    }
+    // %r8 .. %r15
+    if size == 4 { return r + "d" }
+    if size == 2 { return r + "w" }
+    return r + "b"
+}
+
+string fsuf(int ty) { if ty == KF64 { return "sd" } return "ss" }
+
+// ---- reading and writing vregs -------------------------------------------------------------
+
+string slot_mem(X64* x, int slot, int off) { return int_to_str(x.slot_off[slot] + off) + "(%rbp)" }
+
+// An integer vreg as an instruction's SOURCE operand: an immediate, its register or memory.
+// (A lazy address is made in %r11.)
+string src(X64* x, int v) {
+    int lz = x.lazy[v]
+    if lz == 1 { return "$" + int_to_str(x.lval[v]) }
+    if lz == 2 { out(x, "leaq " + slot_mem(x, x.lval[v], 0) + ", %r11"); return "%r11" }
+    if lz == 3 { out(x, "leaq " + x.lsym[v] + "(%rip), %r11"); return "%r11" }
+    return opnd(x, v)
+}
+
+// integer vreg v -> register r
+void get(X64* x, int v, string r) {
+    int lz = x.lazy[v]
+    if lz == 1 {
+        if x.lval[v] == 0 { out(x, "xorl " + sub_reg(r, 4) + ", " + sub_reg(r, 4)) }
+        else { out(x, "movq $" + int_to_str(x.lval[v]) + ", " + r) }
+    } else if lz == 2 { out(x, "leaq " + slot_mem(x, x.lval[v], 0) + ", " + r) }
+    else if lz == 3 { out(x, "leaq " + x.lsym[v] + "(%rip), " + r) }
+    else if opnd(x, v) != r { out(x, "movq " + opnd(x, v) + ", " + r) }
+}
+// register r -> integer vreg v
+void put(X64* x, string r, int v) {
+    string o = opnd(x, v)
+    if o != r { out(x, "movq " + r + ", " + o) }
+}
+// float vreg v <-> xmm register r
+void fget(X64* x, int ty, int v, string r) {
+    if in_reg(x, v) { if opnd(x, v) != r { out(x, "movaps " + opnd(x, v) + ", " + r) } }
+    else { out(x, "mov" + fsuf(ty) + " " + opnd(x, v) + ", " + r) }
+}
+void fput(X64* x, int ty, string r, int v) {
+    if in_reg(x, v) { if opnd(x, v) != r { out(x, "movaps " + r + ", " + opnd(x, v)) } }
+    else { out(x, "mov" + fsuf(ty) + " " + r + ", " + opnd(x, v)) }
+}
+
+// The memory at address-vreg a + off, as an operand (uses %rax if a must be loaded).
+string mem_at(X64* x, int a, int off) {
+    int lz = x.lazy[a]
+    if lz == 2 { return slot_mem(x, x.lval[a], off) }
+    if lz == 3 { return x.lsym[a] + "+" + int_to_str(off) + "(%rip)" }
+    if in_reg(x, a) { return int_to_str(off) + "(" + reg_name(reg_of(x, a)) + ")" }
+    get(x, a, "%rax")
+    return int_to_str(off) + "(%rax)"
+}
+
+// The register to compute an integer result in: dst's own, unless operand b sits there.
+string work(X64* x, Ins i) {
+    if in_reg(x, i.dst) && !(i.b >= 0 && in_reg(x, i.b) && reg_of(x, i.b) == reg_of(x, i.dst)) {
+        return reg_name(reg_of(x, i.dst))
+    }
+    return "%rax"
+}
+
+// Re-establish the invariant (sign / zero extension to 64 bits) for type ty in register r.
+void norm(X64* x, int ty, string r) {
+    if ty == KI8 { out(x, "movsbq " + sub_reg(r, 1) + ", " + r) }
+    else if ty == KU8 { out(x, "movzbl " + sub_reg(r, 1) + ", " + sub_reg(r, 4)) }
+    else if ty == KI16 { out(x, "movswq " + sub_reg(r, 2) + ", " + r) }
+    else if ty == KU16 { out(x, "movzwl " + sub_reg(r, 2) + ", " + sub_reg(r, 4)) }
+    else if ty == KI32 { out(x, "movslq " + sub_reg(r, 4) + ", " + r) }
+    else if ty == KU32 { out(x, "movl " + sub_reg(r, 4) + ", " + sub_reg(r, 4)) }
+}
+
+bool fits32(int v) { return v >= 0 - 2147483648 && v <= 2147483647 }
+
+// ---- data -----------------------------------------------------------------------------------
+
+string float_const(X64* x, int ty, string text) {
+    string name = ".LCf" + int_to_str(x.floats)
+    x.floats += 1
+    if ty == KF64 { x.data.push("\t.p2align 3\n" + name + ":\n\t.double " + text + "\n") }
+    else { x.data.push("\t.p2align 2\n" + name + ":\n\t.float " + text + "\n") }
+    return name
+}
+
+// Strata string-literal text (as written) -> GNU as .ascii text: the same escapes, except
+// `\0` must be octal and `\'` needs no escape.
+string as_text(string s) {
+    string[dynamic] p = []
+    int i = 0
+    int n = s.len
+    while i < n {
+        if s[i] == '\\' && i + 1 < n {
+            if s[i + 1] == '0' { p.push("\\000") }
+            else if s[i + 1] == '\'' { p.push("'") }
+            else { p.push(substr(s, i, 2)) }
+            i += 2
+        } else {
+            p.push(substr(s, i, 1))
+            i += 1
+        }
+    }
+    return strata_join(&p)
+}
+
+// ---- instructions ------------------------------------------------------------------------------
+
+string lbl(X64* x, int n) { return ".L" + int_to_str(x.fnum) + "_" + int_to_str(n) }
+
+string int_reg_arg(int i) {
+    if i == 0 { return "%rcx" }
+    if i == 1 { return "%rdx" }
+    if i == 2 { return "%r8" }
+    return "%r9"
+}
+
+string cc_of(int cond, bool is_unsigned) {
+    if cond == CEq { return "e" }
+    if cond == CNe { return "ne" }
+    if is_unsigned {
+        if cond == CLt { return "b" }
+        if cond == CLe { return "be" }
+        if cond == CGt { return "a" }
+        return "ae"
+    }
+    if cond == CLt { return "l" }
+    if cond == CLe { return "le" }
+    if cond == CGt { return "g" }
+    return "ge"
+}
+
+int invert(int cond) {
+    if cond == CEq { return CNe }
+    if cond == CNe { return CEq }
+    if cond == CLt { return CGe }
+    if cond == CLe { return CGt }
+    if cond == CGt { return CLe }
+    return CLt
+}
+
+// memory copy / zero of `size` bytes: unrolled when small, a loop when large
+void copy_bytes(X64* x, int size, bool zero) {
+    // rax = destination, rcx = source (unless zero); rdx is the data
+    int off = 0
+    if zero { out(x, "xorl %edx, %edx") }
+    if size > 128 {
+        int words = size / 8
+        string l = ".Lm" + int_to_str(x.fnum) + "_" + int_to_str(x.loops)
+        x.loops += 1
+        out(x, "movq $" + int_to_str(words) + ", %r8")
+        out_label(x, l)
+        if !zero { out(x, "movq (%rcx), %rdx"); out(x, "addq $8, %rcx") }
+        out(x, "movq %rdx, (%rax)")
+        out(x, "addq $8, %rax")
+        out(x, "decq %r8")
+        out(x, "jnz " + l)
+        size = size - words * 8
+    }
+    while off + 8 <= size {
+        if !zero { out(x, "movq " + int_to_str(off) + "(%rcx), %rdx") }
+        out(x, "movq %rdx, " + int_to_str(off) + "(%rax)")
+        off += 8
+    }
+    if off + 4 <= size {
+        if !zero { out(x, "movl " + int_to_str(off) + "(%rcx), %edx") }
+        out(x, "movl %edx, " + int_to_str(off) + "(%rax)")
+        off += 4
+    }
+    if off + 2 <= size {
+        if !zero { out(x, "movw " + int_to_str(off) + "(%rcx), %dx") }
+        out(x, "movw %dx, " + int_to_str(off) + "(%rax)")
+        off += 2
+    }
+    if off < size {
+        if !zero { out(x, "movb " + int_to_str(off) + "(%rcx), %dl") }
+        out(x, "movb %dl, " + int_to_str(off) + "(%rax)")
+    }
+}
+
+string load_insn(int ty) {
+    if ty == KI8 { return "movsbq" }
+    if ty == KU8 { return "movzbq" }
+    if ty == KI16 { return "movswq" }
+    if ty == KU16 { return "movzwq" }
+    if ty == KI32 { return "movslq" }
+    return "movq"
+}
+
+// Jump to `t` if the flags say `cc`, else to `e` - leaving out a jump to the next label.
+void branch_cc(X64* x, string cc, string ncc, int t, int e, int next) {
+    if e == next { out(x, "j" + cc + " " + lbl(x, t)) }
+    else if t == next && ncc != "" { out(x, "j" + ncc + " " + lbl(x, e)) }
+    else { out(x, "j" + cc + " " + lbl(x, t)); out(x, "jmp " + lbl(x, e)) }
+}
+
+// Compare a and b (comparison i), then jump to t if it holds, else to e.
+void cmp_branch(X64* x, Ins i, int t, int e, int next) {
+    int ty = i.ty
+    int c = i.ty2
+    if ir_is_float(ty) {
+        string s = fsuf(ty)
+        if c == CLt || c == CLe {          // a < b  <=>  b > a  (false if either is NaN)
+            fget(x, ty, i.b, "%xmm0")
+            fget(x, ty, i.a, "%xmm1")
+        } else {
+            fget(x, ty, i.a, "%xmm0")
+            fget(x, ty, i.b, "%xmm1")
+        }
+        out(x, "ucomi" + s + " %xmm1, %xmm0")
+        if c == CGt || c == CLt { branch_cc(x, "a", "", t, e, next) }
+        else if c == CGe || c == CLe { branch_cc(x, "ae", "", t, e, next) }
+        else if c == CEq { out(x, "jp " + lbl(x, e)); branch_cc(x, "e", "ne", t, e, next) }
+        else { out(x, "jp " + lbl(x, t)); branch_cc(x, "ne", "e", t, e, next) }
+        return
+    }
+    string a = "%rax"
+    if in_reg(x, i.a) && x.lazy[i.a] == 0 { a = opnd(x, i.a) } else { get(x, i.a, "%rax") }
+    out(x, "cmpq " + src(x, i.b) + ", " + a)
+    bool u = ir_is_unsigned(ty)
+    branch_cc(x, cc_of(c, u), cc_of(invert(c), u), t, e, next)
+}
+
+void emit_ins(X64* x, IrFunc* f, int k, string epilogue) {
+    Ins i = f.code[k]
+    int t = i.ty
+    int next = 0 - 1   // the label right after this instruction, if any
+    if k + 1 < f.code.len && f.code[k + 1].op == OLabel { next = f.code[k + 1].imm }
+    if i.dst >= 0 && x.lazy[i.dst] != 0 { return }   // lazy: used where it's needed
+    switch i.op {
+        case OConst:
+            {
+                int v = ir_norm_imm(t, i.imm)
+                if fits32(v) {
+                    if in_reg(x, i.dst) && v == 0 { string r = opnd(x, i.dst); out(x, "xorl " + sub_reg(r, 4) + ", " + sub_reg(r, 4)) }
+                    else { out(x, "movq $" + int_to_str(v) + ", " + opnd(x, i.dst)) }
+                } else {
+                    out(x, "movabsq $" + int_to_str(v) + ", %rax")
+                    put(x, "%rax", i.dst)
+                }
+            }
+        case OFConst:
+            {
+                string c = float_const(x, t, i.sym)
+                if in_reg(x, i.dst) { out(x, "mov" + fsuf(t) + " " + c + "(%rip), " + opnd(x, i.dst)) }
+                else { out(x, "mov" + fsuf(t) + " " + c + "(%rip), %xmm0"); fput(x, t, "%xmm0", i.dst) }
+            }
+        case OCopy:
+            if ir_is_float(t) { fget(x, t, i.a, "%xmm0"); fput(x, t, "%xmm0", i.dst) }
+            else if in_reg(x, i.dst) { get(x, i.a, opnd(x, i.dst)) }
+            else if x.lazy[i.a] == 1 { out(x, "movq " + src(x, i.a) + ", " + opnd(x, i.dst)) }
+            else { get(x, i.a, "%rax"); put(x, "%rax", i.dst) }
+        case OAdd, OSub, OMul, OAnd, OOr, OXor:
+            if ir_is_float(t) {
+                string fop = "add"
+                if i.op == OSub { fop = "sub" } else if i.op == OMul { fop = "mul" }
+                float_op(x, i, fop)
+            } else {
+                string op = "addq"
+                if i.op == OSub { op = "subq" } else if i.op == OMul { op = "imulq" }
+                else if i.op == OAnd { op = "andq" } else if i.op == OOr { op = "orq" } else if i.op == OXor { op = "xorq" }
+                string w = work(x, i)
+                get(x, i.a, w)
+                out(x, op + " " + src(x, i.b) + ", " + w)
+                norm(x, t, w)
+                put(x, w, i.dst)
+            }
+        case ODiv, OMod:
+            if ir_is_float(t) {
+                float_op(x, i, "div")
+            } else {
+                get(x, i.a, "%rax")
+                get(x, i.b, "%rcx")
+                if ir_is_unsigned(t) { out(x, "xorl %edx, %edx"); out(x, "divq %rcx") }
+                else { out(x, "cqto"); out(x, "idivq %rcx") }
+                string r = "%rax"
+                if i.op == OMod { r = "%rdx" }
+                norm(x, t, r)
+                put(x, r, i.dst)
+            }
+        case OShl, OShr:
+            {
+                string w = work(x, i)
+                get(x, i.a, w)
+                string op = "shlq"
+                if i.op == OShr { if ir_is_unsigned(t) { op = "shrq" } else { op = "sarq" } }
+                if x.lazy[i.b] == 1 { out(x, op + " " + src(x, i.b) + ", " + w) }
+                else { get(x, i.b, "%rcx"); out(x, op + " %cl, " + w) }
+                norm(x, t, w)
+                put(x, w, i.dst)
+            }
+        case ONeg:
+            if t == KF32 { fget(x, t, i.a, "%xmm0"); out(x, "movd %xmm0, %eax"); out(x, "xorl $0x80000000, %eax"); out(x, "movd %eax, %xmm0"); fput(x, t, "%xmm0", i.dst) }
+            else if t == KF64 { fget(x, t, i.a, "%xmm0"); out(x, "movq %xmm0, %rax"); out(x, "btcq $63, %rax"); out(x, "movq %rax, %xmm0"); fput(x, t, "%xmm0", i.dst) }
+            else { string w = work(x, i); get(x, i.a, w); out(x, "negq " + w); norm(x, t, w); put(x, w, i.dst) }
+        case ONot:
+            {
+                string w = work(x, i)
+                get(x, i.a, w)
+                out(x, "notq " + w)
+                norm(x, t, w)
+                put(x, w, i.dst)
+            }
+        case OSqrt:
+            fget(x, t, i.a, "%xmm1")
+            out(x, "sqrt" + fsuf(t) + " %xmm1, %xmm0")
+            fput(x, t, "%xmm0", i.dst)
+        case OCmp:
+            {
+                // the branch right after, if it is this result's only use: compare + jump
+                if k + 1 < f.code.len && f.code[k + 1].op == OBr && f.code[k + 1].a == i.dst && x.nuse[i.dst] == 1 {
+                    int nx = 0 - 1
+                    if k + 2 < f.code.len && f.code[k + 2].op == OLabel { nx = f.code[k + 2].imm }
+                    cmp_branch(x, i, f.code[k + 1].imm, f.code[k + 1].imm2, nx)
+                } else {
+                    emit_cmp(x, i)
+                }
+            }
+        case OConv: emit_conv(x, i)
+        case OLoad:
+            if ir_is_float(t) {
+                string m = mem_at(x, i.a, i.imm)
+                if in_reg(x, i.dst) { out(x, "mov" + fsuf(t) + " " + m + ", " + opnd(x, i.dst)) }
+                else { out(x, "mov" + fsuf(t) + " " + m + ", %xmm0"); fput(x, t, "%xmm0", i.dst) }
+            } else {
+                string m = mem_at(x, i.a, i.imm)
+                string w = "%rax"
+                if in_reg(x, i.dst) { w = opnd(x, i.dst) }
+                if t == KU32 { out(x, "movl " + m + ", " + sub_reg(w, 4)) }
+                else { out(x, load_insn(t) + " " + m + ", " + w) }
+                put(x, w, i.dst)
+            }
+        case OStore:
+            {
+                string m = mem_at(x, i.a, i.imm)
+                if ir_is_float(t) {
+                    if in_reg(x, i.b) { out(x, "mov" + fsuf(t) + " " + opnd(x, i.b) + ", " + m) }
+                    else { fget(x, t, i.b, "%xmm0"); out(x, "mov" + fsuf(t) + " %xmm0, " + m) }
+                } else {
+                    int sz = ir_size(t)
+                    string mv = "movq"
+                    if sz == 1 { mv = "movb" } else if sz == 2 { mv = "movw" } else if sz == 4 { mv = "movl" }
+                    if x.lazy[i.b] == 1 { out(x, mv + " " + src(x, i.b) + ", " + m) }
+                    else if in_reg(x, i.b) && x.lazy[i.b] == 0 { out(x, mv + " " + sub_reg(opnd(x, i.b), sz) + ", " + m) }
+                    else { get(x, i.b, "%rcx"); out(x, mv + " " + sub_reg("%rcx", sz) + ", " + m) }
+                }
+            }
+        case OSlotAddr:
+            out(x, "leaq " + slot_mem(x, i.imm, 0) + ", %rax")
+            put(x, "%rax", i.dst)
+        case OSymAddr:
+            out(x, "leaq " + i.sym + "(%rip), %rax")
+            put(x, "%rax", i.dst)
+        case OCopyMem:
+            get(x, i.a, "%rax")
+            get(x, i.b, "%rcx")
+            copy_bytes(x, i.imm, false)
+        case OZeroMem:
+            get(x, i.a, "%rax")
+            copy_bytes(x, i.imm, true)
+        case OParam: emit_param(x, i)
+        case OCall: emit_call(x, f, i)
+        case ORet:
+            if i.a >= 0 {
+                int rt = f.ret_ty
+                if ir_is_float(rt) { fget(x, rt, i.a, "%xmm0") } else { get(x, i.a, "%rax") }
+            }
+            if k + 1 < f.code.len { out(x, "jmp " + epilogue) }
+        case OLabel: out_label(x, lbl(x, i.imm))
+        case OJmp: if i.imm != next { out(x, "jmp " + lbl(x, i.imm)) }
+        case OBr:
+            if x.lazy[i.a] == 1 {
+                if x.lval[i.a] != 0 { out(x, "jmp " + lbl(x, i.imm)) } else { out(x, "jmp " + lbl(x, i.imm2)) }
+            } else {
+                out(x, "cmpq $0, " + opnd(x, i.a))
+                branch_cc(x, "ne", "e", i.imm, i.imm2, next)
+            }
+        case ONop: {}
+    }
+}
+
+// dst = a op b for floats, computed in dst's own register when it can be
+void float_op(X64* x, Ins i, string fop) {
+    int t = i.ty
+    string w = "%xmm0"
+    if in_reg(x, i.dst) && !(in_reg(x, i.b) && reg_of(x, i.b) == reg_of(x, i.dst)) { w = opnd(x, i.dst) }
+    fget(x, t, i.a, w)
+    out(x, fop + fsuf(t) + " " + opnd(x, i.b) + ", " + w)
+    fput(x, t, w, i.dst)
+}
+
+void emit_cmp(X64* x, Ins i) {
+    int t = i.ty
+    if ir_is_float(t) {
+        string s = fsuf(t)
+        int c = i.ty2
+        if c == CLt || c == CLe {          // a < b  <=>  b > a  (false if either is NaN)
+            fget(x, t, i.b, "%xmm0")
+            fget(x, t, i.a, "%xmm1")
+            out(x, "ucomi" + s + " %xmm1, %xmm0")
+            if c == CLt { out(x, "seta %al") } else { out(x, "setae %al") }
+        } else {
+            fget(x, t, i.a, "%xmm0")
+            fget(x, t, i.b, "%xmm1")
+            out(x, "ucomi" + s + " %xmm1, %xmm0")
+            if c == CGt { out(x, "seta %al") }
+            else if c == CGe { out(x, "setae %al") }
+            else if c == CEq { out(x, "sete %al"); out(x, "setnp %cl"); out(x, "andb %cl, %al") }
+            else { out(x, "setne %al"); out(x, "setp %cl"); out(x, "orb %cl, %al") }
+        }
+    } else {
+        string a = "%rax"
+        if in_reg(x, i.a) && x.lazy[i.a] == 0 { a = opnd(x, i.a) } else { get(x, i.a, "%rax") }
+        out(x, "cmpq " + src(x, i.b) + ", " + a)
+        out(x, "set" + cc_of(i.ty2, ir_is_unsigned(t)) + " %al")
+    }
+    out(x, "movzbl %al, %eax")
+    put(x, "%rax", i.dst)
+}
+
+void emit_conv(X64* x, Ins i) {
+    int to = i.ty
+    int from = i.ty2
+    if ir_is_float(from) && ir_is_float(to) {
+        fget(x, from, i.a, "%xmm1")
+        out(x, "cvt" + fsuf(from) + "2" + fsuf(to) + " %xmm1, %xmm0")
+        fput(x, to, "%xmm0", i.dst)
+    } else if ir_is_float(to) {
+        get(x, i.a, "%rax")
+        out(x, "cvtsi2" + fsuf(to) + "q %rax, %xmm0")
+        fput(x, to, "%xmm0", i.dst)
+    } else if ir_is_float(from) {
+        fget(x, from, i.a, "%xmm0")
+        out(x, "cvtt" + fsuf(from) + "2siq %xmm0, %rax")
+        norm(x, to, "%rax")
+        put(x, "%rax", i.dst)
+    } else {
+        string w = "%rax"
+        if in_reg(x, i.dst) { w = opnd(x, i.dst) }
+        get(x, i.a, w)
+        norm(x, to, w)
+        put(x, w, i.dst)
+    }
+}
+
+void emit_param(X64* x, Ins i) {
+    int t = i.ty
+    int k = i.imm
+    if k < 4 {
+        if ir_is_float(t) { fput(x, t, "%xmm" + int_to_str(k), i.dst) }
+        else {
+            string r = int_reg_arg(k)
+            norm(x, t, r)
+            put(x, r, i.dst)
+        }
+    } else {
+        string m = int_to_str(16 + 8 * k) + "(%rbp)"
+        if ir_is_float(t) { out(x, "mov" + fsuf(t) + " " + m + ", %xmm0"); fput(x, t, "%xmm0", i.dst) }
+        else { out(x, "movq " + m + ", %rax"); norm(x, t, "%rax"); put(x, "%rax", i.dst) }
+    }
+}
+
+void emit_call(X64* x, IrFunc* f, Ins i) {
+    int n = i.args.len
+    // arguments 5+ go on the stack, above the shadow space
+    for k in 4..n {
+        int a = i.args[k]
+        int at = f.vtypes[a]
+        if ir_is_float(at) { fget(x, at, a, "%xmm0"); out(x, "mov" + fsuf(at) + " %xmm0, " + int_to_str(8 * k) + "(%rsp)") }
+        else if x.lazy[a] == 1 { out(x, "movq " + src(x, a) + ", " + int_to_str(8 * k) + "(%rsp)") }
+        else { get(x, a, "%rax"); out(x, "movq %rax, " + int_to_str(8 * k) + "(%rsp)") }
+    }
+    for k in 0..n {
+        if k < 4 {
+            int a = i.args[k]
+            int at = f.vtypes[a]
+            if ir_is_float(at) { fget(x, at, a, "%xmm" + int_to_str(k)) }
+            else { get(x, a, int_reg_arg(k)) }
+        }
+    }
+    out(x, "call " + i.sym)
+    if i.dst >= 0 {
+        if ir_is_float(i.ty) { fput(x, i.ty, "%xmm0", i.dst) }
+        else { norm(x, i.ty, "%rax"); put(x, "%rax", i.dst) }
+    }
+}
+
+// ---- functions ---------------------------------------------------------------------------------
+
+// Which vregs need no home (see the top): single-definition constants that fit in 32 bits,
+// slot and data addresses.
+void find_lazy(X64* x, IrFunc* f) {
+    int nv = f.vtypes.len
+    int[dynamic] ndef = []
+    int[dynamic] nuse = []
+    int[dynamic] lz = []
+    int[dynamic] lv = []
+    string[dynamic] ls = []
+    for v in 0..nv { ndef.push(0); nuse.push(0); lz.push(0); lv.push(0); ls.push("") }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op != ONop {
+            if i.dst >= 0 { ndef[i.dst] = ndef[i.dst] + 1 }
+            if i.a >= 0 { nuse[i.a] = nuse[i.a] + 1 }
+            if i.b >= 0 { nuse[i.b] = nuse[i.b] + 1 }
+            for j in 0..i.args.len { nuse[i.args[j]] = nuse[i.args[j]] + 1 }
+        }
+    }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.dst >= 0 && ndef[i.dst] == 1 {
+            if i.op == OConst && fits32(ir_norm_imm(i.ty, i.imm)) { lz[i.dst] = 1; lv[i.dst] = ir_norm_imm(i.ty, i.imm) }
+            else if i.op == OSlotAddr { lz[i.dst] = 2; lv[i.dst] = i.imm }
+            else if i.op == OSymAddr { lz[i.dst] = 3; ls[i.dst] = i.sym }
+        }
+    }
+    x.lazy = lz
+    x.lval = lv
+    x.lsym = ls
+    x.nuse = nuse
+}
+
+// Per vreg: 1 if it needs no home (see find_lazy) - for the register allocator.
+export int[dynamic] x64_lazy(IrFunc* f) {
+    X64 x = new_x64()
+    find_lazy(&x, f)
+    int[dynamic] r = []
+    for v in 0..x.lazy.len { if x.lazy[v] != 0 { r.push(1) } else { r.push(0) } }
+    return r
+}
+
+// `regs`: per vreg, the register the allocator chose (-1: memory). Empty: all in memory.
+export void x64_function(X64* x, IrFunc* f, int[dynamic] regs) {
+    int nv = f.vtypes.len
+    find_lazy(x, f)
+    // callee-saved registers used
+    int[dynamic] used = []
+    for k in 0..x64_saved_regs() { used.push(0) }
+    for v in 0..regs.len { if regs[v] >= 0 && regs[v] < x64_saved_regs() && x.lazy[v] == 0 { used[regs[v]] = 1 } }
+    int[dynamic] saved = []
+    for k in 0..used.len { if used[k] == 1 { saved.push(k) } }
+    x.saved = saved
+
+    // the frame: save area, vregs in memory, slots
+    int nint = 0
+    int nflt = 0
+    for k in 0..saved.len { if saved[k] < x64_int_regs() { nint += 1 } else { nflt += 1 } }
+    int cur = 8 * nint                   // the integer pushes sit right below rbp
+    cur = align_to(cur + 16 * nflt, 16)
+    x.save_base = 0 - cur
+    int[dynamic] loc = []
+    int[dynamic] isreg = []
+    for v in 0..nv {
+        if x.lazy[v] != 0 { loc.push(0); isreg.push(0) }
+        else if v < regs.len && regs[v] >= 0 { loc.push(regs[v]); isreg.push(1) }
+        else { cur += 8; loc.push(0 - cur); isreg.push(0) }
+    }
+    x.loc = loc
+    x.isreg = isreg
+    int[dynamic] so = []
+    for s in 0..f.slots.len {
+        int al = f.slots[s].align
+        if al > 16 { al = 16 }
+        cur = align_to(cur + f.slots[s].size, al)
+        so.push(0 - cur)
+    }
+    x.slot_off = so
+    int outgoing = 32
+    for k in 0..f.code.len {
+        if f.code[k].op == OCall && 8 * f.code[k].args.len > outgoing { outgoing = 8 * f.code[k].args.len }
+    }
+    // everything below rbp (pushes + frame) is a multiple of 16: rsp stays aligned
+    int frame = align_to(cur + outgoing, 16) - 8 * nint
+
+    out(x, ".p2align 4")
+    if f.global { out(x, ".globl " + f.name) }
+    out_label(x, f.name)
+    out(x, "pushq %rbp")
+    out(x, "movq %rsp, %rbp")
+    for k in 0..saved.len { if saved[k] < x64_int_regs() { out(x, "pushq " + reg_name(saved[k])) } }
+    // touch each page of a big frame in order (Windows grows the stack one guard page at a time)
+    int left = frame
+    while left > 4096 {
+        out(x, "subq $4096, %rsp")
+        out(x, "orq $0, (%rsp)")
+        left = left - 4096
+    }
+    if left > 0 { out(x, "subq $" + int_to_str(left) + ", %rsp") }
+    int fs = 0
+    for k in 0..saved.len {
+        if saved[k] >= x64_int_regs() {
+            out(x, "movups " + reg_name(saved[k]) + ", " + int_to_str(x.save_base + 16 * fs) + "(%rbp)")
+            fs += 1
+        }
+    }
+
+    string epilogue = ".Lret" + int_to_str(x.fnum)
+    int k = 0
+    while k < f.code.len {
+        emit_ins(x, f, k, epilogue)
+        // a compare fused with its branch consumed the branch too
+        if f.code[k].op == OCmp && k + 1 < f.code.len && f.code[k + 1].op == OBr && f.code[k + 1].a == f.code[k].dst && x.nuse[f.code[k].dst] == 1 && x.lazy[f.code[k].dst] == 0 { k += 1 }
+        k += 1
+    }
+
+    out_label(x, epilogue)
+    fs = 0
+    for k2 in 0..saved.len {
+        if saved[k2] >= x64_int_regs() {
+            out(x, "movups " + int_to_str(x.save_base + 16 * fs) + "(%rbp), " + reg_name(saved[k2]))
+            fs += 1
+        }
+    }
+    if nint > 0 {
+        out(x, "leaq " + int_to_str(0 - 8 * nint) + "(%rbp), %rsp")
+        int r = saved.len - 1
+        while r >= 0 {
+            if saved[r] < x64_int_regs() { out(x, "popq " + reg_name(saved[r])) }
+            r -= 1
+        }
+        out(x, "popq %rbp")
+    } else {
+        out(x, "leave")
+    }
+    out(x, "ret")
+    x.fnum += 1
+}
+
+export void x64_begin(X64* x) {
+    x.out.push("# Generated by stratac (x86-64, Windows). Do not edit.\n")
+    out(x, ".text")
+}
+
+// The assembly for the whole program, after every function went through x64_function.
+export string x64_finish(X64* x, IrProgram* prog) {
+    if prog.strings.len > 0 || x.data.len > 0 {
+        out(x, ".section .rdata,\"dr\"")
+        for k in 0..prog.strings.len {
+            x.out.push(prog.strings[k].sym + ":\n\t.asciz \"" + as_text(prog.strings[k].text) + "\"\n")
+        }
+        for k in 0..x.data.len { x.out.push(x.data[k]) }
+    }
+    return strata_join(&x.out)
+}

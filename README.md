@@ -5,8 +5,10 @@ A statically-typed, compiled programming language **for games and real-time soft
 > *"Safer than C, simpler than Rust — the control C gives games, without the footguns
 > or the borrow-checker fight."*
 
-Strata compiles to **plain C** (then to native code via tcc/gcc/clang), so it inherits the
-whole C toolchain and drops into any C engine. Its four ideas:
+Strata compiles to **native x86-64 code itself** — its own code generator and optimizer
+(Windows today; more CPUs and systems to come) — or to **plain C**, for every platform
+and for calling C libraries. The long-term goal: a toolchain that depends on nothing but
+the operating system. Its four ideas:
 
 - **Arena / region memory** — no garbage collector, no manual `free`. *Everything in a
   region dies together.*
@@ -71,7 +73,9 @@ Strata.md   the founding project plan
 ## Build & run
 
 Requires a C compiler: `gcc` (MinGW) on Windows; `cc` (clang or gcc) on macOS and Linux,
-or set `STRATA_CC`. To just *use* Strata, grab a release, or run the installer below.
+or set `STRATA_CC`. (On x86-64 Windows, Strata generates the machine code itself and uses
+the toolchain only to assemble and link — `--backend c` goes through C instead.) To just
+*use* Strata, grab a release, or run the installer below.
 
 The compiler is written in Strata, so the build bootstraps it. On **Windows** it downloads
 a pinned `stratac` release once (see `compiler/bootstrap.txt`). On **macOS / Linux** it

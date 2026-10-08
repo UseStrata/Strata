@@ -1,0 +1,4 @@
+# a project with no C imports: built by the native backend (debug: unoptimized)
+[project]
+name  = "pure"
+entry = "src/main.strata"

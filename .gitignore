@@ -15,6 +15,7 @@ compiler/tests/embed/build/
 compiler/tests/embed/csharp/bin/
 compiler/tests/embed/csharp/obj/
 compiler/tests/embed/prog/*.c
+compiler/tests/embed/prog/*.s
 compiler/tests/embed/prog/main
 
 # stratac output beside example programs
@@ -25,9 +26,6 @@ compiler/examples/*
 !compiler/examples/*.strata
 !compiler/examples/*/
 
-# old D-- build output left in the archived bootstrap seed
-archive/dminusminus-seed/src/*.c
-archive/dminusminus-seed/src/*.exe
 
 # build output directory (stratac.exe, console.exe, libstrata.dll, libstrata.c)
 compiler/bin/

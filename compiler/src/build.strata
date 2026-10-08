@@ -39,6 +39,7 @@ export struct BuildSpec {
     bool   quiet            // don't print "built ..." / "up to date ..."
     string tool_version     // part of the fingerprint: a new compiler rebuilds everything
     bool   split            // one C file per module, compiled in parallel (projects)
+    string backend          // "auto" (native when it can), "native" or "c"
 }
 
 string[dynamic] no_strings() {
@@ -64,7 +65,7 @@ export BuildSpec spec_for_file(string path, string version, bool quiet) {
     string stem = stem_of(path)
     return BuildSpec{ path, stem + ".c", stem + exe_ext(), false, true,
                       no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), no_strings(),
-                      "", false, quiet, version, false }
+                      "", false, quiet, version, false, "auto" }
 }
 
 // A project build: paths in the project file are relative to its folder.
@@ -76,7 +77,7 @@ export BuildSpec spec_for_project(Project p, string version, bool release, bool 
     BuildSpec s = BuildSpec{ root + "/" + p.entry, out + "/" + p.name + ".c", out + "/" + p.name + ext,
                              p.output == "dll", release || p.release,
                              p.defines, no_strings(), no_strings(), p.libs, no_strings(), p.frameworks,
-                             out + "/.strata-cache", force, quiet, version, p.split }
+                             out + "/.strata-cache", force, quiet, version, p.split, "auto" }
     for i in 0..p.include_dirs.len { s.include_dirs.push(root + "/" + p.include_dirs[i]) }
     for i in 0..p.lib_dirs.len     { s.lib_dirs.push(root + "/" + p.lib_dirs[i]) }
     for i in 0..p.c_sources.len    { s.c_sources.push(root + "/" + p.c_sources[i]) }
@@ -199,6 +200,20 @@ export bool run_build(BuildSpec s, string libdir) {
               ": error: a dll has no main, so its entry file can't contain top-level code")
         return false
     }
+    // the native backend, when it can build this (else the C backend below)
+    if s.backend != "c" {
+        string why = native_target_why(host_os(), host_arch())
+        if why == "" && s.dll { why = "the native backend doesn't build dlls yet" }
+        if why == "" {
+            NativeResult nr = native_compile(prog, true, s.release)
+            if nr.ok { return native_build(s, libdir, prog, nr.asm_text) }
+            why = nr.why
+        }
+        if s.backend == "native" {
+            strata_report(basename_of(s.entry) + ": error: can't build natively: " + why + " (use --backend c)")
+            return false
+        }
+    }
     if s.split { return run_split_build(s, libdir, prog) }
     Codegen cg = new_codegen()
     cg.no_main = s.dll
@@ -258,6 +273,52 @@ export bool run_build(BuildSpec s, string libdir) {
     if rc != 0 { return false }
     if s.cache_file != "" { write_file(s.cache_file, key) }
     if !s.quiet { strata_report("built " + s.out_bin) }
+    return true
+}
+
+// ---- native builds ------------------------------------------------------------------
+// The program as assembly (<name>.s beside where the C would go), assembled and linked
+// with the runtime (lib/srt.c) by the C toolchain - for now: Strata's own assembler and
+// linker come next.
+
+bool native_build(BuildSpec s, string libdir, Program prog, string asm_text) {
+    string asm_file = stem_of(s.out_c) + ".s"
+    string[dynamic] argv = []
+    argv.push(strata_cc())
+    argv.push("-O2")
+    argv.push(asm_file)
+    argv.push(libdir + "/srt.c")
+    argv.push("-I" + libdir)
+    for i in 0..s.c_sources.len    { argv.push(s.c_sources[i]) }
+    for i in 0..s.include_dirs.len { argv.push("-I" + s.include_dirs[i]) }
+    for i in 0..s.defines.len      { argv.push("-D" + s.defines[i]) }
+    for i in 0..s.lib_dirs.len     { argv.push("-L" + s.lib_dirs[i]) }
+    for i in 0..prog.decls.len {
+        if prog.decls[i].kind == DcLink { argv.push("-l" + prog.decls[i].path) }
+    }
+    for i in 0..s.libs.len         { argv.push("-l" + s.libs[i]) }
+    string[dynamic] oa = os_link_args(prog, s)
+    for i in 0..oa.len             { argv.push(oa[i]) }
+    argv.push("-o")
+    argv.push(s.out_bin)
+    string cmd = spaced(argv)
+
+    string key = ""
+    if s.cache_file != "" {
+        string all = asm_text + "\n" + cmd + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.c")
+        for i in 0..s.c_sources.len { all = all + "\n" + read_file(s.c_sources[i]) }
+        key = fingerprint(all)
+        if !s.force && read_file(s.cache_file) == key && file_present(s.out_bin) {
+            if !s.quiet { strata_report("up to date: " + s.out_bin) }
+            return true
+        }
+        string dir = dirname_of(asm_file)
+        if dir != "." { strata_make_dirs(dir) }
+    }
+    write_file(asm_file, asm_text)
+    if strata_run_argv(&argv) != 0 { return false }
+    if s.cache_file != "" { write_file(s.cache_file, key) }
+    if !s.quiet { strata_report("built " + s.out_bin + " (native)") }
     return true
 }
 

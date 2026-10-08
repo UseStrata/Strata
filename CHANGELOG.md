@@ -4,12 +4,57 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
-## [Unreleased]
+## [2.0.0] - 2026-10-08
+The first step toward a Strata that depends on nothing but the operating system: it now
+compiles programs to **x86-64 machine code itself**, with its own optimizer. C stays
+available as a backend.
+
 ### Added
+- **The native backend** (x86-64, Windows): Strata's own code generator. Programs no
+  longer go through C: the compiler writes the assembly itself.
+  - `src/ir.strata`: an intermediate representation (virtual registers, labels,
+    loads / stores, calls) that every future architecture shares.
+  - `src/lower.strata`: the checked program -> IR, with C's arithmetic conversions (so
+    programs print exactly what the C backend's builds print) and the Windows x64
+    calling convention (structs of 1/2/4/8 bytes in registers, others by pointer,
+    hidden result pointers), so Strata functions call and are callable from C.
+  - `src/opt.strata`: **the optimizer** - constant folding, copy propagation,
+    store-to-load forwarding through private stack slots (vector math stays in
+    registers), common subexpressions, loop-invariant code motion, dead code and
+    control-flow cleanup, copy coalescing, and a **register allocator** (liveness, live
+    intervals, linear scan; scratch registers for values that don't live across calls).
+  - `src/x64.strata`: IR -> x86-64 assembly (immediates, addresses folded into memory
+    operands, compare-and-branch fusion, stack probes for big frames).
+  - `lib/srt.c`: the runtime entry points native code calls (printing, arenas,
+    strings, arrays, files, matrices). Compiled with the C toolchain for now, like the
+    assembler and linker; replacing those is next.
+  - Measured against gcc -O2 (best of 5): vector simulation 91 vs 83 ms, a sieve 201 vs
+    156 ms, recursive fib 166 vs 78 ms. A 20k-line program builds and runs in 0.97 s
+    (3.6 s through C and gcc).
+- **`--backend native|c|auto`** on `run` / `build`. `auto` (the default) builds natively
+  when it can, else with C: today the native backend needs x86-64 Windows, an exe (not
+  a dll), and no imported C headers (it can't read them yet).
+- `stratac asm <target>` prints the generated assembly; `stratac ir <target>` the IR
+  (`--release`: optimized).
+- `PlatformArch()` in `lib/crossplatform.h` ("x86_64", "arm64").
 - **Importing `<crossplatform.h>` links its OS library automatically**: user32 on
   Windows, Cocoa on macOS, X11 on Linux (not when the project defines
   `STRATA_CROSSPLATFORM_NO_WINDOW`). `examples/crossplatform.strata` no longer needs
   `link "user32"`, so it builds as a single file on every OS.
+- Tests (63): `examples/abi.strata` (struct passing, 7-argument calls, narrow and
+  unsigned arithmetic, shifts, floats, short-circuiting, pointers), the `pure` project
+  (native debug builds of a multi-module program), every run golden forced through
+  each backend, and `stratac asm`.
+
+### Changed
+- Builds are native by default where possible (see `--backend`); single files and
+  `--release` builds are optimized.
+- C backend: an integer literal shifted left is widened to 64 bits first (`1 << 40` was
+  a 32-bit C overflow; Strata's `int` is 64-bit).
+
+### Removed
+- `archive/` (the original D-- compiler and the D-- -> Strata translator; still in git
+  history).
 
 ## [1.6.0] - 2026-10-06
 ### Added

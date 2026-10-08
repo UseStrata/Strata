@@ -1,0 +1,16 @@
+// geo.strata - a module: structs passed and returned by value, vector math
+export struct Body { vec3 pos; vec3 vel; float mass }
+export enum Shape { Ball, Box }
+
+export Body step(Body b, float dt) {
+    b.pos += b.vel * dt
+    return b
+}
+export float energy(Body b) { return 0.5 * b.mass * dot(b.vel, b.vel) }
+export string shape_name(Shape s) {
+    switch s {
+        case Ball: return "ball"
+        default:   return "box"
+    }
+    return "?"
+}

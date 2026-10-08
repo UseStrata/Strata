@@ -27,9 +27,9 @@
  *   Process  start programs, wait for them       opt out: STRATA_CROSSPLATFORM_NO_PROCESS
  *
  * LINKING (per section)
- *   Window   Windows: user32  (Strata: link "user32"; MSVC and MinGW link it by default)
- *            Linux:   X11     (Strata: link "X11")
- *            macOS:   -framework Cocoa  (strata.toml: [macos] frameworks = ["Cocoa"])
+ *   Window   Windows: user32, Linux: X11, macOS: -framework Cocoa. A Strata program that
+ *            imports this header links them automatically (MSVC and MinGW link user32
+ *            by default anyway).
  *   System   Linux:   dl, on glibc older than 2.34 (PlatformModulePath uses dladdr)
  *   Files, Process: nothing extra.
  *   On Linux with a strict -std=c99/c11, compile with -D_DEFAULT_SOURCE (the Files,
@@ -88,6 +88,9 @@ extern "C" {
 
     /* "windows", "macos" or "linux". */
     STRATA_CP_API const char* PlatformName(void);
+
+    /* The CPU this was compiled for: "x86_64", "arm64", or "unknown". */
+    STRATA_CP_API const char* PlatformArch(void);
 
     /* How many CPU cores are online (at least 1). */
     STRATA_CP_API int PlatformCpuCount(void);
@@ -578,6 +581,16 @@ extern "C" {
 
     STRATA_CP_API const char* PlatformName(void) { return "windows"; }
 
+    STRATA_CP_API const char* PlatformArch(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+        return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+        return "arm64";
+#else
+        return "unknown";
+#endif
+    }
+
     STRATA_CP_API int PlatformCpuCount(void) {
         const char* n = getenv("NUMBER_OF_PROCESSORS");
         int v = n ? atoi(n) : 0;
@@ -621,6 +634,16 @@ extern "C" {
         return "macos";
 #else
         return "linux";
+#endif
+    }
+
+    STRATA_CP_API const char* PlatformArch(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+        return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+        return "arm64";
+#else
+        return "unknown";
 #endif
     }
 

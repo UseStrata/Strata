@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/native.strata - the native backend's driver: checked program -> assembly. CORE.
+//
+//     lower.strata (AST -> IR) -> opt.strata (optimize, allocate registers) -> x64.strata
+//
+// Which targets exist: x86-64 Windows so far. Anything else (another OS or CPU, a
+// program the native backend can't handle yet) is the C backend's job; `why` says why.
+
+import ast
+import ir
+import lower
+import opt
+import x64
+
+export struct NativeResult {
+    bool   ok
+    string why       // when not ok: why the native backend can't build this
+    string asm_text  // the assembly
+    string ir        // the IR as text (after optimization if `optimize`)
+}
+
+// Can the native backend target this machine? ("" if yes, else why not)
+export string native_target_why(string os, string arch) {
+    if os == "windows" && arch == "x86_64" { return "" }
+    return "the native backend targets x86-64 Windows so far (this is " + arch + " " + os + ")"
+}
+
+export NativeResult native_compile(Program prog, bool with_main, bool optimize_code) {
+    Lower* l = new_lower()
+    if !lower_program(l, prog, with_main) { return NativeResult{ false, l.err, "", "" } }
+    X64 x = new_x64()
+    x64_begin(&x)
+    string[dynamic] irt = []
+    for i in 0..l.prog.funcs.len {
+        IrFunc* f = &l.prog.funcs[i]
+        int[dynamic] regs = []
+        if optimize_code {
+            optimize(f)
+            regs = alloc_regs(f, x64_regs(), x64_lazy(f))
+        }
+        x64_function(&x, f, regs)
+    }
+    string asm_text = x64_finish(&x, &l.prog)
+    return NativeResult{ true, "", asm_text, ir_program_text(&l.prog) }
+}

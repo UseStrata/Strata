@@ -1,0 +1,1515 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/lower.strata - checked AST -> IR (see ir.strata). CORE (no main).
+//
+// The native backend's front half. It gives every construct its meaning in terms of
+// scalar operations, memory, labels and calls:
+//   * scalar locals live in vregs (in a stack slot if their address is taken);
+//     aggregates (structs, vec2/3/4, quat, mat4, Arena, T[dynamic]) always live in slots;
+//   * arithmetic follows C's usual conversions (a float literal is an f64, int op float
+//     is float, ...), so a program prints exactly what the C backend's build prints;
+//   * vector math is expanded into float operations; matrices, quaternions, strings,
+//     arrays, arenas and I/O call the runtime (lib/srt.c, `srt_*` functions);
+//   * regions free their arena at the closing brace and on break / continue / return.
+//
+// Struct passing follows the target's C calling convention so Strata functions can be
+// called from C and call C. Today that is Windows x64 (the abi_* functions): a struct of
+// 1, 2, 4 or 8 bytes travels as an integer; any other size by pointer to a copy, and is
+// returned through a hidden pointer passed as the first argument.
+//
+// Not supported yet (`ok` false, with a message): calling C functions from imported
+// headers (their declarations aren't read yet), method calls other than .new / .push,
+// fixed-size arrays. The build then uses the C backend instead.
+
+import ast
+import ir
+import "strata_host.h"   // strata_join
+
+// ---- layouts ---------------------------------------------------------------------
+
+struct FieldLay  { string name; int off; TypeNode* type }
+struct StructLay { string name; int size; int align; FieldLay[dynamic] fields; int state }   // state: 0 new, 1 in progress, 2 done
+
+// What a type is, for code: a scalar (in a vreg), an aggregate (in memory), or void.
+export struct TInfo { int kind; int ty; int size; int align }
+int TK_SCALAR() { return 0 }
+int TK_AGG() { return 1 }
+int TK_VOID() { return 2 }
+
+// An expression's value: a scalar in vreg `reg` of type `ty`, or an aggregate whose
+// ADDRESS is in vreg `reg` (`t` says which type).
+struct LVal { bool agg; int reg; int ty; TypeNode* t }
+
+// A local variable: its value in vreg `reg`, or (mem) its address in vreg `reg`.
+struct LVar { string name; bool mem; int reg; int ty; TypeNode* type }
+
+export struct Lower {
+    bool              ok
+    string            err
+    IrProgram         prog
+    // the program's declarations
+    Decl*[dynamic]    funcs
+    StructLay[dynamic] structs
+    string[dynamic]   enums
+    string[dynamic]   members
+    int[dynamic]      member_values
+    // the function being lowered
+    IrFunc            f
+    LVar[dynamic]     vars
+    int[dynamic]      scopes        // vars.len at each open scope
+    string[dynamic]   addr_taken    // scalar locals whose address is taken (kept in memory)
+    int[dynamic]      break_labels
+    int[dynamic]      cont_labels
+    int[dynamic]      loop_regions  // regions.len at each loop's start
+    int[dynamic]      regions       // per open region: the vreg holding its Arena's address
+    TypeNode*         ret_type
+    int               sret          // vreg of the hidden result pointer, or -1
+    int               fn_index
+}
+
+void lw_fail(Lower* l, int line, string msg) {
+    if l.ok { l.err = "line " + int_to_str(line) + ": " + msg }
+    l.ok = false
+}
+
+TypeNode* named(string n) { TypeNode* t = new_type(TyNamed, 0, 0); t.name = n; return t }
+
+// ---- types -------------------------------------------------------------------------
+
+int prim_ty(string n) {
+    if n == "int" || n == "i64" { return KI64 }
+    if n == "i32" { return KI32 }
+    if n == "i16" { return KI16 }
+    if n == "i8" { return KI8 }
+    if n == "uint" || n == "u64" { return KU64 }
+    if n == "u32" { return KU32 }
+    if n == "u16" { return KU16 }
+    if n == "u8" || n == "bool" { return KU8 }
+    if n == "char" { return KI8 }
+    if n == "float" || n == "f32" { return KF32 }
+    if n == "f64" { return KF64 }
+    if n == "string" { return KU64 }
+    return 0 - 1
+}
+
+TInfo scalar_info(int ty) { return TInfo{ TK_SCALAR(), ty, ir_size(ty), ir_size(ty) } }
+TInfo agg_info(int size, int align) { return TInfo{ TK_AGG(), KVoid, size, align } }
+
+int vec_dim_of(string n) {
+    if n == "vec2" { return 2 }
+    if n == "vec3" { return 3 }
+    if n == "vec4" || n == "quat" { return 4 }
+    return 0
+}
+
+export TInfo tinfo(Lower* l, TypeNode* t) {
+    if t == null { return TInfo{ TK_VOID(), KVoid, 0, 1 } }
+    if t.kind == TyPointer || t.kind == TyArray || t.kind == TyFixedArray { return scalar_info(KU64) }
+    if t.kind == TyDynArray { return agg_info(32, 8) }
+    string n = t.name
+    if n == "void" { return TInfo{ TK_VOID(), KVoid, 0, 1 } }
+    int p = prim_ty(n)
+    if p >= 0 { return scalar_info(p) }
+    int d = vec_dim_of(n)
+    if d > 0 { return agg_info(4 * d, 4) }
+    if n == "mat4" { return agg_info(64, 4) }
+    if n == "Arena" { return agg_info(8, 8) }
+    for i in 0..l.enums.len { if l.enums[i] == n { return scalar_info(KI32) } }
+    int si = struct_index(l, n)
+    if si >= 0 {
+        layout(l, si)
+        return agg_info(l.structs[si].size, l.structs[si].align)
+    }
+    lw_fail(l, t.line, "unknown type '" + n + "' (a C type? the native backend can't use C headers yet)")
+    return scalar_info(KI64)
+}
+
+int struct_index(Lower* l, string name) {
+    int found = 0 - 1
+    for i in 0..l.structs.len { if l.structs[i].name == name { found = i } }
+    return found
+}
+
+int align_up(int n, int a) { return (n + a - 1) / a * a }
+
+// Lay out struct `si` like a C compiler: each field at its alignment, the size rounded
+// up to the largest alignment.
+void layout(Lower* l, int si) {
+    if l.structs[si].state == 2 { return }
+    if l.structs[si].state == 1 { lw_fail(l, 0, "struct " + l.structs[si].name + " contains itself"); return }
+    l.structs[si].state = 1
+    int off = 0
+    int align = 1
+    for k in 0..l.structs[si].fields.len {
+        TInfo ti = tinfo(l, l.structs[si].fields[k].type)
+        off = align_up(off, ti.align)
+        l.structs[si].fields[k].off = off
+        off += ti.size
+        if ti.align > align { align = ti.align }
+    }
+    l.structs[si].size = align_up(off, align)
+    l.structs[si].align = align
+    l.structs[si].state = 2
+}
+
+// ---- the calling convention (Windows x64) -----------------------------------------------
+
+// An aggregate of 1, 2, 4 or 8 bytes is passed and returned as an integer of that size.
+bool abi_small(int size) { return size == 1 || size == 2 || size == 4 || size == 8 }
+int abi_int_of(int size) {
+    if size == 1 { return KU8 }
+    if size == 2 { return KU16 }
+    if size == 4 { return KU32 }
+    return KU64
+}
+// How a value of this type travels as an argument / result: its scalar type.
+int abi_pass_ty(TInfo ti) {
+    if ti.kind == TK_SCALAR() { return ti.ty }
+    if abi_small(ti.size) { return abi_int_of(ti.size) }
+    return KU64   // a pointer to a copy
+}
+bool abi_sret(TInfo ti) { return ti.kind == TK_AGG() && !abi_small(ti.size) }
+
+// ---- emitting -----------------------------------------------------------------------
+
+int vreg(Lower* l, int ty) { return ir_vreg(&l.f, ty) }
+
+void emit(Lower* l, Ins i) { l.f.code.push(i) }
+
+int iconst(Lower* l, int ty, int value) {
+    int r = vreg(l, ty)
+    Ins i = new_ins(OConst, ty, r, 0 - 1, 0 - 1)
+    i.imm = value
+    emit(l, i)
+    return r
+}
+
+int fconst(Lower* l, int ty, string text) {
+    int r = vreg(l, ty)
+    Ins i = new_ins(OFConst, ty, r, 0 - 1, 0 - 1)
+    i.sym = text
+    emit(l, i)
+    return r
+}
+
+int binop(Lower* l, int op, int ty, int a, int b) {
+    int r = vreg(l, ty)
+    emit(l, new_ins(op, ty, r, a, b))
+    return r
+}
+
+int unop(Lower* l, int op, int ty, int a) {
+    int r = vreg(l, ty)
+    emit(l, new_ins(op, ty, r, a, 0 - 1))
+    return r
+}
+
+int cmp(Lower* l, int cond, int ty, int a, int b) {
+    int r = vreg(l, KU8)
+    Ins i = new_ins(OCmp, ty, r, a, b)
+    i.ty2 = cond
+    emit(l, i)
+    return r
+}
+
+void copy_to(Lower* l, int ty, int dst, int src) { emit(l, new_ins(OCopy, ty, dst, src, 0 - 1)) }
+
+int load(Lower* l, int ty, int addr, int off) {
+    int r = vreg(l, ty)
+    Ins i = new_ins(OLoad, ty, r, addr, 0 - 1)
+    i.imm = off
+    emit(l, i)
+    return r
+}
+
+void store(Lower* l, int ty, int addr, int off, int value) {
+    Ins i = new_ins(OStore, ty, 0 - 1, addr, value)
+    i.imm = off
+    emit(l, i)
+}
+
+void copy_mem(Lower* l, int dst, int src, int size) {
+    Ins i = new_ins(OCopyMem, KVoid, 0 - 1, dst, src)
+    i.imm = size
+    emit(l, i)
+}
+
+void zero_mem(Lower* l, int dst, int size) {
+    Ins i = new_ins(OZeroMem, KVoid, 0 - 1, dst, 0 - 1)
+    i.imm = size
+    emit(l, i)
+}
+
+// A fresh stack slot; returns a vreg holding its address.
+int temp(Lower* l, int size, int align) {
+    int s = ir_slot(&l.f, size, align)
+    int r = vreg(l, KU64)
+    Ins i = new_ins(OSlotAddr, KU64, r, 0 - 1, 0 - 1)
+    i.imm = s
+    emit(l, i)
+    return r
+}
+
+int addr_plus(Lower* l, int addr, int off) {
+    if off == 0 { return addr }
+    return binop(l, OAdd, KU64, addr, iconst(l, KU64, off))
+}
+
+void label(Lower* l, int n) {
+    Ins i = new_ins(OLabel, KVoid, 0 - 1, 0 - 1, 0 - 1)
+    i.imm = n
+    emit(l, i)
+}
+
+void jump(Lower* l, int n) {
+    Ins i = new_ins(OJmp, KVoid, 0 - 1, 0 - 1, 0 - 1)
+    i.imm = n
+    emit(l, i)
+}
+
+void branch(Lower* l, int cond, int then_l, int else_l) {
+    Ins i = new_ins(OBr, KVoid, 0 - 1, cond, 0 - 1)
+    i.imm = then_l
+    i.imm2 = else_l
+    emit(l, i)
+}
+
+int new_label(Lower* l) { return ir_label(&l.f) }
+
+// A call; `ret` KVoid for none. Returns the result vreg (or -1).
+int call(Lower* l, string name, int ret, int[dynamic] args) {
+    int r = 0 - 1
+    if ret != KVoid { r = vreg(l, ret) }
+    Ins i = new_ins(OCall, ret, r, 0 - 1, 0 - 1)
+    i.sym = name
+    i.args = args
+    emit(l, i)
+    return r
+}
+int call0(Lower* l, string name, int ret) { int[dynamic] a = []; return call(l, name, ret, a) }
+int call1(Lower* l, string name, int ret, int x) { int[dynamic] a = []; a.push(x); return call(l, name, ret, a) }
+int call2(Lower* l, string name, int ret, int x, int y) { int[dynamic] a = []; a.push(x); a.push(y); return call(l, name, ret, a) }
+int call3(Lower* l, string name, int ret, int x, int y, int z) { int[dynamic] a = []; a.push(x); a.push(y); a.push(z); return call(l, name, ret, a) }
+
+// ---- conversions ----------------------------------------------------------------------
+
+int conv(Lower* l, int reg, int from, int to) {
+    if from == to { return reg }
+    // pointers and 64-bit integers share a representation
+    if ir_size(from) == 8 && ir_size(to) == 8 && !ir_is_float(from) && !ir_is_float(to) { return reg }
+    int r = vreg(l, to)
+    Ins i = new_ins(OConv, to, r, reg, 0 - 1)
+    i.ty2 = from
+    emit(l, i)
+    return r
+}
+
+// C's conversion to bool: nonzero is true.
+int to_bool(Lower* l, LVal v) {
+    if ir_is_float(v.ty) { return cmp(l, CNe, v.ty, v.reg, fconst(l, v.ty, "0.0")) }
+    return cmp(l, CNe, v.ty, v.reg, iconst(l, v.ty, 0))
+}
+
+int as_ty(Lower* l, LVal v, int ty, int line) {
+    if v.agg { lw_fail(l, line, "expected a value, got a " + type_text(v.t)); return iconst(l, ty, 0) }
+    return conv(l, v.reg, v.ty, ty)
+}
+
+string type_text(TypeNode* t) {
+    if t == null { return "?" }
+    if t.kind == TyPointer { return type_text(t.elem) + "*" }
+    if t.kind == TyDynArray { return type_text(t.elem) + "[dynamic]" }
+    return t.name
+}
+
+// C's usual arithmetic conversions: the type both operands of `a op b` become.
+int arith_ty(int a, int b) {
+    if a == KF64 || b == KF64 { return KF64 }
+    if a == KF32 || b == KF32 { return KF32 }
+    if ir_size(a) == 8 || ir_size(b) == 8 {
+        if a == KU64 || b == KU64 { return KU64 }
+        return KI64
+    }
+    if a == KU32 || b == KU32 { return KU32 }
+    return KI32
+}
+// an integer promoted (as C does before arithmetic and shifts)
+int promote(int t) {
+    if ir_is_float(t) || ir_size(t) == 8 { return t }
+    if t == KU32 { return KU32 }
+    return KI32
+}
+
+LVal scalar(int reg, int ty) { return LVal{ false, reg, ty, null } }
+LVal aggregate(int addr, TypeNode* t) { return LVal{ true, addr, KVoid, t } }
+
+// ---- literals ----------------------------------------------------------------------------
+
+int digit_val(char c) {
+    if c >= '0' && c <= '9' { return cast<int>(c) - cast<int>('0') }
+    if c >= 'a' && c <= 'f' { return cast<int>(c) - cast<int>('a') + 10 }
+    if c >= 'A' && c <= 'F' { return cast<int>(c) - cast<int>('A') + 10 }
+    return 0
+}
+
+// "1_000", "0x1F", "0b101" -> the value (wrapping at 64 bits, as C's unsigned arithmetic)
+int parse_int(string s) {
+    u64 v = 0
+    u64 base = 10
+    int i = 0
+    int n = s.len
+    if n > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') { base = 16; i = 2 }
+    else if n > 2 && s[0] == '0' && (s[1] == 'b' || s[1] == 'B') { base = 2; i = 2 }
+    while i < n {
+        if s[i] != '_' { v = v * base + cast<u64>(digit_val(s[i])) }
+        i += 1
+    }
+    return cast<int>(v)
+}
+
+// A char literal's text as written (`A`, `\n`, `\0`, ...) -> its value
+int char_val(string s) {
+    if s.len == 0 { return 0 }
+    if s[0] != '\\' || s.len < 2 { return cast<int>(s[0]) }
+    char e = s[1]
+    if e == 'n' { return 10 }
+    if e == 't' { return 9 }
+    if e == 'r' { return 13 }
+    if e == '0' { return 0 }
+    return cast<int>(e)   // \\ \' \"
+}
+
+string strip_us(string s) {
+    string[dynamic] p = []
+    for i in 0..s.len { if s[i] != '_' { p.push(substr(s, i, 1)) } }
+    return strata_join(&p)
+}
+
+int string_lit(Lower* l, string text) {
+    string sym = ".Lstr" + int_to_str(l.prog.strings.len)
+    l.prog.strings.push(IrData{ sym, text })
+    int r = vreg(l, KU64)
+    Ins i = new_ins(OSymAddr, KU64, r, 0 - 1, 0 - 1)
+    i.sym = sym
+    emit(l, i)
+    return r
+}
+
+// ---- variables -------------------------------------------------------------------------
+
+void push_scope(Lower* l) { l.scopes.push(l.vars.len) }
+void pop_scope(Lower* l) {
+    l.vars.len = l.scopes[l.scopes.len - 1]
+    l.scopes.len = l.scopes.len - 1
+}
+
+int find_var(Lower* l, string name) {
+    int k = l.vars.len - 1
+    int found = 0 - 1
+    while k >= 0 && found < 0 {
+        if l.vars[k].name == name { found = k }
+        k -= 1
+    }
+    return found
+}
+
+bool is_addr_taken(Lower* l, string name) {
+    bool r = false
+    for i in 0..l.addr_taken.len { if l.addr_taken[i] == name { r = true } }
+    return r
+}
+
+// Declare a local of type `t`, uninitialized. Scalars get a vreg unless their address
+// is taken; aggregates get a zeroed slot.
+LVar declare(Lower* l, string name, TypeNode* t, int line) {
+    TInfo ti = tinfo(l, t)
+    LVar v = LVar{ name, false, 0 - 1, ti.ty, t }
+    if ti.kind == TK_AGG() || (ti.kind == TK_SCALAR() && is_addr_taken(l, name)) {
+        v.mem = true
+        v.reg = temp(l, ti.size, ti.align)
+    } else if ti.kind == TK_SCALAR() {
+        v.reg = vreg(l, ti.ty)
+    } else {
+        lw_fail(l, line, "a variable can't be void")
+        v.reg = vreg(l, KI64)
+    }
+    l.vars.push(v)
+    return v
+}
+
+// Copy an aggregate of type t. Vectors and quaternions go float by float, which lets the
+// optimizer see through them (and keep vector math in registers).
+void copy_agg(Lower* l, TypeNode* t, int dst, int src, int size) {
+    int d = 0
+    if t != null && t.kind == TyNamed { d = vec_dim_of(t.name) }
+    if d > 0 && size == 4 * d {
+        for i in 0..d { store(l, KF32, dst, 4 * i, load(l, KF32, src, 4 * i)) }
+    } else {
+        copy_mem(l, dst, src, size)
+    }
+}
+
+// Give variable `v` the value `val` (converted to its type).
+void assign_var(Lower* l, LVar v, LVal val, int line) {
+    if v.mem && v.ty == KVoid {
+        TInfo ti = tinfo(l, v.type)
+        if !val.agg { lw_fail(l, line, "expected a " + type_text(v.type)); return }
+        copy_agg(l, v.type, v.reg, val.reg, ti.size)
+    } else if v.mem {
+        store(l, v.ty, v.reg, 0, as_ty(l, val, v.ty, line))
+    } else {
+        copy_to(l, v.ty, v.reg, as_ty(l, val, v.ty, line))
+    }
+}
+
+// Store `val` (converted to type `t`) at `addr`.
+void store_val(Lower* l, TypeNode* t, int addr, int off, LVal val, int line) {
+    TInfo ti = tinfo(l, t)
+    if ti.kind == TK_AGG() {
+        if !val.agg { lw_fail(l, line, "expected a " + type_text(t)); return }
+        copy_agg(l, t, addr_plus(l, addr, off), val.reg, ti.size)
+    } else if ti.kind == TK_SCALAR() {
+        store(l, ti.ty, addr, off, as_ty(l, val, ti.ty, line))
+    }
+}
+
+// The value stored at `addr` of type `t`.
+LVal load_val(Lower* l, TypeNode* t, int addr, int off) {
+    TInfo ti = tinfo(l, t)
+    if ti.kind == TK_AGG() { return aggregate(addr_plus(l, addr, off), t) }
+    return scalar(load(l, ti.ty, addr, off), ti.ty)
+}
+
+// ---- address-taken locals ------------------------------------------------------------------
+
+void scan_expr(Lower* l, Expr* e) {
+    // binary chains nest down their left side: walk it in a loop
+    while e != null && e.kind == ExBinary {
+        scan_expr(l, e.b)
+        e = e.a
+    }
+    if e == null { return }
+    if e.kind == ExUnary && e.text == "&" && e.a != null && e.a.kind == ExName { l.addr_taken.push(e.a.text) }
+    scan_expr(l, e.a)
+    scan_expr(l, e.b)
+    for i in 0..e.items.len { scan_expr(l, e.items[i]) }
+}
+
+void scan_stmt(Lower* l, Stmt* s) {
+    if s == null { return }
+    scan_expr(l, s.init)
+    scan_expr(l, s.expr)
+    scan_expr(l, s.target)
+    scan_expr(l, s.value)
+    scan_expr(l, s.cond)
+    scan_expr(l, s.iter)
+    scan_expr(l, s.subject)
+    scan_stmt(l, s.then_block)
+    scan_stmt(l, s.else_branch)
+    scan_stmt(l, s.body)
+    for i in 0..s.stmts.len { scan_stmt(l, s.stmts[i]) }
+    for i in 0..s.cases.len {
+        for j in 0..s.cases[i].values.len { scan_expr(l, s.cases[i].values[j]) }
+        scan_stmt(l, s.cases[i].body)
+    }
+}
+
+// ---- expressions --------------------------------------------------------------------------
+
+bool is_str(TypeNode* t) { return t != null && t.kind == TyNamed && t.name == "string" }
+bool is_vec(TypeNode* t) { return t != null && t.kind == TyNamed && (t.name == "vec2" || t.name == "vec3" || t.name == "vec4") }
+bool is_mat(TypeNode* t) { return t != null && t.kind == TyNamed && t.name == "mat4" }
+bool is_quat(TypeNode* t) { return t != null && t.kind == TyNamed && t.name == "quat" }
+bool is_dynarr(TypeNode* t) { return t != null && t.kind == TyDynArray }
+bool is_ptr(TypeNode* t) { return t != null && t.kind == TyPointer }
+
+LVal lower_expr(Lower* l, Expr* e) {
+    if e == null { return scalar(iconst(l, KI64, 0), KI64) }
+    switch e.kind {
+        case ExIntLit:    return scalar(iconst(l, KI64, parse_int(e.text)), KI64)
+        case ExFloatLit:  return scalar(fconst(l, KF64, strip_us(e.text)), KF64)
+        case ExCharLit:   return scalar(iconst(l, KI8, char_val(e.text)), KI8)
+        case ExBoolLit:   if e.bval { return scalar(iconst(l, KU8, 1), KU8) } return scalar(iconst(l, KU8, 0), KU8)
+        case ExStringLit: return scalar(string_lit(l, e.text), KU64)
+        case ExName:      return lower_name(l, e)
+        case ExUnary:     return lower_unary(l, e)
+        case ExBinary:    return lower_binary(l, e)
+        case ExCall:      return lower_call(l, e)
+        case ExField:     return lower_field(l, e)
+        case ExIndex:
+            {
+                int addr = index_addr(l, e)
+                return load_val(l, e.rtype, addr, 0)
+            }
+        case ExArrayLit:  return lower_array_lit(l, e)
+        case ExStructLit: return lower_struct_lit(l, e)
+        case ExCast:      return lower_cast(l, e)
+        case ExSizeof:    return scalar(iconst(l, KI64, tinfo(l, e.type).size), KI64)
+    }
+    lw_fail(l, e.line, "unsupported expression")
+    return scalar(iconst(l, KI64, 0), KI64)
+}
+
+LVal lower_name(Lower* l, Expr* e) {
+    int k = find_var(l, e.text)
+    if k >= 0 {
+        LVar v = l.vars[k]
+        if v.ty == KVoid { return aggregate(v.reg, v.type) }
+        if v.mem { return scalar(load(l, v.ty, v.reg, 0), v.ty) }
+        return scalar(v.reg, v.ty)
+    }
+    for i in 0..l.members.len {
+        if l.members[i] == e.text { return scalar(iconst(l, KI32, l.member_values[i]), KI32) }
+    }
+    if e.text == "PI" { return scalar(fconst(l, KF32, "3.14159265358979323846"), KF32) }
+    if e.text == "null" { return scalar(iconst(l, KU64, 0), KU64) }
+    lw_fail(l, e.line, "'" + e.text + "' is not a Strata name (C names need the C backend for now)")
+    return scalar(iconst(l, KI64, 0), KI64)
+}
+
+LVal lower_unary(Lower* l, Expr* e) {
+    if e.text == "&" {
+        int a = lvalue_addr(l, e.a)
+        if a < 0 { lw_fail(l, e.line, "can't take this address"); a = iconst(l, KU64, 0) }
+        return scalar(a, KU64)
+    }
+    if e.text == "*" {
+        int p = as_ty(l, lower_expr(l, e.a), KU64, e.line)
+        return load_val(l, e.rtype, p, 0)
+    }
+    LVal v = lower_expr(l, e.a)
+    if e.text == "!" {
+        return scalar(cmp(l, CEq, KU8, to_bool(l, v), iconst(l, KU8, 0)), KU8)
+    }
+    int t = promote(v.ty)
+    int x = as_ty(l, v, t, e.line)
+    if e.text == "-" { return scalar(unop(l, ONeg, t, x), t) }
+    if e.text == "~" { return scalar(unop(l, ONot, t, x), t) }
+    lw_fail(l, e.line, "unsupported operator " + e.text)
+    return v
+}
+
+// A chain like a + b + c + ... nests down its LEFT side: lower that side in a loop
+// (recursion would overflow on a long chain), combining upward.
+LVal lower_binary(Lower* l, Expr* e) {
+    Expr*[dynamic] spine = []
+    Expr* x = e
+    while x.kind == ExBinary && x.text != ".." {
+        spine.push(x)
+        x = x.a
+    }
+    LVal acc = lower_expr(l, x)
+    int k = spine.len - 1
+    while k >= 0 {
+        acc = combine(l, spine[k], acc)
+        k -= 1
+    }
+    return acc
+}
+
+int cond_of(string op) {
+    if op == "==" { return CEq }
+    if op == "!=" { return CNe }
+    if op == "<" { return CLt }
+    if op == "<=" { return CLe }
+    if op == ">" { return CGt }
+    return CGe
+}
+
+int arith_op(string op) {
+    if op == "+" { return OAdd }
+    if op == "-" { return OSub }
+    if op == "*" { return OMul }
+    if op == "/" { return ODiv }
+    if op == "%" { return OMod }
+    if op == "&" { return OAnd }
+    if op == "|" { return OOr }
+    if op == "^" { return OXor }
+    if op == "<<" { return OShl }
+    if op == ">>" { return OShr }
+    return 0 - 1
+}
+
+// `left op e.b` for binary expression e
+LVal combine(Lower* l, Expr* e, LVal left) {
+    string op = e.text
+    if op == "&&" || op == "||" {
+        int r = vreg(l, KU8)
+        copy_to(l, KU8, r, to_bool(l, left))
+        int rhs = new_label(l)
+        int done = new_label(l)
+        if op == "&&" { branch(l, r, rhs, done) } else { branch(l, r, done, rhs) }
+        label(l, rhs)
+        copy_to(l, KU8, r, to_bool(l, lower_expr(l, e.b)))
+        jump(l, done)
+        label(l, done)
+        return scalar(r, KU8)
+    }
+    LVal right = lower_expr(l, e.b)
+    TypeNode* lt = e.a.rtype
+    TypeNode* rt = e.b.rtype
+    if is_mat(lt) || is_quat(lt) {
+        TypeNode* res = e.rtype
+        int out = temp(l, tinfo(l, res).size, 4)
+        if is_mat(lt) && is_mat(rt) { call3(l, "srt_mat4_mul", KVoid, out, left.reg, right.reg) }
+        else if is_mat(lt) { call3(l, "srt_mat4_mul_vec4", KVoid, out, left.reg, right.reg) }
+        else { call3(l, "srt_quat_mul", KVoid, out, left.reg, right.reg) }
+        return aggregate(out, res)
+    }
+    if is_vec(lt) || is_vec(rt) { return vec_binary(l, e, left, right) }
+    if is_str(lt) || is_str(rt) {
+        if op == "+" { return scalar(call2(l, "srt_str_concat", KU64, left.reg, right.reg), KU64) }
+        int eq = call2(l, "srt_str_eq", KI32, left.reg, right.reg)
+        int c = CNe
+        if op == "!=" { c = CEq }
+        return scalar(cmp(l, c, KI32, eq, iconst(l, KI32, 0)), KU8)
+    }
+    if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+        int t = arith_ty(promote(left.ty), promote(right.ty))
+        return scalar(cmp(l, cond_of(op), t, as_ty(l, left, t, e.line), as_ty(l, right, t, e.line)), KU8)
+    }
+    int aop = arith_op(op)
+    if aop < 0 { lw_fail(l, e.line, "unsupported operator " + op); return left }
+    int t = arith_ty(promote(left.ty), promote(right.ty))
+    if aop == OShl || aop == OShr {
+        t = promote(left.ty)
+        return scalar(binop(l, aop, t, as_ty(l, left, t, e.line), as_ty(l, right, t, e.line)), t)
+    }
+    return scalar(binop(l, aop, t, as_ty(l, left, t, e.line), as_ty(l, right, t, e.line)), t)
+}
+
+// vector + vector, vector - vector, vector * vector, vector * scalar, scalar * vector
+LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
+    TypeNode* res = e.rtype
+    int n = vec_dim_of(res.name)
+    int out = temp(l, 4 * n, 4)
+    int op = arith_op(e.text)
+    if a.agg && b.agg {
+        for i in 0..n {
+            int x = load(l, KF32, a.reg, 4 * i)
+            int y = load(l, KF32, b.reg, 4 * i)
+            store(l, KF32, out, 4 * i, binop(l, op, KF32, x, y))
+        }
+    } else {
+        // the scalar becomes a float first (C passes it as a float parameter)
+        LVal vv = a
+        LVal sv = b
+        if !a.agg { vv = b; sv = a }
+        int s = as_ty(l, sv, KF32, e.line)
+        for i in 0..n {
+            store(l, KF32, out, 4 * i, binop(l, OMul, KF32, load(l, KF32, vv.reg, 4 * i), s))
+        }
+    }
+    return aggregate(out, res)
+}
+
+// ---- fields, indexing, addresses -------------------------------------------------------
+
+// Field `name` of a value of type `t` (a struct, vector or array header): its offset and type.
+struct FieldRef { bool found; int off; TypeNode* type }
+
+FieldRef field_of(Lower* l, TypeNode* t, string name) {
+    if t != null && t.kind == TyDynArray {
+        if name == "len" { return FieldRef{ true, 8, named("int") } }
+    } else if t != null && t.kind == TyNamed {
+        int d = vec_dim_of(t.name)
+        if d > 0 && name.len == 1 {
+            int k = 0 - 1
+            if name == "x" { k = 0 } else if name == "y" { k = 1 } else if name == "z" { k = 2 } else if name == "w" { k = 3 }
+            if k >= 0 { return FieldRef{ true, 4 * k, named("float") } }
+        }
+        int si = struct_index(l, t.name)
+        if si >= 0 {
+            layout(l, si)
+            for i in 0..l.structs[si].fields.len {
+                if l.structs[si].fields[i].name == name { return FieldRef{ true, l.structs[si].fields[i].off, l.structs[si].fields[i].type } }
+            }
+        }
+    }
+    return FieldRef{ false, 0, null }
+}
+
+// The address of the aggregate (or pointee) that field expression `e` reads from, and
+// the type there.
+struct Base { int addr; TypeNode* t }
+
+Base field_base(Lower* l, Expr* obj) {
+    if is_ptr(obj.rtype) {
+        int p = as_ty(l, lower_expr(l, obj), KU64, obj.line)
+        return Base{ p, obj.rtype.elem }
+    }
+    int a = lvalue_addr(l, obj)
+    if a < 0 {
+        LVal v = lower_expr(l, obj)   // a temporary aggregate: read it in place
+        if !v.agg { lw_fail(l, obj.line, "this value has no fields"); return Base{ iconst(l, KU64, 0), obj.rtype } }
+        a = v.reg
+    }
+    return Base{ a, obj.rtype }
+}
+
+LVal lower_field(Lower* l, Expr* e) {
+    TypeNode* ot = e.a.rtype
+    if is_str(ot) && e.field == "len" {
+        return scalar(call1(l, "srt_str_len", KI64, as_ty(l, lower_expr(l, e.a), KU64, e.line)), KI64)
+    }
+    if is_vec(ot) && e.field.len > 1 {   // swizzle: v.xy -> a new vec2
+        Base b = field_base(l, e.a)
+        int n = e.field.len
+        int out = temp(l, 4 * n, 4)
+        for i in 0..n {
+            FieldRef fr = field_of(l, ot, substr(e.field, i, 1))
+            store(l, KF32, out, 4 * i, load(l, KF32, b.addr, fr.off))
+        }
+        return aggregate(out, e.rtype)
+    }
+    int a = field_addr(l, e)
+    return load_val(l, e.rtype, a, 0)
+}
+
+int field_addr(Lower* l, Expr* e) {
+    Base b = field_base(l, e.a)
+    FieldRef fr = field_of(l, b.t, e.field)
+    if !fr.found { lw_fail(l, e.line, "unsupported field '" + e.field + "'"); return b.addr }
+    return addr_plus(l, b.addr, fr.off)
+}
+
+int index_addr(Lower* l, Expr* e) {
+    TypeNode* ot = e.a.rtype
+    int idx = as_ty(l, lower_expr(l, e.b), KI64, e.line)
+    int base = 0 - 1
+    int size = 1
+    if is_dynarr(ot) {
+        Base b = field_base(l, e.a)
+        base = load(l, KU64, b.addr, 0)
+        size = tinfo(l, ot.elem).size
+    } else if is_str(ot) {
+        base = as_ty(l, lower_expr(l, e.a), KU64, e.line)
+    } else if is_ptr(ot) || (ot != null && (ot.kind == TyArray || ot.kind == TyFixedArray)) {
+        base = as_ty(l, lower_expr(l, e.a), KU64, e.line)
+        size = tinfo(l, ot.elem).size
+    } else {
+        lw_fail(l, e.line, "can't index this")
+        return iconst(l, KU64, 0)
+    }
+    int off = idx
+    if size != 1 { off = binop(l, OMul, KI64, idx, iconst(l, KI64, size)) }
+    return binop(l, OAdd, KU64, base, off)
+}
+
+// The address of an lvalue expression, or -1 if it has none (a scalar in a vreg, a
+// temporary).
+int lvalue_addr(Lower* l, Expr* e) {
+    if e.kind == ExName {
+        int k = find_var(l, e.text)
+        if k >= 0 && l.vars[k].mem { return l.vars[k].reg }
+        return 0 - 1
+    }
+    if e.kind == ExField {
+        if is_vec(e.a.rtype) && e.field.len > 1 { return 0 - 1 }
+        if is_str(e.a.rtype) { return 0 - 1 }
+        return field_addr(l, e)
+    }
+    if e.kind == ExIndex { return index_addr(l, e) }
+    if e.kind == ExUnary && e.text == "*" { return as_ty(l, lower_expr(l, e.a), KU64, e.line) }
+    return 0 - 1
+}
+
+// ---- literals of aggregates ------------------------------------------------------------------
+
+LVal lower_struct_lit(Lower* l, Expr* e) {
+    TypeNode* t = named(e.type_name)
+    TInfo ti = tinfo(l, t)
+    int out = temp(l, ti.size, ti.align)
+    zero_mem(l, out, ti.size)
+    int si = struct_index(l, e.type_name)
+    for i in 0..e.items.len {
+        if si >= 0 && i < l.structs[si].fields.len {
+            FieldLay fl = l.structs[si].fields[i]
+            store_val(l, fl.type, out, fl.off, lower_expr(l, e.items[i]), e.line)
+        }
+    }
+    return aggregate(out, t)
+}
+
+TypeNode* elem_of(TypeNode* t) {
+    if t != null && t.kind == TyDynArray && t.elem != null { return t.elem }
+    return named("int")
+}
+
+// An empty dynamic array header at `addr` for elements of type `elem`.
+void init_array(Lower* l, int addr, TypeNode* elem) {
+    zero_mem(l, addr, 32)
+    store(l, KI64, addr, 24, iconst(l, KI64, tinfo(l, elem).size))
+}
+
+LVal lower_array_lit(Lower* l, Expr* e) {
+    TypeNode* elem = elem_of(e.rtype)
+    TInfo ei = tinfo(l, elem)
+    int out = temp(l, 32, 8)
+    init_array(l, out, elem)
+    if e.items.len > 0 {
+        int tmp = temp(l, ei.size, ei.align)
+        for i in 0..e.items.len {
+            store_val(l, elem, tmp, 0, lower_expr(l, e.items[i]), e.line)
+            call2(l, "srt_arr_push", KVoid, out, tmp)
+        }
+    }
+    TypeNode* t = new_type(TyDynArray, 0, 0)
+    t.elem = elem
+    return aggregate(out, t)
+}
+
+LVal lower_cast(Lower* l, Expr* e) {
+    LVal v = lower_expr(l, e.a)
+    TInfo ti = tinfo(l, e.type)
+    if ti.kind != TK_SCALAR() || v.agg { lw_fail(l, e.line, "unsupported cast"); return v }
+    if e.type.kind == TyNamed && e.type.name == "bool" { return scalar(to_bool(l, v), KU8) }
+    return scalar(conv(l, v.reg, v.ty, ti.ty), ti.ty)
+}
+
+// ---- calls --------------------------------------------------------------------------------
+
+Decl* find_func(Lower* l, string name) {
+    Decl* found = null
+    for i in 0..l.funcs.len { if l.funcs[i].name == name { found = l.funcs[i] } }
+    return found
+}
+
+LVal lower_args_f32(Lower* l, Expr* e, int i) { return scalar(as_ty(l, lower_expr(l, e.items[i]), KF32, e.line), KF32) }
+
+int vec_addr(Lower* l, Expr* e, int line) {
+    LVal v = lower_expr(l, e)
+    if !v.agg { lw_fail(l, line, "expected a vector"); return iconst(l, KU64, 0) }
+    return v.reg
+}
+
+// dot(a, b) for vectors of n components at addresses a, b
+int vec_dot(Lower* l, int a, int b, int n) {
+    int s = binop(l, OMul, KF32, load(l, KF32, a, 0), load(l, KF32, b, 0))
+    for i in 1..n {
+        s = binop(l, OAdd, KF32, s, binop(l, OMul, KF32, load(l, KF32, a, 4 * i), load(l, KF32, b, 4 * i)))
+    }
+    return s
+}
+
+LVal lower_call(Lower* l, Expr* e) {
+    Expr* callee = e.a
+    if callee.kind == ExField {
+        if callee.field == "new" && e.items.len == 1 {
+            int arena = lvalue_addr(l, callee.a)
+            if arena < 0 { arena = lower_expr(l, callee.a).reg }
+            TypeNode* t = e.items[0].rtype
+            if t == null { t = named(e.items[0].text) }
+            int size = tinfo(l, t).size
+            return scalar(call2(l, "srt_arena_alloc", KU64, arena, iconst(l, KI64, size)), KU64)
+        }
+        if callee.field == "push" && e.items.len == 1 && is_dynarr(callee.a.rtype) {
+            int hdr = lvalue_addr(l, callee.a)
+            if hdr < 0 { hdr = lower_expr(l, callee.a).reg }
+            TypeNode* elem = elem_of(callee.a.rtype)
+            TInfo ei = tinfo(l, elem)
+            int tmp = temp(l, ei.size, ei.align)
+            store_val(l, elem, tmp, 0, lower_expr(l, e.items[0]), e.line)
+            call2(l, "srt_arr_push", KVoid, hdr, tmp)
+            return scalar(iconst(l, KI64, 0), KI64)
+        }
+        lw_fail(l, e.line, "unsupported method call ." + callee.field)
+        return scalar(iconst(l, KI64, 0), KI64)
+    }
+    if callee.kind != ExName { lw_fail(l, e.line, "unsupported call"); return scalar(iconst(l, KI64, 0), KI64) }
+    string nm = callee.text
+    int n = e.items.len
+
+    if nm == "print" && n == 1 {
+        Expr* arg = e.items[0]
+        LVal v = lower_expr(l, arg)
+        if arg.kind == ExStringLit || is_str(arg.rtype) { call1(l, "srt_print_str", KVoid, v.reg) }
+        else if v.agg { lw_fail(l, e.line, "can't print a " + type_text(v.t)) }
+        else if ir_is_float(v.ty) { call1(l, "srt_print_f64", KVoid, conv(l, v.reg, v.ty, KF64)) }
+        else { call1(l, "srt_print_i64", KVoid, conv(l, v.reg, v.ty, KI64)) }
+        return scalar(iconst(l, KI64, 0), KI64)
+    }
+    if nm == "arena" && n == 0 {
+        int out = temp(l, 8, 8)
+        zero_mem(l, out, 8)
+        return aggregate(out, named("Arena"))
+    }
+    int dim = vec_dim_of(nm)
+    if dim > 0 && nm != "quat" {
+        int out = temp(l, 4 * dim, 4)
+        if n == 1 {
+            int s = lower_args_f32(l, e, 0).reg
+            for i in 0..dim { store(l, KF32, out, 4 * i, s) }
+        } else {
+            for i in 0..n { store(l, KF32, out, 4 * i, lower_args_f32(l, e, i).reg) }
+        }
+        return aggregate(out, named(nm))
+    }
+    if nm == "dot" && n == 2 {
+        int d = vec_dim_of(e.items[0].rtype.name)
+        int a = vec_addr(l, e.items[0], e.line)
+        int b = vec_addr(l, e.items[1], e.line)
+        return scalar(vec_dot(l, a, b, d), KF32)
+    }
+    if nm == "length" && n == 1 {
+        int d = vec_dim_of(e.items[0].rtype.name)
+        int a = vec_addr(l, e.items[0], e.line)
+        return scalar(unop(l, OSqrt, KF32, vec_dot(l, a, a, d)), KF32)
+    }
+    if nm == "normalize" && n == 1 {
+        int d = vec_dim_of(e.items[0].rtype.name)
+        int a = vec_addr(l, e.items[0], e.line)
+        int out = temp(l, 4 * d, 4)
+        copy_agg(l, e.items[0].rtype, out, a, 4 * d)
+        int len = unop(l, OSqrt, KF32, vec_dot(l, a, a, d))
+        int scale = new_label(l)
+        int done = new_label(l)
+        branch(l, cmp(l, CEq, KF32, len, fconst(l, KF32, "0.0")), done, scale)
+        label(l, scale)
+        int inv = binop(l, ODiv, KF32, fconst(l, KF32, "1.0"), len)
+        for i in 0..d { store(l, KF32, out, 4 * i, binop(l, OMul, KF32, load(l, KF32, out, 4 * i), inv)) }
+        jump(l, done)
+        label(l, done)
+        return aggregate(out, e.rtype)
+    }
+    if nm == "cross" && n == 2 {
+        int a = vec_addr(l, e.items[0], e.line)
+        int b = vec_addr(l, e.items[1], e.line)
+        int out = temp(l, 12, 4)
+        // (a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x)
+        for i in 0..3 {
+            int j = (i + 1) % 3
+            int k = (i + 2) % 3
+            int p = binop(l, OMul, KF32, load(l, KF32, a, 4 * j), load(l, KF32, b, 4 * k))
+            int q = binop(l, OMul, KF32, load(l, KF32, a, 4 * k), load(l, KF32, b, 4 * j))
+            store(l, KF32, out, 4 * i, binop(l, OSub, KF32, p, q))
+        }
+        return aggregate(out, named("vec3"))
+    }
+    if (nm == "min" || nm == "max") && n == 2 {
+        int a = lower_args_f32(l, e, 0).reg
+        int b = lower_args_f32(l, e, 1).reg
+        int r = vreg(l, KF32)
+        copy_to(l, KF32, r, b)               // min: a < b ? a : b   max: a > b ? a : b
+        int take = new_label(l)
+        int done = new_label(l)
+        int c = CLt
+        if nm == "max" { c = CGt }
+        branch(l, cmp(l, c, KF32, a, b), take, done)
+        label(l, take)
+        copy_to(l, KF32, r, a)
+        jump(l, done)
+        label(l, done)
+        return scalar(r, KF32)
+    }
+    if nm == "clamp" && n == 3 {
+        int x = lower_args_f32(l, e, 0).reg
+        int lo = lower_args_f32(l, e, 1).reg
+        int hi = lower_args_f32(l, e, 2).reg
+        int r = vreg(l, KF32)                  // x < lo ? lo : (x > hi ? hi : x)
+        int low = new_label(l)
+        int notlow = new_label(l)
+        int high = new_label(l)
+        int done = new_label(l)
+        copy_to(l, KF32, r, x)
+        branch(l, cmp(l, CLt, KF32, x, lo), low, notlow)
+        label(l, low)
+        copy_to(l, KF32, r, lo)
+        jump(l, done)
+        label(l, notlow)
+        branch(l, cmp(l, CGt, KF32, x, hi), high, done)
+        label(l, high)
+        copy_to(l, KF32, r, hi)
+        jump(l, done)
+        label(l, done)
+        return scalar(r, KF32)
+    }
+    if nm == "lerp" && n == 3 {
+        int a = lower_args_f32(l, e, 0).reg
+        int b = lower_args_f32(l, e, 1).reg
+        int t = lower_args_f32(l, e, 2).reg
+        return scalar(binop(l, OAdd, KF32, a, binop(l, OMul, KF32, binop(l, OSub, KF32, b, a), t)), KF32)
+    }
+    if nm == "alloc" && n == 1 {
+        LVal v = lower_expr(l, e.items[0])
+        TypeNode* t = e.items[0].rtype
+        TInfo ti = tinfo(l, t)
+        int p = call1(l, "srt_heap_alloc", KU64, iconst(l, KI64, ti.size))
+        store_val(l, t, p, 0, v, e.line)
+        return scalar(p, KU64)
+    }
+    if nm == "substr" && n == 3 {
+        int s = as_ty(l, lower_expr(l, e.items[0]), KU64, e.line)
+        int a = as_ty(l, lower_expr(l, e.items[1]), KI64, e.line)
+        int c = as_ty(l, lower_expr(l, e.items[2]), KI64, e.line)
+        return scalar(call3(l, "srt_str_sub", KU64, s, a, c), KU64)
+    }
+    if nm == "int_to_str" && n == 1 {
+        return scalar(call1(l, "srt_str_from_int", KU64, as_ty(l, lower_expr(l, e.items[0]), KI64, e.line)), KU64)
+    }
+    if nm == "read_file" && n == 1 {
+        return scalar(call1(l, "srt_read_file", KU64, as_ty(l, lower_expr(l, e.items[0]), KU64, e.line)), KU64)
+    }
+    if nm == "write_file" && n == 2 {
+        int p = as_ty(l, lower_expr(l, e.items[0]), KU64, e.line)
+        int d = as_ty(l, lower_expr(l, e.items[1]), KU64, e.line)
+        return scalar(call2(l, "srt_write_file", KU8, p, d), KU8)
+    }
+    if nm == "cstr" && n == 1 { return lower_expr(l, e.items[0]) }
+    if nm == "args" && n == 0 {
+        int out = temp(l, 32, 8)
+        call1(l, "srt_args", KVoid, out)
+        TypeNode* t = new_type(TyDynArray, 0, 0)
+        t.elem = named("string")
+        return aggregate(out, t)
+    }
+    if is_math_builtin(nm) { return lower_math_builtin(l, e, nm) }
+
+    Decl* d = find_func(l, nm)
+    if d == null {
+        lw_fail(l, e.line, "'" + nm + "' is not a Strata function (calling C needs the C backend for now)")
+        return scalar(iconst(l, KI64, 0), KI64)
+    }
+    return call_strata(l, d, e)
+}
+
+bool is_math_builtin(string nm) {
+    return nm == "mat4_identity" || nm == "quat_identity" || nm == "mat4_translate" || nm == "mat4_scale" ||
+           nm == "mat4_rotate" || nm == "quat_axis_angle" || nm == "mat4_perspective" || nm == "mat4_look_at" ||
+           nm == "quat_normalize" || nm == "quat_to_mat4" || nm == "quat_rotate"
+}
+
+// Matrices and quaternions: the runtime computes them (results through a pointer).
+LVal lower_math_builtin(Lower* l, Expr* e, string nm) {
+    TypeNode* res = e.rtype
+    int out = temp(l, tinfo(l, res).size, 4)
+    int[dynamic] args = []
+    args.push(out)
+    for i in 0..e.items.len {
+        Expr* a = e.items[i]
+        if is_vec(a.rtype) || is_quat(a.rtype) || is_mat(a.rtype) { args.push(vec_addr(l, a, e.line)) }
+        else { args.push(as_ty(l, lower_expr(l, a), KF32, e.line)) }
+    }
+    call(l, "srt_" + nm, KVoid, args)
+    return aggregate(out, res)
+}
+
+// A call to a Strata function, by the C calling convention.
+LVal call_strata(Lower* l, Decl* d, Expr* e) {
+    TInfo ri = tinfo(l, d.ret)
+    int[dynamic] args = []
+    int out = 0 - 1
+    if abi_sret(ri) {
+        out = temp(l, ri.size, ri.align)
+        args.push(out)
+    }
+    for i in 0..e.items.len {
+        if i < d.params.len {
+            TypeNode* pt = d.params[i].type
+            TInfo pi = tinfo(l, pt)
+            LVal v = lower_expr(l, e.items[i])
+            if pi.kind == TK_SCALAR() { args.push(as_ty(l, v, pi.ty, e.line)) }
+            else if !v.agg { lw_fail(l, e.line, "expected a " + type_text(pt)) }
+            else if abi_small(pi.size) { args.push(load(l, abi_int_of(pi.size), v.reg, 0)) }
+            else {
+                int copy = temp(l, pi.size, pi.align)   // the callee may change its copy
+                copy_mem(l, copy, v.reg, pi.size)
+                args.push(copy)
+            }
+        }
+    }
+    if ri.kind == TK_VOID() {
+        call(l, d.name, KVoid, args)
+        return scalar(iconst(l, KI64, 0), KI64)
+    }
+    if ri.kind == TK_SCALAR() { return scalar(call(l, d.name, ri.ty, args), ri.ty) }
+    if out >= 0 {
+        call(l, d.name, KVoid, args)
+        return aggregate(out, d.ret)
+    }
+    int bits = call(l, d.name, abi_int_of(ri.size), args)
+    int box = temp(l, ri.size, ri.align)
+    store(l, abi_int_of(ri.size), box, 0, bits)
+    return aggregate(box, d.ret)
+}
+
+// ---- statements ----------------------------------------------------------------------------
+
+// Free the regions opened since `from` (innermost first).
+void free_regions(Lower* l, int from) {
+    int k = l.regions.len - 1
+    while k >= from {
+        call1(l, "srt_arena_free", KVoid, l.regions[k])
+        k -= 1
+    }
+}
+
+void lower_block(Lower* l, Stmt* b) {
+    push_scope(l)
+    if b != null {
+        if b.kind == StBlock { for i in 0..b.stmts.len { lower_stmt(l, b.stmts[i]) } }
+        else { lower_stmt(l, b) }
+    }
+    pop_scope(l)
+}
+
+void lower_stmt(Lower* l, Stmt* s) {
+    if s == null { return }
+    switch s.kind {
+        case StBlock: lower_block(l, s)
+        case StVar:
+            {
+                if s.type == null { lw_fail(l, s.line, "a variable without a known type") }
+                else if s.init != null {
+                    LVal v = lower_expr(l, s.init)
+                    LVar lv = declare(l, s.name, s.type, s.line)
+                    assign_var(l, lv, v, s.line)
+                } else {
+                    LVar lv = declare(l, s.name, s.type, s.line)
+                    TInfo ti = tinfo(l, s.type)
+                    if s.type.kind == TyDynArray { init_array(l, lv.reg, s.type.elem) }
+                    else if lv.mem { zero_mem(l, lv.reg, ti.size) }
+                    else if ir_is_float(lv.ty) { copy_to(l, lv.ty, lv.reg, fconst(l, lv.ty, "0.0")) }
+                    else { copy_to(l, lv.ty, lv.reg, iconst(l, lv.ty, 0)) }
+                }
+            }
+        case StExprStmt: lower_expr(l, s.expr)
+        case StAssign: lower_assign(l, s)
+        case StIf:
+            {
+                int c = to_bool(l, lower_expr(l, s.cond))
+                int then_l = new_label(l)
+                int else_l = new_label(l)
+                int done = new_label(l)
+                branch(l, c, then_l, else_l)
+                label(l, then_l)
+                lower_block(l, s.then_block)
+                jump(l, done)
+                label(l, else_l)
+                if s.else_branch != null { lower_block(l, s.else_branch) }
+                jump(l, done)
+                label(l, done)
+            }
+        case StWhile:
+            {
+                int head = new_label(l)
+                int body = new_label(l)
+                int done = new_label(l)
+                label(l, head)
+                branch(l, to_bool(l, lower_expr(l, s.cond)), body, done)
+                label(l, body)
+                loop_body(l, s.body, done, head)
+                jump(l, head)
+                label(l, done)
+            }
+        case StForIn: lower_for(l, s)
+        case StSwitch: lower_switch(l, s)
+        case StRegion:
+            {
+                push_scope(l)
+                int arena = temp(l, 8, 8)
+                zero_mem(l, arena, 8)
+                if s.name.len > 0 { l.vars.push(LVar{ s.name, true, arena, KVoid, named("Arena") }) }
+                l.regions.push(arena)
+                if s.body != null { for i in 0..s.body.stmts.len { lower_stmt(l, s.body.stmts[i]) } }
+                l.regions.len = l.regions.len - 1
+                call1(l, "srt_arena_free", KVoid, arena)
+                pop_scope(l)
+            }
+        case StBreak, StContinue:
+            {
+                int top = l.break_labels.len - 1
+                if top < 0 { lw_fail(l, s.line, "break/continue outside a loop") }
+                else {
+                    free_regions(l, l.loop_regions[top])
+                    if s.kind == StBreak { jump(l, l.break_labels[top]) } else { jump(l, l.cont_labels[top]) }
+                    label(l, new_label(l))   // whatever follows is unreachable: its own block
+                }
+            }
+        case StReturn: lower_return(l, s)
+    }
+}
+
+// a loop's body, with break / continue pointing at `brk` / `cont`
+void loop_body(Lower* l, Stmt* body, int brk, int cont) {
+    l.break_labels.push(brk)
+    l.cont_labels.push(cont)
+    l.loop_regions.push(l.regions.len)
+    lower_block(l, body)
+    int top = l.break_labels.len - 1
+    l.break_labels.len = top
+    l.cont_labels.len = top
+    l.loop_regions.len = top
+}
+
+void lower_for(Lower* l, Stmt* s) {
+    Expr* it = s.iter
+    push_scope(l)
+    if it != null && it.kind == ExBinary && it.text == ".." {
+        // for i in lo..hi: `hi` is evaluated every iteration (as the C backend does)
+        LVar i = declare(l, s.name, named("int"), s.line)
+        assign_var(l, i, lower_expr(l, it.a), s.line)
+        int head = new_label(l)
+        int body = new_label(l)
+        int step = new_label(l)
+        int done = new_label(l)
+        label(l, head)
+        int cur = var_value(l, i)
+        int hi = as_ty(l, lower_expr(l, it.b), KI64, s.line)
+        branch(l, cmp(l, CLt, KI64, cur, hi), body, done)
+        label(l, body)
+        loop_body(l, s.body, done, step)
+        label(l, step)
+        assign_var(l, i, scalar(binop(l, OAdd, KI64, var_value(l, i), iconst(l, KI64, 1)), KI64), s.line)
+        jump(l, head)
+        label(l, done)
+    } else if it != null && is_dynarr(it.rtype) {
+        // for x in xs: over a copy of the array's header, taken once
+        LVal arr = lower_expr(l, it)
+        int hdr = temp(l, 32, 8)
+        copy_mem(l, hdr, arr.reg, 32)
+        TypeNode* elem = elem_of(it.rtype)
+        int size = tinfo(l, elem).size
+        int idx = vreg(l, KI64)
+        copy_to(l, KI64, idx, iconst(l, KI64, 0))
+        LVar x = declare(l, s.name, elem, s.line)
+        int head = new_label(l)
+        int body = new_label(l)
+        int step = new_label(l)
+        int done = new_label(l)
+        label(l, head)
+        branch(l, cmp(l, CLt, KI64, idx, load(l, KI64, hdr, 8)), body, done)
+        label(l, body)
+        int addr = binop(l, OAdd, KU64, load(l, KU64, hdr, 0), binop(l, OMul, KI64, idx, iconst(l, KI64, size)))
+        assign_var(l, x, load_val(l, elem, addr, 0), s.line)
+        loop_body(l, s.body, done, step)
+        label(l, step)
+        copy_to(l, KI64, idx, binop(l, OAdd, KI64, idx, iconst(l, KI64, 1)))
+        jump(l, head)
+        label(l, done)
+    } else {
+        lw_fail(l, s.line, "unsupported for-in")
+    }
+    pop_scope(l)
+}
+
+int var_value(Lower* l, LVar v) {
+    if v.mem { return load(l, v.ty, v.reg, 0) }
+    return v.reg
+}
+
+void lower_switch(Lower* l, Stmt* s) {
+    LVal subj = lower_expr(l, s.subject)
+    int t = promote(subj.ty)
+    int x = as_ty(l, subj, t, s.line)
+    int done = new_label(l)
+    int[dynamic] bodies = []
+    int dflt = done
+    for i in 0..s.cases.len {
+        int b = new_label(l)
+        bodies.push(b)
+        if s.cases[i].is_default { dflt = b }
+    }
+    for i in 0..s.cases.len {
+        SwitchCase sc = s.cases[i]
+        for j in 0..sc.values.len {
+            int next = new_label(l)
+            int v = as_ty(l, lower_expr(l, sc.values[j]), t, s.line)
+            branch(l, cmp(l, CEq, t, x, v), bodies[i], next)
+            label(l, next)
+        }
+    }
+    jump(l, dflt)
+    for i in 0..s.cases.len {
+        label(l, bodies[i])
+        lower_block(l, s.cases[i].body)
+        jump(l, done)
+    }
+    label(l, done)
+}
+
+void lower_assign(Lower* l, Stmt* s) {
+    Expr* tg = s.target
+    TypeNode* tt = tg.rtype
+    string op = s.op
+    TInfo ti = tinfo(l, tt)
+    int k = 0 - 1
+    if tg.kind == ExName { k = find_var(l, tg.text) }
+    bool in_reg = k >= 0 && !l.vars[k].mem
+    int addr = 0 - 1
+    if !in_reg {
+        addr = lvalue_addr(l, tg)
+        if addr < 0 { lw_fail(l, s.line, "can't assign to this"); return }
+    }
+    LVal val = lower_expr(l, s.value)
+    if op != "=" {
+        LVal cur = scalar(0 - 1, ti.ty)
+        if ti.kind == TK_AGG() { cur = aggregate(addr, tt) }
+        else if in_reg { cur = scalar(l.vars[k].reg, ti.ty) }
+        else { cur = scalar(load(l, ti.ty, addr, 0), ti.ty) }
+        string bop = substr(op, 0, op.len - 1)
+        Expr* fake = new_expr(ExBinary, s.line, s.col)   // `target op value`, typed like the target
+        fake.text = bop
+        fake.a = tg
+        fake.b = s.value
+        fake.rtype = tt
+        if is_vec(tt) { val = vec_binary(l, fake, cur, val) }
+        else { val = combine_values(l, fake, cur, val) }
+    }
+    if in_reg { assign_var(l, l.vars[k], val, s.line) }
+    else { store_val(l, tt, addr, 0, val, s.line) }
+}
+
+// `left op right` with both sides already lowered (compound assignment)
+LVal combine_values(Lower* l, Expr* e, LVal left, LVal right) {
+    int aop = arith_op(e.text)
+    if aop < 0 { lw_fail(l, e.line, "unsupported operator " + e.text + "="); return left }
+    int t = arith_ty(promote(left.ty), promote(right.ty))
+    if aop == OShl || aop == OShr { t = promote(left.ty) }
+    return scalar(binop(l, aop, t, as_ty(l, left, t, e.line), as_ty(l, right, t, e.line)), t)
+}
+
+void lower_return(Lower* l, Stmt* s) {
+    TInfo ri = tinfo(l, l.ret_type)
+    if s.expr == null || ri.kind == TK_VOID() {
+        if s.expr != null { lower_expr(l, s.expr) }
+        free_regions(l, 0)
+        int r = 0 - 1
+        if ri.kind == TK_SCALAR() { r = iconst(l, ri.ty, 0) }   // a bare `return` in main
+        emit(l, new_ins(ORet, KVoid, 0 - 1, r, 0 - 1))
+    } else {
+        LVal v = lower_expr(l, s.expr)
+        int r = 0 - 1
+        if ri.kind == TK_SCALAR() { r = as_ty(l, v, ri.ty, s.line) }
+        else if !v.agg { lw_fail(l, s.line, "expected a " + type_text(l.ret_type)) }
+        else if l.sret >= 0 { copy_mem(l, l.sret, v.reg, ri.size); r = l.sret }
+        else { r = load(l, abi_int_of(ri.size), v.reg, 0) }
+        free_regions(l, 0)
+        emit(l, new_ins(ORet, KVoid, 0 - 1, r, 0 - 1))
+    }
+    label(l, new_label(l))   // whatever follows is unreachable: its own block
+}
+
+// ---- functions ---------------------------------------------------------------------------------
+
+void begin_function(Lower* l, string name, bool global) {
+    l.f = new_ir_func(name, global)
+    LVar[dynamic] vs = []
+    l.vars = vs
+    int[dynamic] sc = []
+    l.scopes = sc
+    string[dynamic] at = []
+    l.addr_taken = at
+    int[dynamic] r = []
+    l.regions = r
+    l.sret = 0 - 1
+}
+
+int param(Lower* l, int ty, int index) {
+    int r = vreg(l, ty)
+    Ins i = new_ins(OParam, ty, r, 0 - 1, 0 - 1)
+    i.imm = index
+    emit(l, i)
+    return r
+}
+
+void lower_function(Lower* l, Decl* d) {
+    begin_function(l, d.name, true)
+    scan_stmt(l, d.body)
+    l.ret_type = d.ret
+    TInfo ri = tinfo(l, d.ret)
+    int np = 0
+    if abi_sret(ri) {
+        l.f.param_types.push(KU64)
+        l.f.ret_ty = KU64
+        l.sret = param(l, KU64, 0)
+        np = 1
+    } else if ri.kind == TK_AGG() {
+        l.f.ret_ty = abi_int_of(ri.size)
+    } else if ri.kind == TK_SCALAR() {
+        l.f.ret_ty = ri.ty
+    }
+    // the incoming arguments first (they arrive in registers), then bind them
+    int[dynamic] incoming = []
+    for i in 0..d.params.len {
+        int pty = abi_pass_ty(tinfo(l, d.params[i].type))
+        l.f.param_types.push(pty)
+        incoming.push(param(l, pty, np + i))
+    }
+    push_scope(l)
+    for i in 0..d.params.len {
+        TypeNode* pt = d.params[i].type
+        TInfo pi = tinfo(l, pt)
+        LVar v = declare(l, d.params[i].name, pt, d.line)
+        if pi.kind == TK_SCALAR() { assign_var(l, v, scalar(incoming[i], pi.ty), d.line) }
+        else if abi_small(pi.size) { store(l, abi_int_of(pi.size), v.reg, 0, incoming[i]) }
+        else { copy_mem(l, v.reg, incoming[i], pi.size) }
+    }
+    lower_block(l, d.body)
+    pop_scope(l)
+    // falling off the end
+    if ri.kind == TK_VOID() { emit(l, new_ins(ORet, KVoid, 0 - 1, 0 - 1, 0 - 1)) }
+    else if l.sret >= 0 { emit(l, new_ins(ORet, KVoid, 0 - 1, l.sret, 0 - 1)) }
+    else { emit(l, new_ins(ORet, KVoid, 0 - 1, iconst(l, l.f.ret_ty, 0), 0 - 1)) }
+    l.prog.funcs.push(l.f)
+}
+
+// The top-level code: int main(int argc, char** argv)
+void lower_main(Lower* l, Program prog) {
+    begin_function(l, "main", true)
+    for i in 0..prog.main.len { scan_stmt(l, prog.main[i]) }
+    l.ret_type = named("i32")
+    l.f.ret_ty = KI32
+    l.f.param_types.push(KI32)
+    l.f.param_types.push(KU64)
+    int argc = param(l, KI32, 0)
+    int argv = param(l, KU64, 1)
+    call2(l, "srt_set_args", KVoid, argc, argv)
+    push_scope(l)
+    for i in 0..prog.main.len { lower_stmt(l, prog.main[i]) }
+    pop_scope(l)
+    emit(l, new_ins(ORet, KVoid, 0 - 1, iconst(l, KI32, 0), 0 - 1))
+    l.prog.funcs.push(l.f)
+}
+
+// ---- the program ------------------------------------------------------------------------------------
+
+export Lower* new_lower() {
+    Decl*[dynamic] fs = []
+    StructLay[dynamic] ss = []
+    string[dynamic] es = []
+    string[dynamic] ms = []
+    int[dynamic] mv = []
+    LVar[dynamic] vs = []
+    int[dynamic] sc = []
+    string[dynamic] at = []
+    int[dynamic] bl = []
+    int[dynamic] cl = []
+    int[dynamic] lr = []
+    int[dynamic] rg = []
+    return alloc(Lower{ true, "", new_ir_program(), fs, ss, es, ms, mv, new_ir_func("", false),
+                        vs, sc, at, bl, cl, lr, rg, null, 0 - 1, 0 })
+}
+
+// Lower a checked program. `with_main`: also the top-level code (not for a dll).
+export bool lower_program(Lower* l, Program prog, bool with_main) {
+    for i in 0..prog.decls.len {
+        Decl* d = prog.decls[i]
+        if d.kind == DcInclude { lw_fail(l, d.line, "imports C header " + d.path + " (the native backend can't read C headers yet)") }
+        if d.kind == DcFunc { l.funcs.push(d) }
+        if d.kind == DcEnum {
+            l.enums.push(d.name)
+            for m in 0..d.members.len { l.members.push(d.members[m]); l.member_values.push(m) }
+        }
+        if d.kind == DcStruct {
+            FieldLay[dynamic] fl = []
+            for k in 0..d.fields.len { fl.push(FieldLay{ d.fields[k].name, 0, d.fields[k].type }) }
+            l.structs.push(StructLay{ d.name, 0, 1, fl, 0 })
+        }
+    }
+    if !l.ok { return false }
+    for i in 0..l.funcs.len { lower_function(l, l.funcs[i]) }
+    if with_main { lower_main(l, prog) }
+    return l.ok
+}

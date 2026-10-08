@@ -28,13 +28,18 @@ foo.strata
    │
    ▼  checker      AST → typed AST         (name resolution, types, inference, regions)
 typed AST
-   │
-   ▼  codegen      typed AST → C source
- foo.c
-   │
-   ▼  tcc / gcc / clang
- native executable
+   ├──────────────────────────────┐
+   ▼  lower    typed AST → IR      ▼  codegen   typed AST → C source   (the C backend)
+  IR                              foo.c
+   │                               │
+   ▼  opt      IR → better IR,     ▼  gcc / cc / clang
+   │           registers          native executable
+   ▼  x64      IR → assembly       (the native backend, the default where it can)
+ foo.s  →  assembler + linker  →  native executable
 ```
+
+Two backends share everything up to the typed AST. The native one is Strata's own:
+`ir.strata` is target-independent, so another CPU is another `x64.strata`-like file.
 
 Data flows **down only**. A later phase reads the previous phase's output; **no phase
 ever reaches backward or sideways.**
@@ -43,8 +48,8 @@ ever reaches backward or sideways.**
 
 ## 2. File layout (mirrors D--)
 
-**The compiler is written in Strata** (since v1.0.0; it was originally written in D--, now
-in `archive/`). `build.ps1` (Windows) / `build.sh` (macOS, Linux) bootstraps it: stage0 (a
+**The compiler is written in Strata** (since v1.0.0; it was originally written in D--, removed in
+2.0 and still in git history). `build.ps1` (Windows) / `build.sh` (macOS, Linux) bootstraps it: stage0 (a
 pinned `stratac` release, see `bootstrap.txt`; on macOS / Linux the C seed in `seed/`)
 compiles `src/` (stage1), stage1 compiles `src/` again (stage2), and the two must emit
 identical C (the fixpoint).
@@ -66,16 +71,21 @@ compiler/
 │  ├─ modules.strata    the module loader: files → one Program + module table
 │  ├─ hashidx.strata    a small hash index (the checker's name tables, the lexer's interning)
 │  ├─ checker.strata    AST → validated/inferred AST (incl. module visibility)
-│  ├─ codegen.strata    typed AST → C
+│  ├─ codegen.strata    typed AST → C                     (the C backend)
+│  ├─ ir.strata         the native backend's IR (target-independent)
+│  ├─ lower.strata      typed AST → IR (+ the C calling convention's struct rules)
+│  ├─ opt.strata        the optimizer + register allocator
+│  ├─ x64.strata        IR → x86-64 assembly (Windows)
+│  ├─ native.strata     the native backend's driver: lower → opt → x64
 │  ├─ core.strata       umbrella module (`export import`s every phase), main-free
 │  │  ── the build system (on top of the core) ──
 │  ├─ project.strata    reads strata.toml into a Project
-│  ├─ build.strata      the build pipeline (C -> gcc/cc -> exe/dll) + the build cache
+│  ├─ build.strata      the build pipeline (native or C -> exe/dll) + the build cache
 │  ├─ strata_host.h     C the compiler imports: messages, memory, and the OS (via lib/crossplatform.h)
 │  │  ── shared front-end utility ──
 │  ├─ dump.strata       renders core data (tokens/AST) to text
 │  │  ── front-ends (thin; each has top-level code = its main) ──
-│  ├─ stratac.strata    front-end #1: the CLI (tokens, ast, check, emit, build, run)
+│  ├─ stratac.strata    front-end #1: the CLI (tokens, ast, check, emit, asm, ir, build, run)
 │  ├─ libstrata.strata  front-end #3: the public C API (libstrata.dll, for engines)
 │  └─ console.strata    front-end #2: the explorer console
 ├─ bin/                 build output: stratac(.exe), console(.exe), libstrata.dll/.dylib/.so
@@ -123,6 +133,29 @@ compiler/
   arena calls, monomorphized generic instantiations, vector-math calls.
 - **Must NOT** make decisions the checker should have made. If codegen needs to "figure
   something out," that logic belongs in the checker. Codegen is a **pure translation.**
+
+### The native backend — `ir`, `lower`, `opt`, `x64`, `native` `.strata`
+- **`ir.strata`**: the intermediate representation. Per function: instructions over
+  unlimited *virtual registers* (vregs) of scalar types (i8..u64, f32, f64; pointers are
+  u64), stack *slots* for aggregates, labels, jumps, branches, calls. Invariant: an
+  integer vreg holds its value sign/zero-extended to 64 bits. A vreg may be assigned more
+  than once (a variable); the optimizer only rewrites single-definition vregs.
+- **`lower.strata`**: typed AST → IR. Gives every construct its meaning: scalars in
+  vregs (in a slot if their address is taken), aggregates in slots handled by address,
+  C's usual arithmetic conversions (float literals are f64; results match the C
+  backend's builds), vector math expanded to float ops, runtime calls (`srt_*` in
+  `lib/srt.c`) for strings / arrays / arenas / matrices / I/O, regions freed on every
+  exit. Struct passing follows the target's C convention (`abi_*`, Windows x64 today).
+  Refuses (with a reason) what it can't do yet — C headers — and the build uses C.
+- **`opt.strata`**: passes to a fixed point (fold, slot forwarding + dead stores, CSE,
+  copy propagation, dead code, flow cleanup, loop-invariant motion, coalescing), then
+  `alloc_regs`: liveness → live intervals → linear scan over the target's `RegSet`
+  (callee-saved registers, plus scratch registers for values not live across a call).
+- **`x64.strata`**: IR → GNU-as AT&T assembly for Windows x64: frame layout, the calling
+  convention, immediates and folded addresses ("lazy" vregs never get a home),
+  compare+branch fusion, stack probes. **`native.strata`** drives lower → opt → x64.
+- **Must NOT**: lower must not know the CPU (beyond the ABI rules); the target must not
+  know the language. Test: every run golden, through each backend, must print the same.
 
 ### Driver — `stratac.strata`
 - CLI + orchestration **only**. Reads a file, runs the passes in order, invokes the C
@@ -292,18 +325,23 @@ Two takeaways:
 ## 10. Toolchain & on-disk layout
 
 A C/C++ compiler is a **driver** that runs a chain of programs — preprocessor → compiler
-→ assembler → linker — with intermediates (`.i`/`.s`/`.o`) usually in a temp dir. Strata's
-"assembly" is C, so the driver produces `.c` and **delegates the last stages to a C
-compiler**:
+→ assembler → linker. Strata does the compiling itself and, for now, borrows the C
+toolchain's assembler and linker:
 
 ```
-stratac run foo.strata
-  → (in-process) lexer → parser → checker → codegen  → foo.c   (cache/temp dir)
-  → shell out:  tcc -run foo.c -I <install>/lib               → compiles + runs in memory (~ms)
+stratac run foo.strata                         (native backend: x86-64 Windows, no C headers)
+  → (in-process) lexer → parser → checker → lower → opt → x64  → foo.s
+  → gcc foo.s <install>/lib/srt.c -o foo.exe     (assemble + link with the runtime)
 
-stratac build foo.strata -o foo
-  → ... → foo.c → clang/gcc -O2 foo.c -I <install>/lib -o foo  (optimized native binary)
+stratac run foo.strata --backend c             (C backend: any platform, C interop)
+  → ... → checker → codegen → foo.c → gcc/cc -O2 foo.c -I <install>/lib -o foo
 ```
+
+**The road to depending on nothing but the OS** (each step keeps the C path working):
+write object files directly (no assembler) → Strata's own linker (no gcc for native
+builds) → the runtime (`srt.c`, `lib/*.h`) rewritten in Strata on OS calls (no libc) →
+C header import (C libraries / engines natively) → ARM64 and Linux / macOS targets →
+the compiler built by its own native backend (the C seed becomes optional).
 
 **Install layout** — one monolithic install *home* on `PATH`, runtime beside the exe,
 mirroring D--'s `install.ps1` (the exe finds `lib/` next to itself, so nothing else needs
@@ -316,11 +354,9 @@ only the *installed toolchain* is monolithic. Built by `build.ps1`, deployed by
 ├─ stratac.exe         the compiler CLI (stage2 of the bootstrap)
 ├─ console.exe        the explorer front-end
 ├─ libstrata.dll      the core as a shared library (for embedders)
-├─ tcc.exe            BUNDLED — so `stratac run` needs no external toolchain   (with codegen)
 └─ lib\               the runtime the OUTPUT links against (driver passes -I <home>\lib)
-   ├─ arena.h         codegen emits `#include <arena.h>`
-   ├─ math…           the vec/mat library
-   └─ prelude…        print, input, time, etc.
+   ├─ arena.h …       header-only C runtime (see lib/README.md)
+   └─ srt.c           the entry points natively compiled programs call
 ```
 
 The runtime `lib/` lives in the home for the *compiled program's* sake, not the
@@ -328,14 +364,11 @@ compiler's — `stratac.exe` is a self-contained monolith; `lib/` is what genera
 against.
 
 Rules:
-- **Bundle tcc** for instant, dependency-free `stratac run` (`tcc -run` = compile + execute
-  in memory, no `.o`, no linker, no output file — this is what gives the interpreter feel).
-  Use system `clang`/`gcc -O2` for `stratac build` release binaries.
-- **Find the C compiler** in this order: bundled tcc (known path next to `strata`) → system
-  compiler via `PATH`.
-- **Intermediate `.c` goes to a cache/temp dir**, never the source tree. `stratac emit` is
-  the "save the `.c` where I can read it" escape hatch.
-- **Output** goes where `-o` says; default beside the source.
+- **Native first**: `--backend auto` (the default) builds natively when the native
+  backend can (`native_target_why`, `lower_program`'s reason otherwise) and with C when
+  it can't; `--backend native|c` forces one.
+- **The C toolchain** is found as `gcc` (Windows), `cc`, or `$STRATA_CC`.
+- `stratac emit` / `asm` / `ir` print what each backend generates.
 
 ---
 

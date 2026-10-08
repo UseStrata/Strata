@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/ir.strata - Strata's intermediate representation (IR). CORE (no main).
+//
+// The native backend's middle: lower.strata turns the checked AST into this, opt.strata
+// improves it, and a target (x64.strata) turns it into assembly. Nothing here knows about
+// a CPU or an operating system, so every architecture shares it.
+//
+// Shape: each function is a flat list of instructions over VIRTUAL REGISTERS (vregs:
+// unlimited, numbered 0..). Control flow is labels, jumps and conditional branches.
+// A vreg has one scalar type: an integer (8/16/32/64-bit, signed or unsigned, pointers
+// are U64), F32 or F64. Aggregates (structs, vectors, arrays) never live in vregs: they
+// live in stack SLOTS or behind pointers and are handled through their addresses
+// (load / store / memcpy).
+//
+// Invariant: an integer vreg always holds its value sign- or zero-extended to 64 bits,
+// as its type says. Targets keep it after every operation, load and call.
+//
+// A vreg may be assigned more than once (a local variable, the result of `&&`); the
+// optimizer only rewrites vregs that have exactly one definition.
+
+import "strata_host.h"   // strata_join
+
+// ---- scalar types ---------------------------------------------------------------
+export enum IrTy { KVoid, KI8, KI16, KI32, KI64, KU8, KU16, KU32, KU64, KF32, KF64 }
+
+export bool ir_is_float(int t) { return t == KF32 || t == KF64 }
+export bool ir_is_unsigned(int t) { return t == KU8 || t == KU16 || t == KU32 || t == KU64 }
+export int ir_size(int t) {
+    if t == KI8 || t == KU8 { return 1 }
+    if t == KI16 || t == KU16 { return 2 }
+    if t == KI32 || t == KU32 || t == KF32 { return 4 }
+    if t == KVoid { return 0 }
+    return 8
+}
+// An integer value as type t holds it: sign- or zero-extended to 64 bits (the invariant).
+export int ir_norm_imm(int t, int v) {
+    if t == KI8 { return ((v & 255) ^ 128) - 128 }
+    if t == KU8 { return v & 255 }
+    if t == KI16 { return ((v & 65535) ^ 32768) - 32768 }
+    if t == KU16 { return v & 65535 }
+    if t == KI32 { return ((v & 4294967295) ^ 2147483648) - 2147483648 }
+    if t == KU32 { return v & 4294967295 }
+    return v
+}
+
+export string ir_ty_name(int t) {
+    switch t {
+        case KVoid: return "void"
+        case KI8:   return "i8"
+        case KI16:  return "i16"
+        case KI32:  return "i32"
+        case KI64:  return "i64"
+        case KU8:   return "u8"
+        case KU16:  return "u16"
+        case KU32:  return "u32"
+        case KU64:  return "u64"
+        case KF32:  return "f32"
+        case KF64:  return "f64"
+    }
+    return "?"
+}
+
+// ---- instructions ---------------------------------------------------------------
+// (fields used, beyond `op`: see the comment on each)
+export enum IrOp {
+    OConst,     // dst = imm                         (integer constant)
+    OFConst,    // dst = sym                         (float constant, its literal text)
+    OCopy,      // dst = a
+    OAdd, OSub, OMul, ODiv, OMod,          // dst = a op b    (ty: the operation's type)
+    OAnd, OOr, OXor, OShl, OShr,           // dst = a op b    (integers; OShr is arithmetic if signed)
+    ONeg,       // dst = -a
+    ONot,       // dst = ~a                          (integers)
+    OCmp,       // dst = a cond b ? 1 : 0            (ty: the OPERANDS' type; ty2: the condition)
+    OConv,      // dst = a converted from type ty2 to type ty
+    OSqrt,      // dst = sqrt(a)                     (floats)
+    OLoad,      // dst = *(ty*)(a + imm)
+    OStore,     // *(ty*)(a + imm) = b
+    OSlotAddr,  // dst = address of stack slot imm
+    OSymAddr,   // dst = address of data symbol sym  (string literals)
+    OCopyMem,   // memcpy(a, b, imm)                 (dst, src, size)
+    OZeroMem,   // memset(a, 0, imm)
+    OParam,     // dst = incoming argument number imm
+    OCall,      // dst = sym(args...)                (dst -1 if void; ty: the result type)
+    ORet,       // return a                          (a -1: return nothing)
+    OLabel,     // label imm:
+    OJmp,       // goto label imm
+    OBr,        // if a != 0 goto label imm else goto label imm2
+    ONop        // nothing (the optimizer's deleted instructions)
+}
+
+export enum IrCond { CEq, CNe, CLt, CLe, CGt, CGe }
+
+export struct Ins {
+    int    op
+    int    ty       // result type (OCmp: operand type; OStore/OLoad: memory type)
+    int    ty2      // OConv: source type; OCmp: condition
+    int    dst      // result vreg, or -1
+    int    a        // operand vregs, or -1
+    int    b
+    int    imm      // constant / offset / size / slot / label / argument number
+    int    imm2     // OBr: the else label
+    string sym      // OFConst: literal text; OSymAddr / OCall: symbol
+    int[dynamic] args   // OCall: argument vregs
+}
+
+export struct IrSlot { int size; int align }
+
+export struct IrFunc {
+    string           name       // symbol
+    bool             global     // visible outside its object file
+    int[dynamic]     vtypes     // per vreg: its IrTy
+    IrSlot[dynamic]  slots
+    Ins[dynamic]     code
+    int[dynamic]     param_types   // the incoming arguments' types (as passed: scalars)
+    int              ret_ty        // KVoid, or the type returned in a register
+    int              labels        // label numbers handed out
+}
+
+// A data item: a string literal's bytes (as escaped text) under a symbol.
+export struct IrData { string sym; string text }
+
+export struct IrProgram {
+    IrFunc[dynamic] funcs
+    IrData[dynamic] strings
+}
+
+export Ins new_ins(int op, int ty, int dst, int a, int b) {
+    int[dynamic] args = []
+    return Ins{ op, ty, 0, dst, a, b, 0, 0, "", args }
+}
+
+export IrFunc new_ir_func(string name, bool global) {
+    int[dynamic] vt = []
+    IrSlot[dynamic] sl = []
+    Ins[dynamic] code = []
+    int[dynamic] pt = []
+    return IrFunc{ name, global, vt, sl, code, pt, KVoid, 0 }
+}
+
+export IrProgram new_ir_program() {
+    IrFunc[dynamic] fs = []
+    IrData[dynamic] ds = []
+    return IrProgram{ fs, ds }
+}
+
+// ---- building ---------------------------------------------------------------------
+
+export int ir_vreg(IrFunc* f, int ty) {
+    f.vtypes.push(ty)
+    return f.vtypes.len - 1
+}
+export int ir_slot(IrFunc* f, int size, int align) {
+    if size < 1 { size = 1 }
+    if align < 1 { align = 1 }
+    f.slots.push(IrSlot{ size, align })
+    return f.slots.len - 1
+}
+export int ir_label(IrFunc* f) {
+    f.labels += 1
+    return f.labels
+}
+export void ir_emit(IrFunc* f, Ins i) { f.code.push(i) }
+
+// ---- printing (`stratac ir`) -----------------------------------------------------------
+
+string ir_op_name(int op) {
+    switch op {
+        case OConst: return "const"
+        case OFConst: return "fconst"
+        case OCopy: return "copy"
+        case OAdd: return "add"
+        case OSub: return "sub"
+        case OMul: return "mul"
+        case ODiv: return "div"
+        case OMod: return "mod"
+        case OAnd: return "and"
+        case OOr: return "or"
+        case OXor: return "xor"
+        case OShl: return "shl"
+        case OShr: return "shr"
+        case ONeg: return "neg"
+        case ONot: return "not"
+        case OCmp: return "cmp"
+        case OConv: return "conv"
+        case OSqrt: return "sqrt"
+        case OLoad: return "load"
+        case OStore: return "store"
+        case OSlotAddr: return "slotaddr"
+        case OSymAddr: return "symaddr"
+        case OCopyMem: return "copymem"
+        case OZeroMem: return "zeromem"
+        case OParam: return "param"
+        case OCall: return "call"
+        case ORet: return "ret"
+        case OLabel: return "label"
+        case OJmp: return "jmp"
+        case OBr: return "br"
+        case ONop: return "nop"
+    }
+    return "?"
+}
+
+export string ir_cond_name(int c) {
+    switch c {
+        case CEq: return "eq"
+        case CNe: return "ne"
+        case CLt: return "lt"
+        case CLe: return "le"
+        case CGt: return "gt"
+        case CGe: return "ge"
+    }
+    return "?"
+}
+
+string v(int r) { return "%" + int_to_str(r) }
+
+export string ir_ins_text(Ins i) {
+    string d = ""
+    if i.dst >= 0 { d = v(i.dst) + " = " }
+    string t = ir_ty_name(i.ty)
+    switch i.op {
+        case OConst:    return d + "const." + t + " " + int_to_str(i.imm)
+        case OFConst:   return d + "fconst." + t + " " + i.sym
+        case OCopy:     return d + "copy." + t + " " + v(i.a)
+        case OCmp:      return d + "cmp." + ir_cond_name(i.ty2) + "." + t + " " + v(i.a) + ", " + v(i.b)
+        case OConv:     return d + "conv." + ir_ty_name(i.ty2) + "." + t + " " + v(i.a)
+        case ONeg, ONot, OSqrt: return d + ir_op_name(i.op) + "." + t + " " + v(i.a)
+        case OLoad:     return d + "load." + t + " [" + v(i.a) + " + " + int_to_str(i.imm) + "]"
+        case OStore:    return "store." + t + " [" + v(i.a) + " + " + int_to_str(i.imm) + "], " + v(i.b)
+        case OSlotAddr: return d + "slotaddr s" + int_to_str(i.imm)
+        case OSymAddr:  return d + "symaddr " + i.sym
+        case OCopyMem:  return "copymem " + v(i.a) + ", " + v(i.b) + ", " + int_to_str(i.imm)
+        case OZeroMem:  return "zeromem " + v(i.a) + ", " + int_to_str(i.imm)
+        case OParam:    return d + "param." + t + " " + int_to_str(i.imm)
+        case OCall:
+            {
+                string[dynamic] p = []
+                p.push(d + "call." + t + " " + i.sym + "(")
+                for k in 0..i.args.len {
+                    if k > 0 { p.push(", ") }
+                    p.push(v(i.args[k]))
+                }
+                p.push(")")
+                return strata_join(&p)
+            }
+        case ORet:      if i.a < 0 { return "ret" } return "ret " + v(i.a)
+        case OLabel:    return "L" + int_to_str(i.imm) + ":"
+        case OJmp:      return "jmp L" + int_to_str(i.imm)
+        case OBr:       return "br " + v(i.a) + ", L" + int_to_str(i.imm) + ", L" + int_to_str(i.imm2)
+        case ONop:      return "nop"
+    }
+    return d + ir_op_name(i.op) + "." + t + " " + v(i.a) + ", " + v(i.b)
+}
+
+export string ir_func_text(IrFunc* f) {
+    string[dynamic] p = []
+    p.push("func " + f.name + "(")
+    for k in 0..f.param_types.len {
+        if k > 0 { p.push(", ") }
+        p.push(ir_ty_name(f.param_types[k]))
+    }
+    p.push(") " + ir_ty_name(f.ret_ty) + "\n")
+    for k in 0..f.slots.len {
+        p.push("  s" + int_to_str(k) + ": " + int_to_str(f.slots[k].size) + " bytes, align " + int_to_str(f.slots[k].align) + "\n")
+    }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op != ONop {
+            if i.op == OLabel { p.push(ir_ins_text(i) + "\n") }
+            else { p.push("    " + ir_ins_text(i) + "\n") }
+        }
+    }
+    return strata_join(&p)
+}
+
+export string ir_program_text(IrProgram* prog) {
+    string[dynamic] p = []
+    for k in 0..prog.strings.len {
+        p.push("data " + prog.strings[k].sym + " = \"" + prog.strings[k].text + "\"\n")
+    }
+    for k in 0..prog.funcs.len {
+        p.push("\n")
+        p.push(ir_func_text(&prog.funcs[k]))
+    }
+    return strata_join(&p)
+}

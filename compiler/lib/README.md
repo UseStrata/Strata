@@ -1,19 +1,24 @@
 # Strata runtime (`lib/`)
 
-This is the **runtime** the compiler installs beside `strata.exe`, and that your
-*compiled programs* link against — **not** code the compiler itself runs. `strata`
-passes `-I <install>/lib` to the C backend so generated C can `#include` these headers.
+The **runtime** that *compiled programs* use — not code the compiler itself runs. It is
+installed beside `stratac` (`<install>/lib/`), which finds it there.
 
-At install time (`install.ps1`) this whole folder is copied to
-`%LOCALAPPDATA%\Programs\strata\lib\`, and `strata` finds it next to the exe.
+| File | Provides |
+|---|---|
+| `arena.h` | arenas / regions (zero-GC memory) and the global heap behind `alloc` |
+| `sstr.h` | strings: concatenation, equality, length, `substr`, `int_to_str` |
+| `sarr.h` | dynamic arrays (`T[dynamic]`) |
+| `sio.h` | `read_file`, `write_file`, `args()` |
+| `smath.h` | `vec2/3/4`, `mat4`, `quat` and their operations |
+| `sprelude.h` | `min`, `max`, `clamp`, `lerp`, `PI` |
+| `sstate.h` | how runtime state is declared (one C file, or shared by a split build) |
+| `crossplatform.h` | a single-header platform layer (Window, System, Files, Process) |
+| `srt.c` | the entry points (`srt_*`) that natively compiled programs call into |
 
-## What lives here (fills in as milestones land)
+The **C backend** passes `-I <install>/lib` so generated C can `#include` the headers.
+The **native backend** (Strata's own x86-64 code) calls the `srt_*` functions in `srt.c`,
+which wrap the same headers, so both backends behave alike. For now `srt.c` is compiled
+by the C toolchain; it is the next piece to be written in Strata itself.
 
-| File | Provides | Milestone |
-|---|---|---|
-| `arena.h` | the arena/region allocator (zero-GC memory) — starts from D--'s model | M1 codegen |
-| `math.h` (or similar) | `vec2/3/4`, `mat4`, `quat`, operators | M2 |
-| `prelude.h` | `print`, input, time — the built-in prelude | M1–M3 |
-
-Nothing is here yet because codegen (which decides the exact header names and contents)
-hasn't landed. The first file arrives with the first `strata run`.
+License: GPL-3.0 with the runtime linking exception (`../../LICENSE-RUNTIME.md`):
+programs built with Strata are not covered by the GPL.

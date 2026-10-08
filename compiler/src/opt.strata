@@ -1,0 +1,815 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/opt.strata - the optimizer: IR -> better IR, and register allocation. CORE.
+//
+// Target-independent passes over ir.strata's IR, repeated until nothing changes:
+//   fold      constant folding (integer arithmetic, comparisons, conversions, branches),
+//             x+0 / x*1, a known address offset folded into the load / store using it,
+//             `cmp.ne b, 0` of a value that already is 0 / 1
+//   slots     store-to-load forwarding through private stack slots, and their dead stores
+//   copies    copy propagation (a copy of a single-definition vreg is that vreg)
+//   cse       common subexpressions within a basic block (loads until memory may change)
+//   dead      dead-code elimination (unused pure results)
+//   flow      control-flow cleanup: unreachable code, jumps to jumps, jumps to the next
+//             instruction, unused labels
+//   hoist     loop-invariant code motion (pure operations out of loops)
+// and then the register allocator a target asks for (`alloc_regs`): liveness over the
+// control-flow graph, live intervals, linear scan.
+//
+// Only vregs with exactly ONE definition are rewritten (a vreg defined more than once is
+// a variable whose value changes).
+
+import ir
+
+// ---- facts ----------------------------------------------------------------------------
+
+struct Facts {
+    int[dynamic] ndef      // per vreg: how many instructions define it
+    int[dynamic] def_at    // per vreg: where (the last one)
+    int[dynamic] nuse      // per vreg: how many operands read it
+}
+
+Facts facts(IrFunc* f) {
+    int[dynamic] nd = []
+    int[dynamic] da = []
+    int[dynamic] nu = []
+    for v in 0..f.vtypes.len { nd.push(0); da.push(0 - 1); nu.push(0) }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op != ONop {
+            if i.dst >= 0 { nd[i.dst] = nd[i.dst] + 1; da[i.dst] = k }
+            if i.a >= 0 { nu[i.a] = nu[i.a] + 1 }
+            if i.b >= 0 { nu[i.b] = nu[i.b] + 1 }
+            for j in 0..i.args.len { nu[i.args[j]] = nu[i.args[j]] + 1 }
+        }
+    }
+    return Facts{ nd, da, nu }
+}
+
+bool single(Facts* fa, int v) { return v >= 0 && fa.ndef[v] == 1 }
+
+// v is a single-definition integer constant
+bool is_const(IrFunc* f, Facts* fa, int v) {
+    return single(fa, v) && f.code[fa.def_at[v]].op == OConst
+}
+int const_of(IrFunc* f, Facts* fa, int v) {
+    Ins d = f.code[fa.def_at[v]]
+    return ir_norm_imm(d.ty, d.imm)
+}
+
+// Has no effect besides its result (so it can go if the result is unused).
+bool pure(int op) {
+    return op == OConst || op == OFConst || op == OCopy || op == OAdd || op == OSub || op == OMul ||
+           op == OAnd || op == OOr || op == OXor || op == OShl || op == OShr || op == ONeg ||
+           op == ONot || op == OCmp || op == OConv || op == OSqrt || op == OLoad ||
+           op == OSlotAddr || op == OSymAddr || op == OParam
+}
+
+void make_const(IrFunc* f, int k, int ty, int value) {
+    Ins i = new_ins(OConst, ty, f.code[k].dst, 0 - 1, 0 - 1)
+    i.imm = ir_norm_imm(ty, value)
+    f.code[k] = i
+}
+
+void make_copy(IrFunc* f, int k, int src) {
+    Ins i = new_ins(OCopy, f.vtypes[f.code[k].dst], f.code[k].dst, src, 0 - 1)
+    f.code[k] = i
+}
+
+void make_jump(IrFunc* f, int k, int target) {
+    Ins i = new_ins(OJmp, KVoid, 0 - 1, 0 - 1, 0 - 1)
+    i.imm = target
+    f.code[k] = i
+}
+
+// ---- folding --------------------------------------------------------------------------------
+
+u64 uval(int v) { return cast<u64>(v) }
+
+bool cmp_holds(int cond, int a, int b, bool uns) {
+    if cond == CEq { return a == b }
+    if cond == CNe { return a != b }
+    if uns {
+        u64 x = uval(a)
+        u64 y = uval(b)
+        if cond == CLt { return x < y }
+        if cond == CLe { return x <= y }
+        if cond == CGt { return x > y }
+        return x >= y
+    }
+    if cond == CLt { return a < b }
+    if cond == CLe { return a <= b }
+    if cond == CGt { return a > b }
+    return a >= b
+}
+
+// Fold instruction k if its operands are known. Returns whether it changed.
+bool fold(IrFunc* f, Facts* fa, int k) {
+    Ins i = f.code[k]
+    int t = i.ty
+    int op = i.op
+    bool ca = is_const(f, fa, i.a)
+    bool cb = is_const(f, fa, i.b)
+    if (op == OAdd || op == OSub || op == OMul || op == OAnd || op == OOr || op == OXor ||
+        op == OShl || op == OShr || op == ODiv || op == OMod) && !ir_is_float(t) {
+        if ca && cb {
+            int a = const_of(f, fa, i.a)
+            int b = const_of(f, fa, i.b)
+            bool ok = true
+            int r = 0
+            if op == OAdd { r = a + b }
+            else if op == OSub { r = a - b }
+            else if op == OMul { r = a * b }
+            else if op == OAnd { r = a & b }
+            else if op == OOr { r = a | b }
+            else if op == OXor { r = a ^ b }
+            else if op == OShl || op == OShr {
+                if b < 0 || b > 63 { ok = false }
+                else if op == OShl { r = a << b }
+                else if ir_is_unsigned(t) { r = cast<int>(uval(a) >> uval(b)) }
+                else { r = a >> b }
+            } else {
+                // only the cases where every division agrees
+                if b <= 0 || a < 0 { ok = false }
+                else if op == ODiv { r = a / b }
+                else { r = a % b }
+            }
+            if ok { make_const(f, k, t, r); return true }
+        }
+        // identities
+        if cb && (op == OAdd || op == OSub || op == OOr || op == OXor || op == OShl || op == OShr) && const_of(f, fa, i.b) == 0 && f.vtypes[i.a] == t {
+            make_copy(f, k, i.a)
+            return true
+        }
+        if cb && (op == OMul || op == ODiv) && const_of(f, fa, i.b) == 1 && f.vtypes[i.a] == t {
+            make_copy(f, k, i.a)
+            return true
+        }
+        if ca && op == OAdd && const_of(f, fa, i.a) == 0 && f.vtypes[i.b] == t {
+            make_copy(f, k, i.b)
+            return true
+        }
+        return false
+    }
+    if op == OCmp && !ir_is_float(t) {
+        if ca && cb {
+            bool h = cmp_holds(i.ty2, const_of(f, fa, i.a), const_of(f, fa, i.b), ir_is_unsigned(t))
+            if h { make_const(f, k, KU8, 1) } else { make_const(f, k, KU8, 0) }
+            return true
+        }
+        // `b != 0` where b is already 0 or 1 (a comparison's result): b itself
+        if i.ty2 == CNe && cb && const_of(f, fa, i.b) == 0 && single(fa, i.a) && f.code[fa.def_at[i.a]].op == OCmp {
+            make_copy(f, k, i.a)
+            return true
+        }
+        return false
+    }
+    if (op == ONeg || op == ONot) && !ir_is_float(t) && ca {
+        int a = const_of(f, fa, i.a)
+        if op == ONeg { make_const(f, k, t, 0 - a) } else { make_const(f, k, t, ~a) }
+        return true
+    }
+    if op == OConv && ca && !ir_is_float(t) && !ir_is_float(i.ty2) {
+        make_const(f, k, t, const_of(f, fa, i.a))
+        return true
+    }
+    // a small integer constant converted to a float is exactly that float
+    if op == OConv && ca && ir_is_float(t) && !ir_is_float(i.ty2) {
+        int c = const_of(f, fa, i.a)
+        if c > 0 - 16777216 && c < 16777216 {
+            Ins fc = new_ins(OFConst, t, i.dst, 0 - 1, 0 - 1)
+            fc.sym = int_to_str(c) + ".0"
+            f.code[k] = fc
+            return true
+        }
+    }
+    if op == OBr && ca {
+        if const_of(f, fa, i.a) != 0 { make_jump(f, k, i.imm) } else { make_jump(f, k, i.imm2) }
+        return true
+    }
+    // [base + c] + imm  ->  [base + (c + imm)]
+    if (op == OLoad || op == OStore) && single(fa, i.a) {
+        Ins d = f.code[fa.def_at[i.a]]
+        if d.op == OAdd && single(fa, d.a) && is_const(f, fa, d.b) {
+            int c = const_of(f, fa, d.b)
+            if c + i.imm >= 0 - 2147483648 && c + i.imm <= 2147483647 {
+                f.code[k].a = d.a
+                f.code[k].imm = i.imm + c
+                return true
+            }
+        }
+    }
+    return false
+}
+
+// ---- copies ------------------------------------------------------------------------------
+
+int resolve(int[dynamic]* repl, int v) {
+    while v >= 0 && repl[0][v] != v { v = repl[0][v] }
+    return v
+}
+
+bool propagate_copies(IrFunc* f, Facts* fa) {
+    int[dynamic] repl = []
+    for v in 0..f.vtypes.len { repl.push(v) }
+    bool any = false
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op == OCopy && single(fa, i.dst) && single(fa, i.a) && f.vtypes[i.a] == f.vtypes[i.dst] {
+            repl[i.dst] = i.a
+            any = true
+        }
+    }
+    if !any { return false }
+    for k in 0..f.code.len {
+        if f.code[k].a >= 0 { f.code[k].a = resolve(&repl, f.code[k].a) }
+        if f.code[k].b >= 0 { f.code[k].b = resolve(&repl, f.code[k].b) }
+        for j in 0..f.code[k].args.len { f.code[k].args[j] = resolve(&repl, f.code[k].args[j]) }
+    }
+    return true
+}
+
+// ---- stack slots: store-to-load forwarding, dead stores --------------------------------------
+// A slot whose address is used only as the base of loads and stores ("private") can't be
+// touched any other way. Within a basic block, a load from it after a store to the same
+// place is the stored value; a slot nothing loads from at all needs none of its stores.
+// That turns the temporaries of vector math (a + b * s) into plain register values.
+
+bool forward_slots(IrFunc* f, Facts* fa) {
+    int ns = f.slots.len
+    if ns == 0 { return false }
+    int[dynamic] slot_of = []
+    for v in 0..f.vtypes.len { slot_of.push(0 - 1) }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op == OSlotAddr && single(fa, i.dst) { slot_of[i.dst] = i.imm }
+    }
+    int[dynamic] escaped = []
+    for s in 0..ns { escaped.push(0) }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op != ONop {
+            if i.a >= 0 && slot_of[i.a] >= 0 && i.op != OLoad && i.op != OStore { escaped[slot_of[i.a]] = 1 }
+            if i.b >= 0 && slot_of[i.b] >= 0 { escaped[slot_of[i.b]] = 1 }
+            for j in 0..i.args.len { if slot_of[i.args[j]] >= 0 { escaped[slot_of[i.args[j]]] = 1 } }
+        }
+    }
+    bool changed = false
+    // what each private location holds, in the current block
+    int[dynamic] es = []
+    int[dynamic] eo = []
+    int[dynamic] et = []
+    int[dynamic] ev = []
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        int op = i.op
+        if op == OLabel || op == OJmp || op == OBr || op == ORet { es.len = 0; eo.len = 0; et.len = 0; ev.len = 0 }
+        else if (op == OLoad || op == OStore) && slot_of[i.a] >= 0 && escaped[slot_of[i.a]] == 0 {
+            int s = slot_of[i.a]
+            int off = i.imm
+            int size = ir_size(i.ty)
+            if op == OLoad {
+                int found = 0 - 1
+                for e in 0..es.len { if es[e] == s && eo[e] == off && et[e] == i.ty { found = ev[e] } }
+                if found >= 0 && f.vtypes[found] == f.vtypes[i.dst] {
+                    make_copy(f, k, found)
+                    changed = true
+                } else if single(fa, i.dst) && es.len < 256 {
+                    es.push(s); eo.push(off); et.push(i.ty); ev.push(i.dst)
+                }
+            } else {
+                // forget what overlaps, then remember this store
+                int[dynamic] ks = []
+                for e in 0..es.len {
+                    if !(es[e] == s && eo[e] < off + size && off < eo[e] + ir_size(et[e])) { ks.push(e) }
+                }
+                int[dynamic] ns2 = []
+                int[dynamic] no2 = []
+                int[dynamic] nt2 = []
+                int[dynamic] nv2 = []
+                for q in 0..ks.len { ns2.push(es[ks[q]]); no2.push(eo[ks[q]]); nt2.push(et[ks[q]]); nv2.push(ev[ks[q]]) }
+                es = ns2
+                eo = no2
+                et = nt2
+                ev = nv2
+                if single(fa, i.b) && es.len < 256 { es.push(s); eo.push(off); et.push(i.ty); ev.push(i.b) }
+            }
+        }
+    }
+    // private slots nothing reads: their stores are dead
+    int[dynamic] loads = []
+    for s in 0..ns { loads.push(0) }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op == OLoad && slot_of[i.a] >= 0 { loads[slot_of[i.a]] = loads[slot_of[i.a]] + 1 }
+    }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op == OStore && slot_of[i.a] >= 0 && escaped[slot_of[i.a]] == 0 && loads[slot_of[i.a]] == 0 {
+            f.code[k] = new_ins(ONop, KVoid, 0 - 1, 0 - 1, 0 - 1)
+            changed = true
+        }
+    }
+    return changed
+}
+
+// ---- common subexpressions (within a basic block) -------------------------------------------
+// The same pure operation on the same single-definition operands computes the same value:
+// the second one becomes a copy of the first. Loads too, until anything might write memory.
+
+bool same_op(Ins x, Ins y) {
+    return x.op == y.op && x.ty == y.ty && x.ty2 == y.ty2 && x.a == y.a && x.b == y.b && x.imm == y.imm && x.sym == y.sym
+}
+
+bool cse_candidate(int op) {
+    return op == OConst || op == OFConst || op == OAdd || op == OSub || op == OMul || op == OAnd ||
+           op == OOr || op == OXor || op == OShl || op == OShr || op == ONeg || op == ONot ||
+           op == OCmp || op == OConv || op == OSqrt || op == OSlotAddr || op == OSymAddr || op == OLoad
+}
+
+bool cse(IrFunc* f, Facts* fa) {
+    bool changed = false
+    int[dynamic] seen = []      // instruction indices available in this block (newest last)
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        int op = i.op
+        if op == OLabel || op == OJmp || op == OBr || op == ORet { seen.len = 0 }
+        else if op == OStore || op == OCall || op == OCopyMem || op == OZeroMem {
+            // memory may have changed: forget the loads
+            int[dynamic] keep = []
+            for q in 0..seen.len { if f.code[seen[q]].op != OLoad { keep.push(seen[q]) } }
+            seen = keep
+        } else if i.dst >= 0 && !single(fa, i.dst) {
+            // a variable changes: what was computed from it no longer holds
+            int[dynamic] keep = []
+            for q in 0..seen.len {
+                Ins s = f.code[seen[q]]
+                if s.a != i.dst && s.b != i.dst { keep.push(seen[q]) }
+            }
+            seen = keep
+        } else if cse_candidate(op) && single(fa, i.dst) {
+            int found = 0 - 1
+            int q = seen.len - 1
+            int stop = seen.len - 200   // bound the search in huge blocks
+            while q >= 0 && q >= stop && found < 0 {
+                if same_op(f.code[seen[q]], i) { found = seen[q] }
+                q -= 1
+            }
+            if found >= 0 && f.vtypes[f.code[found].dst] == f.vtypes[i.dst] {
+                make_copy(f, k, f.code[found].dst)
+                changed = true
+            } else {
+                seen.push(k)
+            }
+        }
+    }
+    return changed
+}
+
+// ---- loop-invariant code motion ----------------------------------------------------------------
+// A loop is the code from a label back to a jump that returns to it. A pure, non-trapping
+// operation inside whose operands are all defined before the loop computes the same value
+// every time: it moves to just before the loop's label (when the loop is only entered by
+// falling into that label).
+
+bool hoistable(int op) {
+    return op == OConst || op == OFConst || op == OAdd || op == OSub || op == OMul || op == OAnd ||
+           op == OOr || op == OXor || op == OShl || op == OShr || op == ONeg || op == ONot ||
+           op == OCmp || op == OConv || op == OSqrt || op == OSlotAddr || op == OSymAddr
+}
+
+bool hoist_loops(IrFunc* f) {
+    Facts fa = facts(f)
+    int n = f.code.len
+    int[dynamic] lp = label_pos(f)
+    int[dynamic] move_to = []       // per instruction: the label position it moves before (-1: stays)
+    for k in 0..n { move_to.push(0 - 1) }
+    bool any = false
+    // per label: the last jump back to it, and whether anything before it jumps to it
+    int[dynamic] back = []
+    int[dynamic] fwd = []
+    for z in 0..(f.labels + 1) { back.push(0 - 1); fwd.push(0) }
+    for k in 0..n {
+        Ins i = f.code[k]
+        if i.op == OJmp || i.op == OBr {
+            int[dynamic] ts = []
+            ts.push(i.imm)
+            if i.op == OBr { ts.push(i.imm2) }
+            for z in 0..ts.len {
+                int p = lp[ts[z]]
+                if p >= 0 && k > p { back[ts[z]] = k }
+                if p >= 0 && k < p { fwd[ts[z]] = 1 }
+            }
+        }
+    }
+    // loops, outermost (earliest label) first
+    for p in 0..n {
+        if f.code[p].op == OLabel {
+            int lab = f.code[p].imm
+            int q = back[lab]
+            bool outside_entry = fwd[lab] == 1
+            // entered only by falling in (not after a jump / return)
+            int prev = p - 1
+            while prev >= 0 && f.code[prev].op == ONop { prev = prev - 1 }
+            bool falls_in = prev >= 0 && f.code[prev].op != OJmp && f.code[prev].op != ORet && f.code[prev].op != OBr && f.code[prev].op != OLabel
+            if q > p && !outside_entry && falls_in {
+                for k in (p + 1)..q {
+                    Ins i = f.code[k]
+                    if move_to[k] < 0 && hoistable(i.op) && single(&fa, i.dst) &&
+                       (i.a < 0 || (single(&fa, i.a) && (fa.def_at[i.a] < p || move_to[fa.def_at[i.a]] == p))) &&
+                       (i.b < 0 || (single(&fa, i.b) && (fa.def_at[i.b] < p || move_to[fa.def_at[i.b]] == p))) {
+                        move_to[k] = p
+                        any = true
+                    }
+                }
+            }
+        }
+    }
+    if !any { return false }
+    Ins[dynamic] code = []
+    for k in 0..n {
+        if f.code[k].op == OLabel {
+            for j in (k + 1)..n { if move_to[j] == k { code.push(f.code[j]) } }
+        }
+        if move_to[k] < 0 { code.push(f.code[k]) }
+    }
+    f.code = code
+    return true
+}
+
+// ---- coalescing ----------------------------------------------------------------------------
+// `t = <op>; v = copy t` with t used nowhere else: the operation writes v directly.
+// (Typically a variable's update, `i = i + 1`.)
+
+bool coalesce(IrFunc* f) {
+    Facts fa = facts(f)
+    bool changed = false
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op != ONop && i.op != OCopy && i.dst >= 0 && single(&fa, i.dst) && fa.nuse[i.dst] == 1 {
+            int j = next_real(f, k + 1)
+            if j >= 0 {
+                Ins c = f.code[j]
+                if c.op == OCopy && c.a == i.dst && f.vtypes[c.dst] == f.vtypes[i.dst] {
+                    f.code[k].dst = c.dst
+                    f.code[j] = new_ins(ONop, KVoid, 0 - 1, 0 - 1, 0 - 1)
+                    changed = true
+                }
+            }
+        }
+    }
+    return changed
+}
+
+// ---- dead code -----------------------------------------------------------------------------
+
+bool remove_dead(IrFunc* f) {
+    bool changed = false
+    bool again = true
+    while again {
+        again = false
+        Facts fa = facts(f)
+        for k in 0..f.code.len {
+            Ins i = f.code[k]
+            if i.op != ONop && i.dst >= 0 && fa.nuse[i.dst] == 0 && pure(i.op) {
+                f.code[k] = new_ins(ONop, KVoid, 0 - 1, 0 - 1, 0 - 1)
+                again = true
+                changed = true
+            }
+        }
+    }
+    return changed
+}
+
+// ---- control flow -----------------------------------------------------------------------------
+
+// per label number: the index of its OLabel instruction (-1: none)
+int[dynamic] label_pos(IrFunc* f) {
+    int[dynamic] lp = []
+    for n in 0..(f.labels + 1) { lp.push(0 - 1) }
+    for k in 0..f.code.len { if f.code[k].op == OLabel { lp[f.code[k].imm] = k } }
+    return lp
+}
+
+// the first real instruction at or after k (-1: none)
+int next_real(IrFunc* f, int k) {
+    int r = 0 - 1
+    while k < f.code.len && r < 0 {
+        if f.code[k].op != ONop { r = k }
+        k += 1
+    }
+    return r
+}
+
+// Where a jump to label n really ends up: past labels, through unconditional jumps.
+int final_target(IrFunc* f, int[dynamic] lp, int n) {
+    int hops = 0
+    bool going = true
+    while going && hops < 32 {
+        going = false
+        int k = lp[n] + 1
+        int r = 0 - 1
+        while k < f.code.len && r < 0 {
+            int op = f.code[k].op
+            if op != ONop && op != OLabel { r = k }
+            k += 1
+        }
+        if r >= 0 && f.code[r].op == OJmp && f.code[r].imm != n {
+            n = f.code[r].imm
+            going = true
+            hops += 1
+        }
+    }
+    return n
+}
+
+bool clean_flow(IrFunc* f) {
+    bool changed = false
+    int[dynamic] lp = label_pos(f)
+    // jumps to jumps
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op == OJmp {
+            int t = final_target(f, lp, i.imm)
+            if t != i.imm { f.code[k].imm = t; changed = true }
+        } else if i.op == OBr {
+            int t1 = final_target(f, lp, i.imm)
+            int t2 = final_target(f, lp, i.imm2)
+            if t1 != i.imm || t2 != i.imm2 { f.code[k].imm = t1; f.code[k].imm2 = t2; changed = true }
+            if t1 == t2 { make_jump(f, k, t1); changed = true }
+        }
+    }
+    // unreachable: after a jump or return, until the next label
+    bool dead = false
+    for k in 0..f.code.len {
+        int op = f.code[k].op
+        if op == OLabel { dead = false }
+        else if dead && op != ONop { f.code[k] = new_ins(ONop, KVoid, 0 - 1, 0 - 1, 0 - 1); changed = true }
+        else if op == OJmp || op == ORet { dead = true }
+    }
+    // a jump to the label right after it (only labels / nops in between)
+    for k in 0..f.code.len {
+        if f.code[k].op == OJmp {
+            int n = f.code[k].imm
+            int j = k + 1
+            bool found = false
+            bool stop = false
+            while j < f.code.len && !stop {
+                int op = f.code[j].op
+                if op == OLabel && f.code[j].imm == n { found = true; stop = true }
+                else if op != OLabel && op != ONop { stop = true }
+                j += 1
+            }
+            if found { f.code[k] = new_ins(ONop, KVoid, 0 - 1, 0 - 1, 0 - 1); changed = true }
+        }
+    }
+    // labels nothing jumps to
+    int[dynamic] used = []
+    for n in 0..(f.labels + 1) { used.push(0) }
+    for k in 0..f.code.len {
+        Ins i = f.code[k]
+        if i.op == OJmp { used[i.imm] = 1 }
+        if i.op == OBr { used[i.imm] = 1; used[i.imm2] = 1 }
+    }
+    for k in 0..f.code.len {
+        if f.code[k].op == OLabel && used[f.code[k].imm] == 0 {
+            f.code[k] = new_ins(ONop, KVoid, 0 - 1, 0 - 1, 0 - 1)
+            changed = true
+        }
+    }
+    return changed
+}
+
+// Drop the nops (once nothing refers to instruction positions).
+void compact(IrFunc* f) {
+    Ins[dynamic] code = []
+    for k in 0..f.code.len { if f.code[k].op != ONop { code.push(f.code[k]) } }
+    f.code = code
+}
+
+// Improve function f in place.
+export void optimize(IrFunc* f) {
+    int rounds = 0
+    bool changed = true
+    while changed && rounds < 8 {
+        changed = false
+        // (folding keeps every result in place, so the definitions stay as counted)
+        Facts fa = facts(f)
+        for k in 0..f.code.len {
+            if f.code[k].op != ONop && fold(f, &fa, k) { changed = true }
+        }
+        fa = facts(f)
+        if forward_slots(f, &fa) { changed = true }
+        fa = facts(f)
+        if cse(f, &fa) { changed = true }
+        fa = facts(f)
+        if propagate_copies(f, &fa) { changed = true }
+        if remove_dead(f) { changed = true }
+        if clean_flow(f) { changed = true }
+        if hoist_loops(f) { changed = true }
+        rounds += 1
+    }
+    coalesce(f)
+    compact(f)
+}
+
+// ---- register allocation --------------------------------------------------------------------
+
+int bit(int k) {
+    u64 one = 1
+    return cast<int>(one << uval(k))
+}
+bool has(int[dynamic]* set, int base, int v) { return ((set[0][base + v / 64] >> (v % 64)) & 1) == 1 }
+void add(int[dynamic]* set, int base, int v) { set[0][base + v / 64] = set[0][base + v / 64] | bit(v % 64) }
+
+// the vregs instruction i reads
+int[dynamic] reads(Ins i) {
+    int[dynamic] r = []
+    if i.a >= 0 { r.push(i.a) }
+    if i.b >= 0 { r.push(i.b) }
+    for j in 0..i.args.len { r.push(i.args[j]) }
+    return r
+}
+
+// The registers a target offers the allocator. Numbered in this order: integer saved,
+// float saved, integer scratch, float scratch. "Saved" registers survive calls (the
+// target saves them if it uses them); "scratch" ones don't, so only values that don't
+// live across a call may use them - and they cost nothing to use.
+export struct RegSet { int int_saved; int float_saved; int int_scratch; int float_scratch }
+
+// Choose registers: per vreg, a register number (see RegSet) or -1 for memory. `skip`:
+// per vreg, 1 if the target needs no home for it (e.g. it becomes an immediate).
+// An instruction's operands are read before its result is written, so a value whose last
+// use is at instruction k may hand its register to the value k defines.
+export int[dynamic] alloc_regs(IrFunc* f, RegSet rs, int[dynamic] skip) {
+    int nv = f.vtypes.len
+    int n = f.code.len
+    int[dynamic] result = []
+    for v in 0..nv { result.push(0 - 1) }
+    if n == 0 { return result }
+
+    // basic blocks: a new one at every label and after every jump / branch / return
+    int[dynamic] bstart = []
+    int[dynamic] bend = []
+    int[dynamic] block_of_label = []
+    for x in 0..(f.labels + 1) { block_of_label.push(0 - 1) }
+    int cur = 0
+    for k in 0..n {
+        int op = f.code[k].op
+        if op == OLabel && k > cur { bstart.push(cur); bend.push(k - 1); cur = k }
+        if op == OLabel { block_of_label[f.code[k].imm] = bstart.len }
+        if op == OJmp || op == OBr || op == ORet { bstart.push(cur); bend.push(k); cur = k + 1 }
+    }
+    if cur < n { bstart.push(cur); bend.push(n - 1) }
+    int nb = bstart.len
+
+    // successors (up to 2 each)
+    int[dynamic] s1 = []
+    int[dynamic] s2 = []
+    for b in 0..nb {
+        Ins last = f.code[bend[b]]
+        int x1 = 0 - 1
+        int x2 = 0 - 1
+        if last.op == OJmp { x1 = block_of_label[last.imm] }
+        else if last.op == OBr { x1 = block_of_label[last.imm]; x2 = block_of_label[last.imm2] }
+        else if last.op != ORet && b + 1 < nb { x1 = b + 1 }
+        s1.push(x1)
+        s2.push(x2)
+    }
+
+    // liveness: use / def per block, then in / out to a fixed point
+    int w = (nv + 63) / 64
+    if nb * w > 4000000 { return result }   // a huge function: leave it in memory
+    int[dynamic] use = []
+    int[dynamic] def = []
+    int[dynamic] lin = []
+    int[dynamic] lout = []
+    for z in 0..(nb * w) { use.push(0); def.push(0); lin.push(0); lout.push(0) }
+    for b in 0..nb {
+        for k in bstart[b]..(bend[b] + 1) {
+            Ins i = f.code[k]
+            int[dynamic] rs = reads(i)
+            for j in 0..rs.len { if !has(&def, b * w, rs[j]) { add(&use, b * w, rs[j]) } }
+            if i.dst >= 0 { add(&def, b * w, i.dst) }
+        }
+    }
+    bool changed = true
+    while changed {
+        changed = false
+        int b = nb - 1
+        while b >= 0 {
+            for q in 0..w {
+                int o = 0
+                if s1[b] >= 0 { o = o | lin[s1[b] * w + q] }
+                if s2[b] >= 0 { o = o | lin[s2[b] * w + q] }
+                int ni = use[b * w + q] | (o & ~def[b * w + q])
+                if o != lout[b * w + q] || ni != lin[b * w + q] { changed = true }
+                lout[b * w + q] = o
+                lin[b * w + q] = ni
+            }
+            b -= 1
+        }
+    }
+
+    // live intervals (the span of every point where a vreg is live)
+    int[dynamic] start = []
+    int[dynamic] end = []
+    for v in 0..nv { start.push(n + 1); end.push(0 - 1) }
+    for b in 0..nb {
+        for q in 0..w {
+            int wi = lin[b * w + q]
+            int wo = lout[b * w + q]
+            if wi != 0 || wo != 0 {
+                for t in 0..64 {
+                    int v = q * 64 + t
+                    if ((wi >> t) & 1) == 1 {
+                        if bstart[b] < start[v] { start[v] = bstart[b] }
+                        if bstart[b] > end[v] { end[v] = bstart[b] }
+                    }
+                    if ((wo >> t) & 1) == 1 {
+                        if bstart[b] < start[v] { start[v] = bstart[b] }
+                        if bend[b] > end[v] { end[v] = bend[b] }
+                    }
+                }
+            }
+        }
+        for k in bstart[b]..(bend[b] + 1) {
+            Ins i = f.code[k]
+            int[dynamic] rs = reads(i)
+            if i.dst >= 0 { rs.push(i.dst) }
+            for j in 0..rs.len {
+                int v = rs[j]
+                if k < start[v] { start[v] = k }
+                if k > end[v] { end[v] = k }
+            }
+        }
+    }
+
+    // linear scan, in order of start
+    int[dynamic] count = []
+    for k in 0..(n + 2) { count.push(0) }
+    for v in 0..nv { if v < skip.len && skip[v] == 1 { end[v] = 0 - 1 } }
+    for v in 0..nv { if end[v] >= 0 { count[start[v]] = count[start[v]] + 1 } }
+    int[dynamic] first = []
+    int acc = 0
+    for k in 0..(n + 2) { first.push(acc); acc += count[k] }
+    int[dynamic] order = []
+    for z in 0..acc { order.push(0) }
+    int[dynamic] fill = []
+    for k in 0..(n + 2) { fill.push(first[k]) }
+    for v in 0..nv {
+        if end[v] >= 0 {
+            order[fill[start[v]]] = v
+            fill[start[v]] = fill[start[v]] + 1
+        }
+    }
+    // how many calls come before each position: does an interval span a call?
+    int[dynamic] calls = []
+    int nc = 0
+    for k in 0..(n + 2) {
+        calls.push(nc)
+        if k < n && f.code[k].op == OCall { nc += 1 }
+    }
+    int nsaved = rs.int_saved + rs.float_saved
+    int total = nsaved + rs.int_scratch + rs.float_scratch
+    int[dynamic] owner = []   // per register: the vreg in it (-1: free)
+    for r in 0..total { owner.push(0 - 1) }
+    for z in 0..order.len {
+        int v = order[z]
+        bool flt = ir_is_float(f.vtypes[v])
+        int lo = 0
+        int hi = rs.int_saved
+        int slo = nsaved
+        int shi = nsaved + rs.int_scratch
+        if flt {
+            lo = rs.int_saved
+            hi = nsaved
+            slo = nsaved + rs.int_scratch
+            shi = total
+        }
+        // free the registers of intervals that ended
+        for r in 0..total {
+            if owner[r] >= 0 && end[owner[r]] <= start[v] { owner[r] = 0 - 1 }
+        }
+        // a call strictly inside the interval: the value must survive it
+        bool spans = calls[end[v]] - calls[start[v] + 1] > 0
+        int got = 0 - 1
+        if !spans { for r in slo..shi { if got < 0 && owner[r] < 0 { got = r } } }
+        for r in lo..hi { if got < 0 && owner[r] < 0 { got = r } }
+        if got < 0 {
+            // all taken: take the one held longest, if it lives longer than v
+            int far = 0 - 1
+            for r in lo..hi { if far < 0 || end[owner[r]] > end[owner[far]] { far = r } }
+            if far >= 0 && end[owner[far]] > end[v] {
+                result[owner[far]] = 0 - 1
+                got = far
+            }
+        }
+        if got >= 0 {
+            owner[got] = v
+            result[v] = got
+        }
+    }
+    return result
+}

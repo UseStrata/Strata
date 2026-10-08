@@ -90,6 +90,35 @@ if ($rebuild -match "\(1 of \d+ C files compiled" -and $second.StartsWith("1`n30
     Write-Host "FAIL  build/incremental: $rebuild" -ForegroundColor Red; $fail++
 }
 
+# --- backends: native (Strata's own x86-64 code) and C must agree ----------------------------
+# The run goldens above went through the default backend: native wherever it can build the
+# program (single files build optimized). Run them again forced through each backend, so a
+# silent fallback to C can't hide a native regression, and the C backend stays covered.
+# (projects/pure covers native debug builds, unoptimized.)
+$runDir = Join-Path $here "run"
+foreach ($backend in @("native", "c")) {
+    $bad = @()
+    Get-ChildItem -Path $runDir -Filter *.expected | ForEach-Object {
+        $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
+        $src  = Join-Path $examples "$name.strata"
+        $usesC = (Get-Content $src -Raw) -match "(?m)^\s*import\s*[<`"]"   # C headers: C backend only
+        if (-not ($backend -eq "native" -and $usesC)) {
+            $actual   = ((& $strata run $src --backend $backend) -join "`n") -replace "`r",""
+            $expected = ((Get-Content $_.FullName -Raw) -replace "`r","").TrimEnd("`n")
+            if ($actual.TrimEnd("`n") -ne $expected) { $bad += $name }
+        }
+    }
+    if ($bad.Count -eq 0) { Write-Host "PASS  backend/$backend (every run golden)" -ForegroundColor Green; $pass++ }
+    else { Write-Host "FAIL  backend/$backend ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
+}
+# the native backend's own assembly (a smoke test of `stratac asm`)
+$asm = (& $strata asm (Join-Path $examples "run1.strata")) -join "`n"
+if ($LASTEXITCODE -eq 0 -and $asm -match "call fib" -and $asm -match "(?m)^fib:") {
+    Write-Host "PASS  backend/asm (stratac asm)" -ForegroundColor Green; $pass++
+} else {
+    Write-Host "FAIL  backend/asm (stratac asm)" -ForegroundColor Red; $fail++
+}
+
 # --- performance: guard against the compiler going quadratic again -------------------
 # A generated 20k-line single file must type-check in under 3 s. (It takes ~0.05 s; before
 # the fixes in 1.4.0 it took 16 s, because every token re-measured the whole source.)
