@@ -43,5 +43,5 @@ Compress-Archive -Path $stage -DestinationPath $zip
 
 Write-Host ""
 Write-Host "packaged: $zip" -ForegroundColor Green
-Write-Host "note: the compiler shells out to a C compiler (gcc) to build programs; a bundled"
-Write-Host "      tcc for zero-dependency 'stratac run' is planned."
+Write-Host "note: programs build with Strata's own x86-64 backend, assembled and linked by gcc"
+Write-Host "      (which the C backend also uses); Strata's own assembler and linker come next."
