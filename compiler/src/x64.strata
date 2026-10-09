@@ -654,7 +654,9 @@ export void x64_function(X64* x, IrFunc* f, int[dynamic] regs) {
     // callee-saved registers used
     int[dynamic] used = []
     for k in 0..x64_saved_regs() { used.push(0) }
-    for v in 0..regs.len { if regs[v] >= 0 && regs[v] < x64_saved_regs() && x.lazy[v] == 0 { used[regs[v]] = 1 } }
+    int nregs = regs.len
+    if nregs > nv { nregs = nv }                 // (after them: shared spill slots, below)
+    for v in 0..nregs { if regs[v] >= 0 && regs[v] < x64_saved_regs() && x.lazy[v] == 0 { used[regs[v]] = 1 } }
     int[dynamic] saved = []
     for k in 0..used.len { if used[k] == 1 { saved.push(k) } }
     x.saved = saved
@@ -668,9 +670,20 @@ export void x64_function(X64* x, IrFunc* f, int[dynamic] regs) {
     x.save_base = 0 - cur
     int[dynamic] loc = []
     int[dynamic] isreg = []
+    // vregs in memory: the allocator's shared spill slots (8 bytes each), if it gave them;
+    // else one each
+    bool shared = regs.len >= 2 * nv
+    int spill_base = cur
+    if shared {
+        int top = 0 - 1
+        for v in 0..nv { if regs[nv + v] > top { top = regs[nv + v] } }
+        cur += 8 * (top + 1)
+    }
     for v in 0..nv {
         if x.lazy[v] != 0 { loc.push(0); isreg.push(0) }
-        else if v < regs.len && regs[v] >= 0 { loc.push(regs[v]); isreg.push(1) }
+        else if v < nregs && regs[v] >= 0 { loc.push(regs[v]); isreg.push(1) }
+        else if shared && regs[nv + v] >= 0 { loc.push(0 - (spill_base + 8 * (regs[nv + v] + 1))); isreg.push(0) }
+        else if shared { loc.push(0); isreg.push(0) }     // never referenced (optimized away): no slot
         else { cur += 8; loc.push(0 - cur); isreg.push(0) }
     }
     x.loc = loc

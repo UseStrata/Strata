@@ -811,5 +811,27 @@ export int[dynamic] alloc_regs(IrFunc* f, RegSet rs, int[dynamic] skip) {
             result[v] = got
         }
     }
+
+    // spill slots: the vregs left in memory share 8-byte stack slots when their intervals
+    // don't overlap (first fit, in order of start), appended to the result: result[nv + v]
+    // is vreg v's slot (-1: none)
+    int[dynamic] spill = []
+    for v in 0..nv { spill.push(0 - 1) }
+    int[dynamic] slot_end = []    // per slot: where the interval last given it ends
+    for z in 0..order.len {
+        int v = order[z]
+        if result[v] < 0 {
+            int got = 0 - 1
+            int s = 0
+            while got < 0 && s < slot_end.len {
+                if slot_end[s] < start[v] { got = s }
+                s += 1
+            }
+            if got < 0 { got = slot_end.len; slot_end.push(0) }
+            slot_end[got] = end[v]
+            spill[v] = got
+        }
+    }
+    for v in 0..nv { result.push(spill[v]) }
     return result
 }

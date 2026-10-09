@@ -4,6 +4,15 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
+## [Unreleased]
+
+### Changed
+- **Smaller native stack frames**: a vreg the optimizer removed no longer gets a stack
+  slot, and the vregs left in memory share 8-byte slots when their live intervals don't
+  overlap (the register allocator hands x64 a slot per spilled vreg). The compiler's frames
+  shrank 63% in total (e.g. `ck_expr_i` 4,096+ -> 200 bytes, `gen_expr` 3,128 -> 792), and
+  it got ~5% faster.
+
 ## [2.4.0] - 2026-10-09
 **The compiler compiles itself natively.** `stratac` is built by Strata's own backend,
 assembler and linker; building Strata on Windows needs no C compiler.

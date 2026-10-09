@@ -72,9 +72,10 @@ plus releases, and approve releases when asked.
 
 **Suggested order:** (a) ~~release 2.2.0~~ done; (b) ~~`struct` (and constant) declarations in
 `foreign` blocks + native raylib examples~~ done; (c) ~~`pelink` resolving `link "x"` DLLs itself~~ done;
-(d) ~~the compiler compiled natively~~ done on Windows (2.4.0). Then: (e) stack-slot sharing in the
-optimizer (the native compiler's frames are 2-4 KB: `primary`, `gen_expr`, `ck_expr_i`;
-hence the 8 MB stack); (f) native dlls (then libstrata needs no gcc); (g) ARM64 / ELF /
+(d) ~~the compiler compiled natively~~ done on Windows (2.4.0). Then: (e) ~~stack-slot
+sharing~~ done for vregs (unreleased: dead vregs get no slot, spilled vregs share slots;
+frames -63%); IR slots (struct temporaries / locals) still don't share - that needs escape
++ loop-lifetime analysis, low priority now; (f) native dlls (then libstrata needs no gcc); (g) ARM64 / ELF /
 Mach-O targets (what finally retires the C seed); (h) reading C headers into foreign
 blocks. Static `.a` archives in `pelink` were looked at and skipped: MSYS2's libraylib.a
 needs mingw's own static runtime (`__mingw_printf`, `__stack_chk_*`), i.e. the toolchain.
@@ -442,8 +443,8 @@ arithmetic, shifts, floats, short-circuiting, pointers).
   have a fixed base (no ASLR relocations yet) and no unwind tables. No debug info yet (no
   stepping in a debugger: use `--backend c` for that). Huge functions (liveness bitsets
   over 4M words) skip register allocation. u64 ↔ float conversions of values ≥ 2^63 are
-  treated as signed. Native frames are big (no stack-slot sharing yet), so native exes
-  reserve an 8 MB stack.
+  treated as signed. Native exes reserve an 8 MB stack (deep recursion headroom; IR
+  slots don't share stack space yet, spilled vregs do).
 - **Needs gcc** (or cc) for the C backend, `c_sources`, static libraries and dlls
   (libstrata); native builds on Windows, the compiler included, need none.
 - **C backend name clashes:** a Strata global / function named like a C library function
