@@ -62,7 +62,7 @@ for f in strata.h strata.hpp Strata.cs; do
 done
 rm -rf "$prefix/lib"                                  # drop stale runtime files
 mkdir -p "$prefix/lib"
-cp "$compiler"/lib/*.h "$compiler"/lib/srt.c "$prefix/lib/"
+cp "$compiler"/lib/*.h "$compiler"/lib/srt.strata "$prefix/lib/"
 
 # --- Link into bindir ---------------------------------------------------------
 mkdir -p "$bindir"

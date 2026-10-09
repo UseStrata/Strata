@@ -147,9 +147,12 @@ void pr_decl(Decl* d) {
                     head = head + ast_type_str(d.params[i].type) + " " + d.params[i].name
                 }
                 head = head + ")"
-                pr(0, head)
-                pr_stmt(1, d.body)
+                if d.is_foreign { pr(0, "Foreign " + head) }
+                else { pr(0, head); pr_stmt(1, d.body) }
             }
+        case DcGlobal:
+            pr(0, ex + "Global " + ast_type_str(d.ret) + " " + d.name)
+            if d.init != null { pr_expr(1, d.init) }
         case DcEnum:
             pr(0, ex + "Enum " + d.name)
             for i in 0..d.members.len { pr(1, d.members[i]); }

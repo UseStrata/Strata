@@ -17,7 +17,7 @@ import json, os
 KEYWORDS_CONTROL = ['if', 'else', 'while', 'for', 'in', 'return', 'break', 'continue', 'switch', 'case', 'default']
 KEYWORDS_MEMORY  = ['region']
 KEYWORDS_OPS     = ['cast', 'sizeof']
-STORAGE          = ['var', 'const', 'struct', 'enum', 'export']
+STORAGE          = ['var', 'const', 'struct', 'enum', 'export', 'global', 'foreign']   # global / foreign: contextual (top level)
 CONSTANTS        = ['true', 'false', 'null']
 PRIM_TYPES = ['int', 'uint', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64',
               'float', 'f32', 'f64', 'bool', 'char', 'string', 'void',

@@ -127,7 +127,7 @@ export Stmt* new_stmt(StmtKind k, int line, int col) {
 
 // ---- declarations ------------------------------------------------------
 
-export enum DeclKind { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport }
+export enum DeclKind { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport, DcGlobal }
 
 export struct Param    { string name; TypeNode* type; }
 export struct FieldDef { string name; TypeNode* type; }
@@ -152,6 +152,10 @@ export struct Decl {
     // module system: was this decl `export`ed? (on a DcImport: a re-export)
     bool       is_exported
     int        module// index into Program.modules of the file it was declared in
+    // DcFunc from a `foreign { }` block: defined outside Strata (no body; its exact name)
+    bool       is_foreign
+    // DcGlobal (`global T name = init`): its type is `ret` (null: inferred), `init` its value
+    Expr*      init
 }
 
 export Decl* new_decl(DeclKind k, int line, int col) {
@@ -166,7 +170,8 @@ export Decl* new_decl(DeclKind k, int line, int col) {
         members,                 // members
         "", false,               // path, is_system
         false,                   // is_exported
-        0                        // module
+        0,                       // module
+        false, null              // is_foreign, init
     })
 }
 

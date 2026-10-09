@@ -264,7 +264,7 @@
         },
         {
           "name": "storage.modifier.strata",
-          "match": "\\b(var|const|struct|enum|export)\\b"
+          "match": "\\b(var|const|struct|enum|export|global|foreign)\\b"
         },
         {
           "name": "storage.modifier.dynamic.strata",

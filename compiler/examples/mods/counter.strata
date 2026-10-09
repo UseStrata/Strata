@@ -1,0 +1,3 @@
+// mods/counter.strata - a module with an exported global
+export global int total = 0
+export void bump(int n) { total += n }

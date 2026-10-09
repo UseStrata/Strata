@@ -4,6 +4,49 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
+## [Unreleased]
+**The native runtime is written in Strata.** Native programs are now Strata code (and the
+OS) all the way down: their runtime, `lib/srt.strata`, is compiled by Strata's own native
+backend, and building Strata no longer needs gcc for it.
+
+### Added
+- **`foreign` blocks** (DESIGN.md open decision #8, settled): declarations of functions
+  defined outside Strata - C libraries, the OS.
+  ```strata
+  foreign { u8* malloc(int size); i32 puts(string s) }   // found when linking
+  foreign "raylib.h" { void InitWindow(int w, int h, string title) }
+  ```
+  The native backend calls them from the declarations alone, so it can now call C
+  libraries and system DLLs without reading C headers; the C backend `#include`s the
+  header, or declares the functions itself. A foreign function keeps its exact name.
+- **Global variables**: `global int score = 0`, `export global float volume = 0.8`,
+  `global var name = "x"`, `global vec3 spawn` - in any file, private unless exported,
+  constant initial values (zero if none). Both backends.
+- **The runtime in Strata**: `lib/srt.strata` replaces `lib/srt.c` - arenas, strings,
+  dynamic arrays, files, arguments, printing, matrices and quaternions, calling only
+  basic functions of Windows' C runtime (memory, files, `puts`, `sinf` / `cosf` /
+  `tanf`). `build.ps1` compiles it with `stratac object` into `lib/srt.o`.
+  - **Float printing is exact**: the runtime computes the 6 significant digits of
+    `print(float)` with small big integers and rounds ties to even, as C's printf does
+    (msvcrt's own conversions round a 17-digit approximation, e.g. 0.1234565 -> 0.123457;
+    C and now Strata say 0.123456). Checked against gcc's printf on 2,600 values
+    (magnitudes, exact ties, near-ties, the largest / smallest doubles, specials).
+- `stratac object <file.strata> [out.o]`: compile a module (no top-level code) natively
+  into an object file; its exported functions and globals are the symbols.
+- `cast<T>` between `string` and pointers (a string is a C `const char*`).
+- `.` reaches a vector's / quaternion's components through a pointer (`p.x`), and a
+  `quat`'s components are `x`, `y`, `z`, `w`.
+- Tests (68): `globals` (both backends), `floats` (printing, both backends), and the AST
+  of `globals`.
+
+### Changed
+- Native programs that link C libraries (`link`, `libs`, ...) are linked by gcc with the
+  same Strata-built `lib/srt.o`.
+- Private functions of a native build are local symbols of its object file.
+
+### Removed
+- `lib/srt.c`.
+
 ## [2.1.0] - 2026-10-08
 **Native builds need no C compiler.** Strata now compiles, assembles and links a program
 itself: from `.strata` source to a Windows `.exe` with nothing but `stratac` and

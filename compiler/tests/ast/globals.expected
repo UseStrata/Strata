@@ -1,0 +1,144 @@
+Import module mods.counter
+Foreign Func i32 abs(i32 x)
+Foreign Func i32 toupper(i32 c)
+Global int calls
+  Int 0
+Global <none> greeting
+  String "hi"
+Global float scale
+  Float 2.5
+Global i8 small
+  Unary -
+    Int 3
+Global int[dynamic] seen
+Global vec3 origin
+Func int count()
+  Block
+    Assign +=
+      target:
+        Name calls
+      value:
+        Int 1
+    ExprStmt
+      Call
+        callee:
+          Field .push
+            Name seen
+        args:
+          Binary *
+            Name calls
+            Int 10
+    Return
+      Name calls
+Main
+  ExprStmt
+    Call
+      callee:
+        Name count
+  ExprStmt
+    Call
+      callee:
+        Name count
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Name calls
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Binary +
+          Name greeting
+          String "!"
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Binary *
+          Name scale
+          Float 2.0
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Name small
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Field .len
+          Name seen
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Index
+          Name seen
+          Int 1
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Field .x
+          Name origin
+  Assign =
+    target:
+      Field .y
+        Name origin
+    value:
+      Float 4.5
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Field .y
+          Name origin
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Call
+          callee:
+            Name abs
+          args:
+            Binary -
+              Int 0
+              Int 42
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Call
+          callee:
+            Name toupper
+          args:
+            Int 97
+  ExprStmt
+    Call
+      callee:
+        Name bump
+      args:
+        Int 5
+  ExprStmt
+    Call
+      callee:
+        Name bump
+      args:
+        Int 7
+  ExprStmt
+    Call
+      callee:
+        Name print
+      args:
+        Name total

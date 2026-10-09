@@ -99,6 +99,20 @@ const PI = 3.14159  // compile-time constant
   at boundaries (fields, params, returns) where they document intent.
 - `[DECIDE]` Shadowing in inner scopes? (Lean: yes, common in game loops.)
 
+**Globals** (settled 2026-10-09): module-level state is declared with `global`, in any
+file — including the main one, so its functions can share state:
+
+```strata
+global int score = 0
+export global float volume = 0.8   // visible to files that import this one
+global var name = "player"         // inferred
+global vec3 spawn                  // zero-initialized
+```
+
+- Private to the file unless `export`ed, like every declaration.
+- The initial value must be a constant (a number, char, bool, string or `null`); none
+  means zero. A local of the same name hides the global.
+
 ---
 
 ## 4. Types
@@ -241,14 +255,22 @@ Strata compiles to C, so calling C is direct. Consuming C *structs* and `#define
 constants needs real binding work (known friction, per the plan).
 
 ```strata
-foreign "raylib.h" {                 // maps to one #include
-    void InitWindow(int w, int h, byte* title)
-    struct Color { u8 r; u8 g; u8 b; u8 a }
+foreign "raylib.h" {                 // the C backend #includes the header
+    void InitWindow(int w, int h, string title)
+}
+foreign {                            // no header: found when linking (e.g. a system DLL)
+    u8* malloc(int size)
+    i32 puts(string s)
 }
 ```
 
-- `[DECIDE]` `foreign "header.h" { ... }` block (shown) vs per-declaration `extern`.
-  Lean: the `foreign` block — one include, grouped bindings.
+- **Settled (2026-10-09): the `foreign` block**, not per-declaration `extern`. Each
+  declaration says everything a backend needs to call the function, so the native backend
+  calls C (raylib, the OS) without reading C headers; the C backend uses the header, or
+  (none given) declares the functions itself. A foreign function keeps its exact name.
+- `string` is a C `const char*`, so it converts to and from a pointer with `cast<T>`
+  (e.g. a byte buffer `u8*`).
+- Still to come: `struct` declarations inside a `foreign` block (C structs by value).
 - Free targets: **any C engine** (raylib, SDL, sokol, Box2D) and **Godot via
   GDExtension** (its C API). **Unreal needs a C++ shim** — stated honestly.
 
@@ -271,7 +293,7 @@ foreign "raylib.h" {                 // maps to one #include
 5. **Range operator:** `0..n` exclusive vs `0..<n`.
 6. **Multiple return values:** yes/no (lean yes).
 7. **switch vs match**, fallthrough behavior.
-8. **`foreign` block vs per-decl `extern`** for C interop.
+8. ~~**`foreign` block vs per-decl `extern`** for C interop.~~ **Settled: the `foreign` block** (§8).
 9. **Region-enforced escape checking** — v1 stretch or explicitly post-v1.
 10. **Shadowing** in inner scopes — allow?
 

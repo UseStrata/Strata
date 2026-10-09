@@ -241,6 +241,85 @@ Decl* func_decl(Parser* p) {
     return fd
 }
 
+// `global T name = value` / `global var name = value` (the `global` already checked)
+Decl* global_decl(Parser* p) {
+    Token kw = p_advance(p)
+    Decl* d = new_decl(DcGlobal, kw.line, kw.col)
+    if p_check(p, TkKwConst) { p_error(p, p_peek(p), "a global can't be const yet (use 'global var' or a type)") }
+    Stmt* s = var_decl_core(p)
+    d.name = s.name
+    d.ret = s.type
+    d.init = s.init
+    return d
+}
+
+// Is the parser at `global <type or var> name` (a contextual keyword: `global` stays a
+// valid name everywhere else)?
+bool at_global(Parser* p) {
+    if !p_check(p, TkIdent) || p_peek(p).text != "global" { return false }
+    if p.toks[p.pos + 1].kind == TkKwVar || p.toks[p.pos + 1].kind == TkKwConst { return true }
+    int i = skip_type_at(p, p.pos + 1)
+    return i >= 0 && p.toks[i].kind == TkIdent
+}
+
+// Is the parser at `foreign {` / `foreign "header.h" {` / `foreign <header.h> {`?
+bool at_foreign(Parser* p) {
+    if !p_check(p, TkIdent) || p_peek(p).text != "foreign" { return false }
+    TokKind k = p.toks[p.pos + 1].kind
+    return k == TkLBrace || k == TkString || k == TkLt
+}
+
+// `foreign ["header.h" | <header.h>] { prototypes }`: functions defined outside Strata
+// (C libraries, the OS). With a header, the C backend #includes it; without one, the
+// symbols are found when linking. Adds the header (if any) and each prototype to decls.
+void foreign_block(Parser* p, Decl*[dynamic]* decls, bool exported) {
+    Token kw = p_advance(p)
+    string header = ""
+    if p_check(p, TkString) || p_check(p, TkLt) {
+        Decl* inc = new_decl(DcInclude, kw.line, kw.col)
+        inc.is_foreign = true   // the C backend's #include; the native backend has the declarations
+        if p_check(p, TkString) { inc.path = p_advance(p).text; inc.is_system = false }
+        else {
+            p_advance(p)
+            string path = ""
+            while (!p_check(p, TkGt) && !p_at_end(p)) { path = path + p_advance(p).text; }
+            p_expect(p, TkGt)
+            inc.path = path
+            inc.is_system = true
+        }
+        decls[0].push(inc)
+        header = inc.path
+    }
+    p_expect(p, TkLBrace)
+    skip_newlines(p)
+    while !p_check(p, TkRBrace) && !p_at_end(p) && !p.had_error {
+        Token ft = p_peek(p)
+        Decl* fd = new_decl(DcFunc, ft.line, ft.col)
+        fd.is_foreign = true
+        fd.is_exported = exported
+        fd.path = header        // its header ("": none - the C backend declares it)
+        fd.ret = parse_type(p)
+        fd.name = p_expect(p, TkIdent).text
+        p_expect(p, TkLParen)
+        skip_newlines(p)
+        if !p_check(p, TkRParen) {
+            bool more = true
+            while more {
+                TypeNode* pty = parse_type(p)
+                string pnm = p_expect(p, TkIdent).text
+                fd.params.push(Param{ pnm, pty })
+                more = p_match(p, TkComma)
+                skip_newlines(p)
+            }
+        }
+        p_expect(p, TkRParen)
+        decls[0].push(fd)
+        p_match(p, TkSemicolon)
+        skip_newlines(p)
+    }
+    p_expect(p, TkRBrace)
+}
+
 // ---- program -----------------------------------------------------------
 
 export Program parse_program(Parser* p) {
@@ -250,7 +329,9 @@ export Program parse_program(Parser* p) {
     while (!p_at_end(p) && !p.had_error) {
         bool exported = false
         if (p_check(p, TkKwExport)) { p_advance(p); exported = true; skip_newlines(p); }
-        if (p_check(p, TkKwStruct))     { Decl* d = struct_decl(p); d.is_exported = exported; decls.push(d); }
+        if at_global(p)                 { Decl* d = global_decl(p); d.is_exported = exported; decls.push(d); }
+        else if at_foreign(p)           { foreign_block(p, &decls, exported) }
+        else if (p_check(p, TkKwStruct)) { Decl* d = struct_decl(p); d.is_exported = exported; decls.push(d); }
         else if (p_check(p, TkKwEnum))  { Decl* d = enum_decl(p);   d.is_exported = exported; decls.push(d); }
         else if (looks_like_func(p))    { Decl* d = func_decl(p);   d.is_exported = exported; decls.push(d); }
         else if (exported && p_check(p, TkKwImport)) {

@@ -1,0 +1,36 @@
+// floats.strata - how print writes floats: like C's printf "%g" (6 significant digits,
+// rounded exactly, ties to even), the same on both backends.
+f64 x = 1.0
+for i in 0..60 {
+    print(x * 1.23456789)
+    print(0.0 - x * 0.999999949)
+    x = x * 37.0
+}
+f64 y = 0.1
+for i in 0..40 { print(y); y = y / 7.3 }
+float f = 1.5
+for i in 0..30 { print(f); f = f * 1.37 + 0.001 }
+// exact ties round to even; values just above or below a tie round the right way
+print(123456.5)
+print(123457.5)
+print(2.5)
+print(98765.25)
+print(0.1234565)
+print(1.000005)
+print(1.000015)
+print(1234565000.0)
+print(123456500000000000000.0)
+print(999999.4999999999)
+print(9999995.0)
+// zero, signs, specials, extremes
+f64 z = 0.0
+print(z)
+print(0.0 - z)
+print(1.0 / z)
+print(0.0 - 1.0 / z)
+print(z / z)
+print(1.7976931348623157e308)
+print(2.2250738585072014e-308)
+print(4.9406564584124654e-324)
+print(0.0001)
+print(0.00001)

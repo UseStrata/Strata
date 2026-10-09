@@ -121,9 +121,15 @@ export struct IrFunc {
 // A data item: a string literal's bytes (as escaped text) under a symbol.
 export struct IrData { string sym; string text }
 
+// A global variable: `size` bytes under `sym` (`global`: visible to other objects).
+// kind 0: zero; 1: the integer `ival` (of type `ty`); 2: the float literal `text` (of type
+// `ty`); 3: the address of string data `text`; 4: an empty T[dynamic] (element size `ival`).
+export struct IrGlobal { string sym; bool global; int size; int align; int kind; int ival; string text; int ty }
+
 export struct IrProgram {
     IrFunc[dynamic] funcs
     IrData[dynamic] strings
+    IrGlobal[dynamic] globals
 }
 
 export Ins new_ins(int op, int ty, int dst, int a, int b) {
@@ -142,7 +148,8 @@ export IrFunc new_ir_func(string name, bool global) {
 export IrProgram new_ir_program() {
     IrFunc[dynamic] fs = []
     IrData[dynamic] ds = []
-    return IrProgram{ fs, ds }
+    IrGlobal[dynamic] gs = []
+    return IrProgram{ fs, ds, gs }
 }
 
 // ---- building ---------------------------------------------------------------------
@@ -279,6 +286,10 @@ export string ir_program_text(IrProgram* prog) {
     string[dynamic] p = []
     for k in 0..prog.strings.len {
         p.push("data " + prog.strings[k].sym + " = \"" + prog.strings[k].text + "\"\n")
+    }
+    for k in 0..prog.globals.len {
+        IrGlobal g = prog.globals[k]
+        p.push("global " + g.sym + ": " + int_to_str(g.size) + " bytes, kind " + int_to_str(g.kind) + "\n")
     }
     for k in 0..prog.funcs.len {
         p.push("\n")

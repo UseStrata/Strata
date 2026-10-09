@@ -750,7 +750,35 @@ export void x64_begin(X64* x) {
 }
 
 // The assembly for the whole program, after every function went through x64_function.
+// GNU as directives for a global's bytes
+void x64_global(X64* x, IrGlobal g) {
+    int p = 0
+    int a = 1
+    while a < g.align { a = a * 2; p += 1 }
+    out(x, ".p2align " + int_to_str(p))
+    if g.global { out(x, ".globl " + g.sym) }
+    out_label(x, g.sym)
+    if g.kind == 1 {
+        string d = ".quad "
+        if g.size == 4 { d = ".long " } else if g.size == 2 { d = ".short " } else if g.size == 1 { d = ".byte " }
+        out(x, d + int_to_str(g.ival))
+    } else if g.kind == 2 {
+        if g.ty == KF64 { out(x, ".double " + g.text) } else { out(x, ".float " + g.text) }
+    } else if g.kind == 3 {
+        out(x, ".quad " + g.text)
+    } else if g.kind == 4 {
+        out(x, ".zero 24")
+        out(x, ".quad " + int_to_str(g.ival))
+    } else {
+        out(x, ".zero " + int_to_str(g.size))
+    }
+}
+
 export string x64_finish(X64* x, IrProgram* prog) {
+    if prog.globals.len > 0 {
+        out(x, ".data")
+        for k in 0..prog.globals.len { x64_global(x, prog.globals[k]) }
+    }
     if prog.strings.len > 0 || x.data.len > 0 {
         out(x, ".section .rdata,\"dr\"")
         for k in 0..prog.strings.len {

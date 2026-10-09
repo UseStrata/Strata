@@ -1,0 +1,631 @@
+// Copyright © 2026 Connor Rutberg
+// lib/srt.strata - the runtime of natively compiled programs, written in Strata.
+//
+// Natively compiled code (src/lower.strata) does its own arithmetic, control flow and
+// vector math, and calls these `srt_*` functions for the rest: printing, arenas, strings,
+// dynamic arrays, files, matrices and quaternions. They behave exactly like the C
+// runtime (lib/*.h) the C backend uses, so both backends print the same.
+//
+// build.ps1 compiles this file with Strata's own native backend (`stratac object`) into
+// lib/srt.o, which Strata's linker links into every native program. What it needs from
+// outside is in the `foreign` block: functions of the C runtime that ships with Windows
+// (msvcrt.dll). Structs travel by pointer (results through the first argument).
+//
+// Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
+// (see ../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
+
+foreign {
+    u8* malloc(int size)
+    u8* realloc(u8* p, int size)
+    void free(u8* p)
+    u8* memcpy(u8* dst, u8* src, int n)
+    u8* memset(u8* dst, i32 c, int n)
+    int strlen(string s)
+    i32 strcmp(string a, string b)
+    i32 puts(string s)
+    u8* fopen(string path, string mode)
+    i32 fclose(u8* f)
+    i32 fseek(u8* f, i32 offset, i32 whence)     // `long` is 32 bits on Windows
+    i32 ftell(u8* f)
+    int fread(u8* buf, int size, int n, u8* f)
+    int fwrite(u8* buf, int size, int n, u8* f)
+    float sinf(float x)
+    float cosf(float x)
+    float tanf(float x)
+}
+
+// ---- arenas -------------------------------------------------------------------------------
+// The layout of lib/arena.h: an arena is the newest of a chain of blocks; a block is this
+// 24-byte header followed by its bytes. Allocations are 16-byte rounded and zeroed.
+
+struct Block { Block* next; int used; int cap }
+struct Pool { Block* head }
+
+global Pool heap      // alloc(value)
+global Pool strs      // strings: concatenation, substr, read_file, int_to_str
+
+u8* pool_alloc(Pool* a, int size) {
+    int sz = (size + 15) & ~15
+    if a.head == null || a.head.used + sz > a.head.cap {
+        int cap = 65536
+        while cap < sz { cap = cap * 2 }
+        Block* b = cast<Block*>(malloc(24 + cap))
+        b.next = a.head
+        b.used = 0
+        b.cap = cap
+        a.head = b
+    }
+    u8* p = cast<u8*>(cast<int>(a.head) + 24 + a.head.used)
+    a.head.used = a.head.used + sz
+    memset(p, 0, size)
+    return p
+}
+
+export u8* srt_arena_alloc(Pool* a, int size) { return pool_alloc(a, size) }
+
+export void srt_arena_free(Pool* a) {
+    Block* b = a.head
+    while b != null {
+        Block* n = b.next
+        free(cast<u8*>(b))
+        b = n
+    }
+    a.head = null
+}
+
+export u8* srt_heap_alloc(int size) { return pool_alloc(&heap, size) }
+
+// ---- strings ------------------------------------------------------------------------------
+
+u8* bytes(string s) { return cast<u8*>(s) }
+
+export string srt_str_concat(string x, string y) {
+    int lx = strlen(x)
+    int ly = strlen(y)
+    u8* r = pool_alloc(&strs, lx + ly + 1)
+    memcpy(r, bytes(x), lx)
+    memcpy(&r[lx], bytes(y), ly)
+    return cast<string>(r)
+}
+
+export i32 srt_str_eq(string x, string y) {
+    if strcmp(x, y) == 0 { return 1 }
+    return 0
+}
+
+export int srt_str_len(string s) { return strlen(s) }
+
+// substr(s, start, n): n bytes from `start`, clamped to the string's bounds
+export string srt_str_sub(string s, int start, int n) {
+    int len = strlen(s)
+    if start < 0 { start = 0 }
+    if start > len { start = len }
+    if n < 0 { n = 0 }
+    if start + n > len { n = len - start }
+    u8* r = pool_alloc(&strs, n + 1)
+    u8* sb = bytes(s)
+    memcpy(r, &sb[start], n)
+    return cast<string>(r)
+}
+
+// v in decimal into buf; returns the length
+int fmt_int(u8* buf, int v) {
+    u64 u = cast<u64>(v)
+    if v < 0 { u = cast<u64>(0) - u }
+    int n = 0
+    u64 t = u
+    bool more = true
+    while more {             // count the digits
+        n += 1
+        t = t / cast<u64>(10)
+        more = t != cast<u64>(0)
+    }
+    int at = 0
+    if v < 0 { buf[0] = cast<u8>('-'); at = 1 }
+    int k = at + n - 1
+    more = true
+    while more {
+        buf[k] = cast<u8>(cast<int>('0') + cast<int>(u % cast<u64>(10)))
+        u = u / cast<u64>(10)
+        k -= 1
+        more = u != cast<u64>(0)
+    }
+    buf[at + n] = cast<u8>(0)
+    return at + n
+}
+
+export string srt_str_from_int(int v) {
+    u8* tmp = scratch()
+    int n = fmt_int(tmp, v)
+    u8* r = pool_alloc(&strs, n + 1)
+    memcpy(r, tmp, n)
+    return cast<string>(r)
+}
+
+// ---- printing -------------------------------------------------------------------------------
+
+global u8* fmt_buf    // one buffer for formatting, made on first use
+
+u8* scratch() {
+    if fmt_buf == null { fmt_buf = malloc(128) }
+    return fmt_buf
+}
+
+export void srt_print_str(string s) { puts(s) }
+
+export void srt_print_i64(int v) {
+    u8* b = scratch()
+    fmt_int(b, v)
+    puts(cast<string>(b))
+}
+
+int put(u8* b, int at, char c) {
+    b[at] = cast<u8>(c)
+    return at + 1
+}
+
+// ---- exact float digits ------------------------------------------------------------------
+// printf rounds a double's EXACT value; msvcrt's own conversions round a 17-digit
+// approximation of it (so e.g. 0.1234565, stored as 0.12345649999..., came out 0.123457).
+// So the digits are computed here exactly, with small big integers: limbs of 32 bits in
+// u64s, in buffers made once.
+
+global u64* big_n
+global u64* big_d
+global u64* big_t
+
+int BIG() { return 48 }
+
+u64 lo32() { return cast<u64>(4294967295) }
+
+int big_trim(u64* a, int n) {
+    while n > 1 && a[n - 1] == cast<u64>(0) { n -= 1 }
+    return n
+}
+
+int big_set(u64* a, u64 v) {
+    a[0] = v & lo32()
+    a[1] = v >> cast<u64>(32)
+    return big_trim(a, 2)
+}
+
+int big_mul_small(u64* a, int n, u64 k) {
+    u64 carry = cast<u64>(0)
+    for i in 0..n {
+        u64 x = a[i] * k + carry
+        a[i] = x & lo32()
+        carry = x >> cast<u64>(32)
+    }
+    if carry != cast<u64>(0) { a[n] = carry; n += 1 }
+    return n
+}
+
+int big_shl(u64* a, int n, int bits) {
+    int words = bits / 32
+    int r = bits % 32
+    if r > 0 {
+        u64 carry = cast<u64>(0)
+        for i in 0..n {
+            u64 x = (a[i] << cast<u64>(r)) | carry
+            carry = a[i] >> cast<u64>(32 - r)
+            a[i] = x & lo32()
+        }
+        if carry != cast<u64>(0) { a[n] = carry; n += 1 }
+    }
+    if words > 0 {
+        int k = n - 1
+        while k >= 0 { a[k + words] = a[k]; k -= 1 }
+        for i in 0..words { a[i] = cast<u64>(0) }
+        n += words
+    }
+    return big_trim(a, n)
+}
+
+int big_cmp(u64* a, int an, u64* b, int bn) {
+    if an != bn { if an > bn { return 1 } return 0 - 1 }
+    int k = an - 1
+    int r = 0
+    while k >= 0 && r == 0 {
+        if a[k] > b[k] { r = 1 } else if a[k] < b[k] { r = 0 - 1 }
+        k -= 1
+    }
+    return r
+}
+
+// a -= b (a >= b)
+int big_sub(u64* a, int an, u64* b, int bn) {
+    u64 borrow = cast<u64>(0)
+    for i in 0..an {
+        u64 bi = cast<u64>(0)
+        if i < bn { bi = b[i] }
+        u64 sub = bi + borrow
+        if a[i] >= sub { a[i] = a[i] - sub; borrow = cast<u64>(0) }
+        else { a[i] = a[i] + (lo32() + cast<u64>(1)) - sub; borrow = cast<u64>(1) }
+    }
+    return big_trim(a, an)
+}
+
+int big_pow10(u64* a, int n, int s) {
+    while s >= 9 { n = big_mul_small(a, n, cast<u64>(1000000000)); s -= 9 }
+    while s > 0 { n = big_mul_small(a, n, cast<u64>(10)); s -= 1 }
+    return n
+}
+
+int floor_div(int a, int b) {
+    int q = a / b
+    if (a % b != 0) && ((a < 0) != (b < 0)) { q -= 1 }
+    return q
+}
+
+// v > 0 (finite) rounded to 6 significant digits, exactly, ties to even: writes the 6
+// digits to `dig` and returns the decimal exponent of the first one.
+int exact_digits(f64 v, u8* dig) {
+    if big_n == null { big_n = cast<u64*>(malloc(8 * BIG())); big_d = cast<u64*>(malloc(8 * BIG())); big_t = cast<u64*>(malloc(8 * BIG())) }
+    f64 vv = v
+    u64 bits = cast<u64>(0)
+    memcpy(cast<u8*>(&bits), cast<u8*>(&vv), 8)
+    u64 one = cast<u64>(1)
+    int ex = cast<int>((bits >> cast<u64>(52)) & cast<u64>(2047))
+    u64 m = bits & ((one << cast<u64>(52)) - one)
+    int e = 0 - 1074
+    if ex != 0 { m = m | (one << cast<u64>(52)); e = ex - 1075 }
+    // v = m * 2^e; its decimal exponent, estimated from its bit length (off by 1 at most)
+    int bl = 0
+    u64 t = m
+    while t != cast<u64>(0) { bl += 1; t = t >> one }
+    int x = floor_div((e + bl - 1) * 30103, 100000)
+    int q = 0
+    int nl = 0
+    int dl = 0
+    int tries = 0
+    bool done = false
+    while !done && tries < 4 {
+        // q = floor(v * 10^(5 - x)), and the remainder, as N / D
+        int s = 5 - x
+        nl = big_set(big_n, m)
+        dl = big_set(big_d, one)
+        if e >= 0 { nl = big_shl(big_n, nl, e) } else { dl = big_shl(big_d, dl, 0 - e) }
+        if s >= 0 { nl = big_pow10(big_n, nl, s) } else { dl = big_pow10(big_d, dl, 0 - s) }
+        q = 0
+        int b = 20
+        while b >= 0 {
+            for i in 0..dl { big_t[i] = big_d[i] }
+            int tl = big_shl(big_t, dl, b)
+            if big_cmp(big_n, nl, big_t, tl) >= 0 {
+                nl = big_sub(big_n, nl, big_t, tl)
+                q += 1 << b
+            }
+            b -= 1
+        }
+        if q < 100000 { x -= 1 } else if q >= 1000000 { x += 1 } else { done = true }
+        tries += 1
+    }
+    // round: compare the remainder (times 2) with D; a tie goes to the even neighbour
+    nl = big_shl(big_n, nl, 1)
+    int c = big_cmp(big_n, nl, big_d, dl)
+    if c > 0 || (c == 0 && q % 2 == 1) { q += 1 }
+    if q == 1000000 { q = 100000; x += 1 }
+    int k = 5
+    while k >= 0 {
+        dig[k] = cast<u8>(cast<int>('0') + q % 10)
+        q = q / 10
+        k -= 1
+    }
+    dig[6] = cast<u8>(0)
+    return x
+}
+
+// v as C's printf "%g" writes it: 6 significant digits (exactly rounded, above), the
+// shorter of fixed and exponent notation, trailing zeros dropped, an exponent of 2 digits
+// at least.
+export void srt_print_f64(f64 v) {
+    u8* b = scratch()
+    int o = 0
+    f64 zero = 0.0
+    if v != v {
+        o = put(b, o, 'n'); o = put(b, o, 'a'); o = put(b, o, 'n')
+    } else {
+        bool neg = v < zero || (v == zero && 1.0 / v < zero)
+        if neg { o = put(b, o, '-'); v = zero - v }
+        if v - v != zero {
+            o = put(b, o, 'i'); o = put(b, o, 'n'); o = put(b, o, 'f')
+        } else if v == zero {
+            o = put(b, o, '0')
+        } else {
+            u8* digbuf = &b[64]   // (the digits live in the buffer's far end)
+            int x = exact_digits(v, digbuf)
+            string dig = cast<string>(digbuf)
+            int nd = 6
+            while nd > 1 && dig[nd - 1] == '0' { nd -= 1 }
+            if x < 0 - 4 || x >= 6 {
+                o = put(b, o, dig[0])
+                if nd > 1 {
+                    o = put(b, o, '.')
+                    for i in 1..nd { o = put(b, o, dig[i]) }
+                }
+                o = put(b, o, 'e')
+                if x < 0 { o = put(b, o, '-'); x = 0 - x } else { o = put(b, o, '+') }
+                if x < 10 { o = put(b, o, '0') }
+                o = o + fmt_int(&b[o], x)
+            } else if x >= 0 {
+                for i in 0..(x + 1) {
+                    if i < nd { o = put(b, o, dig[i]) } else { o = put(b, o, '0') }
+                }
+                if nd > x + 1 {
+                    o = put(b, o, '.')
+                    for i in (x + 1)..nd { o = put(b, o, dig[i]) }
+                }
+            } else {
+                o = put(b, o, '0')
+                o = put(b, o, '.')
+                for i in 0..(0 - x - 1) { o = put(b, o, '0') }
+                for i in 0..nd { o = put(b, o, dig[i]) }
+            }
+        }
+    }
+    b[o] = cast<u8>(0)
+    puts(cast<string>(b))
+}
+
+// ---- files and arguments -------------------------------------------------------------------
+
+export string srt_read_file(string path) {
+    u8* f = fopen(path, "rb")
+    if f == null { return "" }
+    fseek(f, 0, 2)
+    i32 size = ftell(f)
+    fseek(f, 0, 0)
+    if size < 0 { fclose(f); return "" }
+    u8* buf = pool_alloc(&strs, cast<int>(size) + 1)
+    int got = fread(buf, 1, cast<int>(size), f)
+    fclose(f)
+    buf[got] = cast<u8>(0)
+    return cast<string>(buf)
+}
+
+export bool srt_write_file(string path, string data) {
+    u8* f = fopen(path, "wb")
+    if f == null { return false }
+    int len = strlen(data)
+    int wrote = 0
+    if len > 0 { wrote = fwrite(bytes(data), 1, len, f) }
+    fclose(f)
+    return wrote == len
+}
+
+global i32 argc_v
+global string* argv_v
+
+export void srt_set_args(i32 argc, string* argv) {
+    argc_v = argc
+    argv_v = argv
+}
+
+// ---- dynamic arrays -----------------------------------------------------------------------------
+// The layout of lib/sarr.h: data, len, cap, element size.
+
+struct ArrayRep { u8* data; int len; int cap; int elem }
+
+export void srt_arr_push(ArrayRep* a, u8* value) {
+    if a.len == a.cap {
+        int nc = 8
+        if a.cap > 0 { nc = a.cap * 2 }
+        a.data = realloc(a.data, nc * a.elem)
+        a.cap = nc
+    }
+    memcpy(&a.data[a.len * a.elem], value, a.elem)
+    a.len = a.len + 1
+}
+
+export void srt_args(ArrayRep* out) {
+    out.data = null
+    out.len = 0
+    out.cap = 0
+    out.elem = 8
+    for i in 0..cast<int>(argc_v) {
+        string s = argv_v[i]
+        srt_arr_push(out, cast<u8*>(&s))
+    }
+}
+
+// ---- matrices and quaternions ----------------------------------------------------------------
+// The formulas of lib/smath.h, operation for operation (so the results are the same bits).
+// A mat4 is 16 floats, column-major; these work on it as a float array.
+
+float* fl(mat4* m) { return cast<float*>(m) }
+
+void set_identity(float* m) {
+    for i in 0..16 { m[i] = 0.0 }
+    m[0] = 1.0
+    m[5] = 1.0
+    m[10] = 1.0
+    m[15] = 1.0
+}
+
+export void srt_mat4_identity(mat4* r) {
+    mat4 t
+    set_identity(fl(&t))
+    *r = t
+}
+
+export void srt_mat4_mul(mat4* r, mat4* a, mat4* b) {
+    mat4 t
+    float* x = fl(a)
+    float* y = fl(b)
+    float* o = fl(&t)
+    for c in 0..4 {
+        for row in 0..4 {
+            float s = 0.0
+            for k in 0..4 { s += x[k * 4 + row] * y[c * 4 + k] }
+            o[c * 4 + row] = s
+        }
+    }
+    *r = t
+}
+
+export void srt_mat4_mul_vec4(vec4* r, mat4* m, vec4* v) {
+    float* a = fl(m)
+    vec4 w = *v
+    vec4 t
+    t.x = a[0] * w.x + a[4] * w.y + a[8] * w.z + a[12] * w.w
+    t.y = a[1] * w.x + a[5] * w.y + a[9] * w.z + a[13] * w.w
+    t.z = a[2] * w.x + a[6] * w.y + a[10] * w.z + a[14] * w.w
+    t.w = a[3] * w.x + a[7] * w.y + a[11] * w.z + a[15] * w.w
+    *r = t
+}
+
+export void srt_mat4_translate(mat4* r, vec3* v) {
+    mat4 t
+    float* m = fl(&t)
+    set_identity(m)
+    m[12] = v.x
+    m[13] = v.y
+    m[14] = v.z
+    *r = t
+}
+
+export void srt_mat4_scale(mat4* r, vec3* v) {
+    mat4 t
+    float* m = fl(&t)
+    set_identity(m)
+    m[0] = v.x
+    m[5] = v.y
+    m[10] = v.z
+    *r = t
+}
+
+export void srt_mat4_rotate(mat4* r, vec3* axis, float angle) {
+    vec3 a = normalize(*axis)
+    float c = cosf(angle)
+    float s = sinf(angle)
+    float one = 1.0
+    float t = one - c
+    mat4 res
+    float* m = fl(&res)
+    set_identity(m)
+    m[0] = t * a.x * a.x + c
+    m[4] = t * a.x * a.y - s * a.z
+    m[8] = t * a.x * a.z + s * a.y
+    m[1] = t * a.x * a.y + s * a.z
+    m[5] = t * a.y * a.y + c
+    m[9] = t * a.y * a.z - s * a.x
+    m[2] = t * a.x * a.z - s * a.y
+    m[6] = t * a.y * a.z + s * a.x
+    m[10] = t * a.z * a.z + c
+    *r = res
+}
+
+export void srt_mat4_perspective(mat4* r, float fovy, float aspect, float znear, float zfar) {
+    float one = 1.0
+    float half = 0.5
+    float two = 2.0
+    float f = one / tanf(fovy * half)
+    mat4 res
+    float* m = fl(&res)
+    m[0] = f / aspect
+    m[5] = f
+    m[10] = (zfar + znear) / (znear - zfar)
+    m[11] = 0.0 - one
+    m[14] = (two * zfar * znear) / (znear - zfar)
+    *r = res
+}
+
+export void srt_mat4_look_at(mat4* r, vec3* eye, vec3* center, vec3* up) {
+    vec3 e = *eye
+    vec3 f = normalize(*center - e)
+    vec3 s = normalize(cross(f, *up))
+    vec3 u = cross(s, f)
+    float zero = 0.0
+    mat4 res
+    float* m = fl(&res)
+    set_identity(m)
+    m[0] = s.x
+    m[4] = s.y
+    m[8] = s.z
+    m[1] = u.x
+    m[5] = u.y
+    m[9] = u.z
+    m[2] = zero - f.x
+    m[6] = zero - f.y
+    m[10] = zero - f.z
+    m[12] = zero - dot(s, e)
+    m[13] = zero - dot(u, e)
+    m[14] = dot(f, e)
+    *r = res
+}
+
+export void srt_quat_identity(quat* r) {
+    quat q
+    q.w = 1.0
+    *r = q
+}
+
+export void srt_quat_mul(quat* r, quat* pa, quat* pb) {
+    quat a = *pa
+    quat b = *pb
+    quat q
+    q.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y
+    q.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x
+    q.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w
+    q.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+    *r = q
+}
+
+export void srt_quat_axis_angle(quat* r, vec3* axis, float angle) {
+    vec3 a = normalize(*axis)
+    float half = 0.5
+    float h = angle * half
+    float s = sinf(h)
+    quat q
+    q.x = a.x * s
+    q.y = a.y * s
+    q.z = a.z * s
+    q.w = cosf(h)
+    *r = q
+}
+
+export void srt_quat_normalize(quat* r, quat* p) {
+    quat q = *p
+    float l = length(vec4(q.x, q.y, q.z, q.w))
+    float zero = 0.0
+    if l == zero { *r = q; return }
+    quat n
+    n.x = q.x / l
+    n.y = q.y / l
+    n.z = q.z / l
+    n.w = q.w / l
+    *r = n
+}
+
+export void srt_quat_rotate(vec3* r, quat* p, vec3* pv) {
+    quat q = *p
+    vec3 v = *pv
+    vec3 u = vec3(q.x, q.y, q.z)
+    float two = 2.0
+    vec3 t = cross(u, v) * two
+    vec3 res = (v + t * q.w) + cross(u, t)
+    *r = res
+}
+
+export void srt_quat_to_mat4(mat4* r, quat* p) {
+    quat q = *p
+    float x = q.x
+    float y = q.y
+    float z = q.z
+    float w = q.w
+    float one = 1.0
+    float two = 2.0
+    mat4 res
+    float* m = fl(&res)
+    set_identity(m)
+    m[0] = one - two * (y * y + z * z)
+    m[4] = two * (x * y - w * z)
+    m[8] = two * (x * z + w * y)
+    m[1] = two * (x * y + w * z)
+    m[5] = one - two * (x * x + z * z)
+    m[9] = two * (y * z - w * x)
+    m[2] = two * (x * z - w * y)
+    m[6] = two * (y * z + w * x)
+    m[10] = one - two * (x * x + y * y)
+    *r = res
+}

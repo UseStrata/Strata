@@ -93,6 +93,7 @@ struct StructInfo{ string name; FieldInfo[dynamic] fields; int module; bool expo
 struct FuncInfo  { string name; Type*[dynamic] params; Type* ret; int module; bool exported; string cname; }
 struct EnumInfo  { string name; int module; bool exported; string cname; }
 struct EnumMember{ string member; string enum_name; int module; bool exported; string cname; }   // enum_name: the enum's C name
+struct GlobalInfo{ string name; Type* type; int module; bool exported; string cname; }
 // One entry per top-level name (all kinds), for the module-level name checks.
 struct NameEntry { string name; int module; bool exported; int line; int col; }
 
@@ -105,6 +106,8 @@ export struct Checker {
     FuncInfo[dynamic]   funcs
     EnumInfo[dynamic]   enums
     EnumMember[dynamic] enum_members
+    GlobalInfo[dynamic] globals
+    NameIdx      global_idx
     Scope*       scope
     Type*        cur_ret
     Module[dynamic]    mods// the program's modules (see modules.strata)
@@ -233,6 +236,25 @@ int ck_enum_index(Checker* c, string name) {
     }
     return found
 }
+int ck_global_index(Checker* c, string name) {
+    int found = 0 - 1
+    int k = idx_first(&c.global_idx, name)
+    while k >= 0 {
+        GlobalInfo g = c.globals[k]
+        if g.name == name && ck_sees(c, g.module, g.exported) { found = k }
+        k = idx_next(&c.global_idx, k)
+    }
+    return found
+}
+int ck_own_global(Checker* c, string name, int module) {
+    int found = 0 - 1
+    int k = idx_first(&c.global_idx, name)
+    while k >= 0 {
+        if c.globals[k].name == name && c.globals[k].module == module { found = k }
+        k = idx_next(&c.global_idx, k)
+    }
+    return found
+}
 int ck_member_index(Checker* c, string name) {
     int found = 0 - 1
     int k = idx_first(&c.member_idx, name)
@@ -302,6 +324,14 @@ Type* ck_type(Checker* c, TypeNode* t) {
     return c.t_unknown
 }
 
+// A global's initializer: a literal (a negative number too) or null.
+bool ck_is_constant(Expr* e) {
+    if e.kind == ExIntLit || e.kind == ExFloatLit || e.kind == ExBoolLit || e.kind == ExCharLit || e.kind == ExStringLit { return true }
+    if e.kind == ExName && e.text == "null" { return true }
+    if e.kind == ExUnary && e.text == "-" && (e.a.kind == ExIntLit || e.a.kind == ExFloatLit) { return true }
+    return false
+}
+
 bool ck_assignable(Type* target, Type* value) {
     if (target.cat == TcUnknown || value.cat == TcUnknown) { return true; }
     switch (target.cat) {
@@ -340,6 +370,8 @@ bool ck_castable(Type* from, Type* to) {
     if (t_is_scalar(from) && t_is_scalar(to)) { return true; }
     if (from.cat == TcPointer && (to.cat == TcPointer || to.cat == TcInt)) { return true; }
     if (to.cat == TcPointer && from.cat == TcInt) { return true; }
+    // a string is a C `const char*`: it converts to / from a pointer (e.g. a byte buffer)
+    if (from.cat == TcStr && to.cat == TcPointer) || (from.cat == TcPointer && to.cat == TcStr) { return true }
     return false
 }
 
@@ -516,6 +548,11 @@ Type* ck_expr_i(Checker* c, Expr* e) {
             {
                 LookupResult v = ck_lookup(c, e.text)
                 if (v.found) { return v.type; }
+                int gi = ck_global_index(c, e.text)
+                if gi >= 0 {
+                    e.text = c.globals[gi].cname
+                    return c.globals[gi].type
+                }
                 int mi = ck_member_index(c, e.text)
                 if mi >= 0 {
                     e.text = c.enum_members[mi].cname
@@ -590,6 +627,17 @@ Type* ck_expr_i(Checker* c, Expr* e) {
             {
                 Type* ot = ck_expr(c, e.a)
                 if (t_is_unknown(ot)) { return c.t_unknown; }
+                // `.` auto-derefs a pointer to a vector or quaternion too
+                if ot.cat == TcPointer && ot.elem != null && (ot.elem.cat == TcVec || ot.elem.cat == TcQuat) {
+                    ot = ot.elem
+                    if ot.cat == TcVec && e.field.len > 1 { ck_error(c, e.line, e.col, "a swizzle needs the vector itself, not a pointer to it (use (*p)." + e.field + ")") }
+                }
+                // a quaternion's components
+                if ot.cat == TcQuat {
+                    if e.field == "x" || e.field == "y" || e.field == "z" || e.field == "w" { return c.t_float }
+                    ck_error(c, e.line, e.col, "quat has components x, y, z and w (no '" + e.field + "')")
+                    return c.t_unknown
+                }
                 if (ot.cat == TcVec) {
                     int sw = vec_swizzle_size(ot.name, e.field)
                     if (sw == 1) { return c.t_float; }
@@ -1229,6 +1277,7 @@ export bool ck_check(Checker* c, Program prog) {
     c.member_idx = new_idx(n_all)
     c.name_idx = new_idx(n_all)
     c.node_idx = new_idx(n_all)
+    c.global_idx = new_idx(n_all)
 
     // pass 1a: register every top-level name (enums + members, structs, functions);
     // duplicates are errors within one module, and allowed (if private) across modules
@@ -1253,6 +1302,11 @@ export bool ck_check(Checker* c, Program prog) {
             idx_add(&c.struct_idx, d.name, c.structs.len)
             c.structs.push(StructInfo{ d.name, ff, d.module, d.is_exported, d.name })
             ck_note_name(c, d.name, d.module, d.is_exported, d.line, d.col)
+        } else if d.kind == DcGlobal {
+            if ck_own_global(c, d.name, d.module) >= 0 { ck_error(c, d.line, d.col, "global '" + d.name + "' is already defined") }
+            idx_add(&c.global_idx, d.name, c.globals.len)
+            c.globals.push(GlobalInfo{ d.name, c.t_unknown, d.module, d.is_exported, d.name })
+            ck_note_name(c, d.name, d.module, d.is_exported, d.line, d.col)
         } else if d.kind == DcFunc {
             if ck_own_func(c, d.name, d.module) >= 0 { ck_error(c, d.line, d.col, "function '" + d.name + "' is already defined") }
             Type*[dynamic] ps = []
@@ -1274,6 +1328,12 @@ export bool ck_check(Checker* c, Program prog) {
     c.cname_idx = new_idx(c.structs.len)
     for i in 0..c.structs.len { idx_add(&c.cname_idx, c.structs[i].cname, i) }
     for i in 0..c.funcs.len { c.funcs[i].cname = ck_cname(c, c.funcs[i].name, c.funcs[i].module, c.funcs[i].exported) }
+    for i in 0..c.globals.len { c.globals[i].cname = ck_cname(c, c.globals[i].name, c.globals[i].module, c.globals[i].exported) }
+    // a foreign function is the symbol it names: never renamed
+    for i in 0..prog.decls.len {
+        Decl* d = prog.decls[i]
+        if d.kind == DcFunc && d.is_foreign { c.funcs[ck_own_func(c, d.name, d.module)].cname = d.name }
+    }
     ck_name_conflicts(c)
 
     // pass 1c: struct fields
@@ -1297,10 +1357,29 @@ export bool ck_check(Checker* c, Program prog) {
             c.funcs[fi].ret = ck_type(c, d.ret)
         }
     }
+    // pass 1e: globals - their types and constant initializers
+    for i in 0..prog.decls.len {
+        Decl* d = prog.decls[i]
+        if d.kind == DcGlobal {
+            c.cur = d.module
+            int gi = ck_own_global(c, d.name, d.module)
+            Type* declared = c.t_unknown
+            if d.ret != null { declared = ck_type(c, d.ret) }
+            if d.init != null {
+                if !ck_is_constant(d.init) { ck_error(c, d.line, d.col, "a global's initial value must be a constant (a number, char, bool, string or null)") }
+                Type* vt = ck_expr_as(c, d.init, declared)
+                if d.ret == null { declared = vt; d.ret = type_to_node(vt) }
+                else if !ck_assignable(declared, vt) { ck_error(c, d.line, d.col, "cannot initialize global '" + d.name + "' of type " + t_str(declared) + " with a value of type " + t_str(vt)) }
+            } else if d.ret == null {
+                ck_error(c, d.line, d.col, "'global var' needs an initial value")
+            }
+            c.globals[gi].type = declared
+        }
+    }
     // pass 2: function bodies
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
-        if (d.kind == DcFunc) {
+        if (d.kind == DcFunc && !d.is_foreign) {
             c.cur = d.module
             ck_func(c, d, ck_own_func(c, d.name, d.module))
         }
@@ -1316,6 +1395,7 @@ export bool ck_check(Checker* c, Program prog) {
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
         if d.kind == DcFunc   { d.name = c.funcs[ck_own_func(c, d.name, d.module)].cname }
+        if d.kind == DcGlobal { d.name = c.globals[ck_own_global(c, d.name, d.module)].cname }
         if d.kind == DcStruct { d.name = c.structs[ck_own_struct(c, d.name, d.module)].cname }
         if d.kind == DcEnum {
             for m in 0..d.members.len { d.members[m] = c.enum_members[ck_own_member(c, d.members[m], d.module)].cname }
@@ -1330,10 +1410,11 @@ export Checker* new_checker(string file) {
     FuncInfo[dynamic]   fs = []
     EnumInfo[dynamic]   es = []
     EnumMember[dynamic] ems = []
+    GlobalInfo[dynamic] gls = []
     Module[dynamic]     mods = []
     NameEntry[dynamic]  names = []
     TypeNode*[dynamic]  nodes = []
-    return alloc(Checker{ file, false, false, ss, fs, es, ems, null, ty(TcVoid, "void"), mods, 0, names,
+    return alloc(Checker{ file, false, false, ss, fs, es, ems, gls, new_idx(0), null, ty(TcVoid, "void"), mods, 0, names,
                           new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), nodes, new_idx(0), 0,
                           ty(TcInt, "int"), ty(TcBool, "bool"), ty(TcFloat, "float"), ty(TcStr, "string"),
                           ty(TcVoid, "void"), ty(TcUnknown, "?"), ty(TcChar, "char") })

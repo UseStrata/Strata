@@ -1,0 +1,38 @@
+// globals.strata - global variables and foreign functions
+import mods.counter        // exports a global and a function that changes it
+
+// functions defined outside Strata (here: in Windows' C runtime / the C library)
+foreign {
+    i32 abs(i32 x)
+    i32 toupper(i32 c)
+}
+
+global int calls = 0
+global var greeting = "hi"
+global float scale = 2.5
+global i8 small = -3
+global int[dynamic] seen
+global vec3 origin
+
+int count() {
+    calls += 1
+    seen.push(calls * 10)
+    return calls
+}
+
+count()
+count()
+print(calls)                  // 2
+print(greeting + "!")         // hi!
+print(scale * 2.0)            // 5
+print(small)                  // -3
+print(seen.len)               // 2
+print(seen[1])                // 20
+print(origin.x)               // 0
+origin.y = 4.5
+print(origin.y)               // 4.5
+print(abs(0 - 42))            // 42
+print(toupper(97))            // 65
+bump(5)
+bump(7)
+print(total)                  // 12

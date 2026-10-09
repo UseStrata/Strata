@@ -13,14 +13,15 @@ installed beside `stratac` (`<install>/lib/`), which finds it there.
 | `sprelude.h` | `min`, `max`, `clamp`, `lerp`, `PI` |
 | `sstate.h` | how runtime state is declared (one C file, or shared by a split build) |
 | `crossplatform.h` | a single-header platform layer (Window, System, Files, Process) |
-| `srt.c` | the entry points (`srt_*`) that natively compiled programs call into |
-| `srt.o` | `srt.c` compiled (by `build.ps1`; not in git) — what Strata's linker links |
+| `srt.strata` | the runtime of natively compiled programs (`srt_*`), **written in Strata** |
+| `srt.o` | `srt.strata` compiled by `stratac object` (`build.ps1`; not in git) — what native programs link |
 
 The **C backend** passes `-I <install>/lib` so generated C can `#include` the headers.
-The **native backend** (Strata's own x86-64 code) calls the `srt_*` functions in `srt.c`,
-which wrap the same headers, so both backends behave alike. Strata's linker links the
-prebuilt `srt.o`, so native builds need no C compiler; `srt.c` may therefore only call
-what Windows' `msvcrt.dll` exports. It is the next piece to be written in Strata itself.
+The **native backend** (Strata's own x86-64 code) calls the `srt_*` functions of
+`srt.strata`, which behave exactly like the C headers do, so both backends print the same.
+It is plain Strata: the few things it needs from Windows (memory, files, `puts`,
+`sinf` / `cosf` / `tanf` from msvcrt.dll) are in its `foreign` block, and its state is in
+`global` variables. Strata compiles it into `srt.o` with its own native backend.
 
 License: GPL-3.0 with the runtime linking exception (`../../LICENSE-RUNTIME.md`):
 programs built with Strata are not covered by the GPL.

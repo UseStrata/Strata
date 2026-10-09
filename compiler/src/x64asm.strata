@@ -21,11 +21,12 @@
 import hashidx
 import "strata_host.h"   // strata_f32_bits, strata_f64_bits
 
-// A relocation in .text: a 32-bit PC-relative field at `offset`. `symbol`: an index into
-// ObjFile.symbols, or -1 for the .text section, -2 for the .rdata section. `after`: how
-// many bytes of the instruction follow the field (an immediate).
-export struct ObjReloc { int offset; int symbol; int after }
-// section: 0 undefined (defined elsewhere), 1 .text, 2 .rdata
+// A relocation: in `section` (1 .text, 3 .data) at `offset`. kind 0: a 32-bit PC-relative
+// field (in .text; `after`: how many bytes of the instruction follow it, an immediate);
+// kind 1: a 64-bit address (in .data). `symbol`: an index into ObjFile.symbols, or -1 /
+// -2 / -3 for the .text / .rdata / .data section itself.
+export struct ObjReloc { int section; int offset; int symbol; int after; int kind }
+// section: 0 undefined (defined elsewhere), 1 .text, 2 .rdata, 3 .data
 export struct ObjSymbol { string name; int section; int value; bool global }
 
 export struct ObjFile {
@@ -33,7 +34,8 @@ export struct ObjFile {
     string            err
     u8[dynamic]       text
     u8[dynamic]       rdata
-    ObjReloc[dynamic] relocs     // all in .text
+    u8[dynamic]       data
+    ObjReloc[dynamic] relocs
     ObjSymbol[dynamic] symbols
 }
 
@@ -51,11 +53,11 @@ struct Opnd {
 
 Opnd no_opnd() { return Opnd{ 0, 0, 0, 0, 0, "" } }
 
-struct Fix { int pos; string label; int addend; int after }
+struct Fix { int pos; string label; int addend; int after; int section }   // section 3: a .quad in .data
 
 struct Asm {
     ObjFile         o
-    int             sec        // 1 .text, 2 .rdata
+    int             sec        // 1 .text, 2 .rdata, 3 .data
     string[dynamic] lnames
     int[dynamic]    lsec
     int[dynamic]    loff
@@ -232,11 +234,14 @@ string[dynamic] split_operands(string s) {
 
 int pos(Asm* a) {
     if a.sec == 2 { return a.o.rdata.len }
+    if a.sec == 3 { return a.o.data.len }
     return a.o.text.len
 }
 
 void byte(Asm* a, int v) {
-    if a.sec == 2 { a.o.rdata.push(cast<u8>(v & 255)) } else { a.o.text.push(cast<u8>(v & 255)) }
+    if a.sec == 2 { a.o.rdata.push(cast<u8>(v & 255)) }
+    else if a.sec == 3 { a.o.data.push(cast<u8>(v & 255)) }
+    else { a.o.text.push(cast<u8>(v & 255)) }
 }
 
 void bytes_le(Asm* a, int v, int n) {
@@ -279,7 +284,7 @@ void enc(Asm* a, int prefix, bool w, int op1, int op2, int op3, int regf, bool r
         // RIP-relative: disp32, against a symbol (a fixup) or plain
         byte(a, 5 | r)
         if rm.sym != "" {
-            a.fixes.push(Fix{ a.o.text.len, rm.sym, rm.imm, isz })
+            a.fixes.push(Fix{ a.o.text.len, rm.sym, rm.imm, isz, 1 })
             bytes_le(a, 0, 4)
         } else {
             bytes_le(a, rm.imm, 4)
@@ -303,7 +308,7 @@ void enc(Asm* a, int prefix, bool w, int op1, int op2, int op3, int regf, bool r
 
 // a rel32 to `label`, after the opcode bytes already emitted
 void rel32(Asm* a, string label) {
-    a.fixes.push(Fix{ a.o.text.len, label, 0, 0 })
+    a.fixes.push(Fix{ a.o.text.len, label, 0, 0, 1 })
     bytes_le(a, 0, 4)
 }
 
@@ -576,10 +581,32 @@ void directive(Asm* a, string s) {
     string arg = ""
     if sp >= 0 { name = substr(s, 0, sp); arg = trim(substr(s, sp, s.len - sp)) }
     if name == ".text" { a.sec = 1 }
+    else if name == ".data" { a.sec = 3 }
     else if name == ".section" {
         if arg.len >= 6 && substr(arg, 0, 6) == ".rdata" { a.sec = 2 }
         else if arg.len >= 5 && substr(arg, 0, 5) == ".text" { a.sec = 1 }
+        else if arg.len >= 5 && substr(arg, 0, 5) == ".data" { a.sec = 3 }
         else { fail(a, "unknown section " + arg) }
+    }
+    else if name == ".quad" || name == ".long" || name == ".short" || name == ".byte" {
+        int n = 8
+        if name == ".long" { n = 4 } else if name == ".short" { n = 2 } else if name == ".byte" { n = 1 }
+        if arg.len > 0 && (is_digit(arg[0]) || arg[0] == '-' || arg[0] == '+') { bytes_le(a, parse_num(a, arg), n) }
+        else if n == 8 && a.sec == 3 {
+            // an address: sym or sym+off
+            string sym = arg
+            int off = 0
+            int q = 0 - 1
+            for i in 1..arg.len { if q < 0 && (arg[i] == '+' || arg[i] == '-') { q = i } }
+            if q > 0 { sym = substr(arg, 0, q); off = parse_num(a, substr(arg, q, arg.len - q)) }
+            a.fixes.push(Fix{ a.o.data.len, sym, off, 0, 3 })
+            bytes_le(a, 0, 8)
+        }
+        else { fail(a, "a symbol needs .quad in .data") }
+    }
+    else if name == ".zero" {
+        int n = parse_num(a, arg)
+        for i in 0..n { byte(a, 0) }
     }
     else if name == ".globl" { a.globals.push(arg) }
     else if name == ".p2align" {
@@ -626,6 +653,14 @@ int symbol_index(Asm* a, string name, int section, int value) {
     return a.o.symbols.len - 1
 }
 
+void patch64_data(Asm* a, int at, int v) {
+    u64 x = cast<u64>(v)
+    for i in 0..8 {
+        a.o.data[at + i] = cast<u8>(cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+
 void patch32(Asm* a, int at, int v) {
     u64 x = cast<u64>(v)
     for i in 0..4 {
@@ -642,6 +677,7 @@ export ObjFile assemble_x64(string src) {
     for i in 0..n { if src[i] == '\n' { lines += 1 } }
     u8[dynamic] t = []
     u8[dynamic] r = []
+    u8[dynamic] dt = []
     ObjReloc[dynamic] rl = []
     ObjSymbol[dynamic] sy = []
     string[dynamic] ln = []
@@ -649,7 +685,7 @@ export ObjFile assemble_x64(string src) {
     int[dynamic] lo = []
     string[dynamic] gl = []
     Fix[dynamic] fx = []
-    Asm a = Asm{ ObjFile{ true, "", t, r, rl, sy }, 1, ln, ls, lo, new_idx(lines / 2 + 16), gl, fx, new_idx(lines / 8 + 16), 0, "" }
+    Asm a = Asm{ ObjFile{ true, "", t, r, dt, rl, sy }, 1, ln, ls, lo, new_idx(lines / 2 + 16), gl, fx, new_idx(lines / 8 + 16), 0, "" }
 
     int start = 0
     int i = 0
@@ -674,23 +710,32 @@ export ObjFile assemble_x64(string src) {
     }
     if !a.o.ok { return a.o }
 
-    // symbols for the functions (non-local .text labels)
+    // symbols for the functions and data (non-local .text / .data labels)
     for k in 0..a.lnames.len {
         string nm = a.lnames[k]
-        if a.lsec[k] == 1 && !(nm.len > 1 && nm[0] == '.' && nm[1] == 'L') { symbol_index(&a, nm, 1, a.loff[k]) }
+        if (a.lsec[k] == 1 || a.lsec[k] == 3) && !(nm.len > 1 && nm[0] == '.' && nm[1] == 'L') { symbol_index(&a, nm, a.lsec[k], a.loff[k]) }
     }
     // fixups: jumps within .text resolve here; the rest become relocations
     for k in 0..a.fixes.len {
         Fix f = a.fixes[k]
         int li = find_label(&a, f.label)
-        if li >= 0 && a.lsec[li] == 1 {
+        if f.section == 3 {
+            // a 64-bit address in .data: against the target's section (or symbol)
+            if li >= 0 {
+                patch64_data(&a, f.pos, a.loff[li] + f.addend)
+                a.o.relocs.push(ObjReloc{ 3, f.pos, 0 - a.lsec[li], 0, 1 })
+            } else {
+                patch64_data(&a, f.pos, f.addend)
+                a.o.relocs.push(ObjReloc{ 3, f.pos, symbol_index(&a, f.label, 0, 0), 0, 1 })
+            }
+        } else if li >= 0 && a.lsec[li] == 1 {
             patch32(&a, f.pos, a.loff[li] + f.addend - (f.pos + 4 + f.after))
         } else if li >= 0 {
             patch32(&a, f.pos, a.loff[li] + f.addend)
-            a.o.relocs.push(ObjReloc{ f.pos, 0 - 2, f.after })
+            a.o.relocs.push(ObjReloc{ 1, f.pos, 0 - a.lsec[li], f.after, 0 })
         } else {
             patch32(&a, f.pos, f.addend)
-            a.o.relocs.push(ObjReloc{ f.pos, symbol_index(&a, f.label, 0, 0), f.after })
+            a.o.relocs.push(ObjReloc{ 1, f.pos, symbol_index(&a, f.label, 0, 0), f.after, 0 })
         }
     }
     return a.o

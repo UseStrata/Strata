@@ -4,13 +4,14 @@
 // src/coff.strata - writes an assembled ObjFile (x64asm.strata) as a Windows x64 COFF
 // object file (.o / .obj), the format the linker takes. CORE.
 //
-// Layout:  file header (20 bytes) | 2 section headers (.text, .rdata; 40 each) |
-//          .text bytes | .rdata bytes | .text relocations (10 each) |
+// Layout:  file header (20 bytes) | 3 section headers (.text, .rdata, .data; 40 each) |
+//          .text bytes | .rdata bytes | .data bytes | .text and .data relocations (10 each) |
 //          symbol table (18 each) | string table (names longer than 8 bytes)
 //
 // Symbols: the two section symbols first (each with its auxiliary record), then the
 // ObjFile's symbols (functions defined here, and those defined elsewhere). A relocation
-// is IMAGE_REL_AMD64_REL32 (+ how many immediate bytes follow the field: REL32_1..5).
+// is IMAGE_REL_AMD64_REL32 (+ how many immediate bytes follow the field: REL32_1..5) in
+// .text, IMAGE_REL_AMD64_ADDR64 in .data.
 
 import x64asm
 import "strata_host.h"   // strata_write_bytes
@@ -74,6 +75,30 @@ export bool write_coff(string path, ObjFile* f) {
     return strata_write_bytes(path, &bytes)
 }
 
+// The relocations of one section (1 .text, 3 .data), as COFF records.
+void put_relocs(Out* o, ObjFile* f, int section, int count, bool overflow) {
+    if overflow { u32put(o, count + 1); u32put(o, 0); u16put(o, 0) }
+    for i in 0..f.relocs.len {
+        ObjReloc r = f.relocs[i]
+        if r.section == section {
+            int sym = 6 + r.symbol
+            if r.symbol == 0 - 1 { sym = 0 }
+            if r.symbol == 0 - 2 { sym = 2 }
+            if r.symbol == 0 - 3 { sym = 4 }
+            u32put(o, r.offset)
+            u32put(o, sym)
+            if r.kind == 1 { u16put(o, 1) }           // IMAGE_REL_AMD64_ADDR64
+            else { u16put(o, 4 + r.after) }           // IMAGE_REL_AMD64_REL32 (+ 1..5)
+        }
+    }
+}
+
+int count_relocs(ObjFile* f, int section) {
+    int n = 0
+    for i in 0..f.relocs.len { if f.relocs[i].section == section { n += 1 } }
+    return n
+}
+
 // The object file's bytes.
 export u8[dynamic] coff_bytes(ObjFile* f) {
     u8[dynamic] b = []
@@ -81,57 +106,61 @@ export u8[dynamic] coff_bytes(ObjFile* f) {
     Out o = Out{ b, st }
     int text_size = f.text.len
     int rdata_size = f.rdata.len
-    int text_at = 20 + 40 * 2
+    int data_size = f.data.len
+    int text_at = 20 + 40 * 3
     int rdata_at = text_at + text_size
-    int relocs_at = rdata_at + rdata_size
+    int data_at = rdata_at + rdata_size
+    int trel_at = data_at + data_size
     // more than 65535 relocations: the count moves into an extra first record
-    int nrel = f.relocs.len
-    bool overflow = nrel > 65535
-    int nrec = nrel
-    if overflow { nrec = nrel + 1 }
-    int symtab_at = relocs_at + 10 * nrec
-    int nsyms = 4 + f.symbols.len
+    int ntrel = count_relocs(f, 1)
+    int ndrel = count_relocs(f, 3)
+    bool tover = ntrel > 65535
+    bool dover = ndrel > 65535
+    int ntrec = ntrel
+    if tover { ntrec = ntrel + 1 }
+    int ndrec = ndrel
+    if dover { ndrec = ndrel + 1 }
+    int drel_at = trel_at + 10 * ntrec
+    int symtab_at = drel_at + 10 * ndrec
+    int nsyms = 6 + f.symbols.len
 
     // file header
     u16put(&o, 34404)       // 0x8664: x86-64
-    u16put(&o, 2)
+    u16put(&o, 3)
     u32put(&o, 0)           // timestamp
     u32put(&o, symtab_at)
     u32put(&o, nsyms)
     u16put(&o, 0)           // no optional header
     u16put(&o, 0)
 
-    // .text: code, execute, read, 16-byte aligned; .rdata: initialized data, read, 16-byte aligned
+    // .text: code, execute, read; .rdata: initialized data, read; .data: + write (16-aligned)
     int text_flags = 1615855648    // 0x60500020
-    if overflow { text_flags = text_flags | 16777216 }   // IMAGE_SCN_LNK_NRELOC_OVFL
-    section_header(&o, ".text", text_size, text_at, relocs_at, nrec, text_flags)
+    if tover { text_flags = text_flags | 16777216 }   // IMAGE_SCN_LNK_NRELOC_OVFL
+    int data_flags = 3226468416    // 0xC0500040
+    if dover { data_flags = data_flags | 16777216 }
+    section_header(&o, ".text", text_size, text_at, trel_at, ntrec, text_flags)
     section_header(&o, ".rdata", rdata_size, rdata_at, 0, 0, 1079001152)   // 0x40500040
+    section_header(&o, ".data", data_size, data_at, drel_at, ndrec, data_flags)
 
     for i in 0..text_size { o.b.push(f.text[i]) }
     for i in 0..rdata_size { o.b.push(f.rdata[i]) }
+    for i in 0..data_size { o.b.push(f.data[i]) }
+    put_relocs(&o, f, 1, ntrel, tover)
+    put_relocs(&o, f, 3, ndrel, dover)
 
-    if overflow { u32put(&o, nrec); u32put(&o, 0); u16put(&o, 0) }
-    for i in 0..nrel {
-        ObjReloc r = f.relocs[i]
-        int sym = 4 + r.symbol
-        if r.symbol == 0 - 1 { sym = 0 }
-        if r.symbol == 0 - 2 { sym = 2 }
-        u32put(&o, r.offset)
-        u32put(&o, sym)
-        u16put(&o, 4 + r.after)   // IMAGE_REL_AMD64_REL32 (+ 1..5)
-    }
-
-    // symbols: .text, .rdata (static, with aux records), then the program's
+    // symbols: the sections (static, with aux records), then the program's
     symbol(&o, ".text", 0, 1, 0, 3, 1)
-    section_aux(&o, text_size, nrel)
+    section_aux(&o, text_size, ntrel)
     symbol(&o, ".rdata", 0, 2, 0, 3, 1)
     section_aux(&o, rdata_size, 0)
+    symbol(&o, ".data", 0, 3, 0, 3, 1)
+    section_aux(&o, data_size, ndrel)
     for i in 0..f.symbols.len {
         ObjSymbol s = f.symbols[i]
         int cls = 3
         if s.global { cls = 2 }
         int typ = 0
-        if s.section != 2 { typ = 32 }   // a function
+        if s.section == 1 || s.section == 0 { typ = 32 }   // a function
         symbol(&o, s.name, s.value, s.section, typ, cls, 0)
     }
 

@@ -44,6 +44,9 @@ struct LVal { bool agg; int reg; int ty; TypeNode* t }
 // A local variable: its value in vreg `reg`, or (mem) its address in vreg `reg`.
 struct LVar { string name; bool mem; int reg; int ty; TypeNode* type }
 
+// A global variable: its C name (= its symbol) and type.
+struct LGlobal { string name; TypeNode* type }
+
 export struct Lower {
     bool              ok
     string            err
@@ -54,6 +57,7 @@ export struct Lower {
     string[dynamic]   enums
     string[dynamic]   members
     int[dynamic]      member_values
+    LGlobal[dynamic]  globals
     // the function being lowered
     IrFunc            f
     LVar[dynamic]     vars
@@ -386,9 +390,29 @@ string strip_us(string s) {
     return strata_join(&p)
 }
 
-int string_lit(Lower* l, string text) {
+// string data's symbol (the bytes of a literal)
+string string_data(Lower* l, string text) {
     string sym = ".Lstr" + int_to_str(l.prog.strings.len)
     l.prog.strings.push(IrData{ sym, text })
+    return sym
+}
+
+int sym_addr(Lower* l, string sym) {
+    int r = vreg(l, KU64)
+    Ins i = new_ins(OSymAddr, KU64, r, 0 - 1, 0 - 1)
+    i.sym = sym
+    emit(l, i)
+    return r
+}
+
+int find_global(Lower* l, string name) {
+    int found = 0 - 1
+    for i in 0..l.globals.len { if l.globals[i].name == name { found = i } }
+    return found
+}
+
+int string_lit(Lower* l, string text) {
+    string sym = string_data(l, text)
     int r = vreg(l, KU64)
     Ins i = new_ins(OSymAddr, KU64, r, 0 - 1, 0 - 1)
     i.sym = sym
@@ -559,6 +583,8 @@ LVal lower_name(Lower* l, Expr* e) {
         if v.mem { return scalar(load(l, v.ty, v.reg, 0), v.ty) }
         return scalar(v.reg, v.ty)
     }
+    int g = find_global(l, e.text)
+    if g >= 0 { return load_val(l, l.globals[g].type, sym_addr(l, e.text), 0) }
     for i in 0..l.members.len {
         if l.members[i] == e.text { return scalar(iconst(l, KI32, l.member_values[i]), KI32) }
     }
@@ -803,6 +829,7 @@ int lvalue_addr(Lower* l, Expr* e) {
     if e.kind == ExName {
         int k = find_var(l, e.text)
         if k >= 0 && l.vars[k].mem { return l.vars[k].reg }
+        if k < 0 && find_global(l, e.text) >= 0 { return sym_addr(l, e.text) }
         return 0 - 1
     }
     if e.kind == ExField {
@@ -1415,7 +1442,7 @@ int param(Lower* l, int ty, int index) {
 }
 
 void lower_function(Lower* l, Decl* d) {
-    begin_function(l, d.name, true)
+    begin_function(l, d.name, d.is_exported)   // private functions stay inside their object
     scan_stmt(l, d.body)
     l.ret_type = d.ret
     TInfo ri = tinfo(l, d.ret)
@@ -1481,6 +1508,7 @@ export Lower* new_lower() {
     string[dynamic] es = []
     string[dynamic] ms = []
     int[dynamic] mv = []
+    LGlobal[dynamic] gl = []
     LVar[dynamic] vs = []
     int[dynamic] sc = []
     string[dynamic] at = []
@@ -1488,7 +1516,7 @@ export Lower* new_lower() {
     int[dynamic] cl = []
     int[dynamic] lr = []
     int[dynamic] rg = []
-    return alloc(Lower{ true, "", new_ir_program(), fs, ss, es, ms, mv, new_ir_func("", false),
+    return alloc(Lower{ true, "", new_ir_program(), fs, ss, es, ms, mv, gl, new_ir_func("", false),
                         vs, sc, at, bl, cl, lr, rg, null, 0 - 1, 0 })
 }
 
@@ -1496,7 +1524,8 @@ export Lower* new_lower() {
 export bool lower_program(Lower* l, Program prog, bool with_main) {
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
-        if d.kind == DcInclude { lw_fail(l, d.line, "imports C header " + d.path + " (the native backend can't read C headers yet)") }
+        if d.kind == DcInclude && !d.is_foreign { lw_fail(l, d.line, "imports C header " + d.path + " (the native backend can't read C headers yet: declare what you use in a foreign block)") }
+        if d.kind == DcGlobal { l.globals.push(LGlobal{ d.name, d.ret }) }
         if d.kind == DcFunc { l.funcs.push(d) }
         if d.kind == DcEnum {
             l.enums.push(d.name)
@@ -1509,7 +1538,36 @@ export bool lower_program(Lower* l, Program prog, bool with_main) {
         }
     }
     if !l.ok { return false }
-    for i in 0..l.funcs.len { lower_function(l, l.funcs[i]) }
+    for i in 0..prog.decls.len { if prog.decls[i].kind == DcGlobal { lower_global(l, prog.decls[i]) } }
+    for i in 0..l.funcs.len { if !l.funcs[i].is_foreign { lower_function(l, l.funcs[i]) } }
     if with_main { lower_main(l, prog) }
     return l.ok
+}
+
+// A global's data: its constant initializer (see ck_is_constant), or zero.
+void lower_global(Lower* l, Decl* d) {
+    TInfo ti = tinfo(l, d.ret)
+    IrGlobal g = IrGlobal{ d.name, d.is_exported, ti.size, ti.align, 0, 0, "", ti.ty }
+    if d.ret != null && d.ret.kind == TyDynArray { g.kind = 4; g.ival = tinfo(l, elem_of(d.ret)).size }
+    Expr* e = d.init
+    bool neg = false
+    if e != null && e.kind == ExUnary && e.text == "-" { neg = true; e = e.a }
+    if e != null && ti.kind == TK_SCALAR() {
+        if e.kind == ExStringLit { g.kind = 3; g.text = string_data(l, e.text) }
+        else if e.kind == ExFloatLit || (e.kind == ExIntLit && ir_is_float(ti.ty)) {
+            g.kind = 2
+            g.text = strip_us(e.text)
+            if e.kind == ExIntLit { g.text = int_to_str(parse_int(e.text)) + ".0" }
+            if neg { g.text = "-" + g.text }
+        } else {
+            int v = 0
+            if e.kind == ExIntLit { v = parse_int(e.text) }
+            else if e.kind == ExCharLit { v = char_val(e.text) }
+            else if e.kind == ExBoolLit && e.bval { v = 1 }
+            if neg { v = 0 - v }
+            g.kind = 1
+            g.ival = ir_norm_imm(ti.ty, v)
+        }
+    }
+    l.prog.globals.push(g)
 }

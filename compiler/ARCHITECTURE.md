@@ -144,7 +144,7 @@ compiler/
   vregs (in a slot if their address is taken), aggregates in slots handled by address,
   C's usual arithmetic conversions (float literals are f64; results match the C
   backend's builds), vector math expanded to float ops, runtime calls (`srt_*` in
-  `lib/srt.c`) for strings / arrays / arenas / matrices / I/O, regions freed on every
+  `lib/srt.strata`) for strings / arrays / arenas / matrices / I/O, regions freed on every
   exit. Struct passing follows the target's C convention (`abi_*`, Windows x64 today).
   Refuses (with a reason) what it can't do yet — C headers — and the build uses C.
 - **`opt.strata`**: passes to a fixed point (fold, slot forwarding + dead stores, CSE,
@@ -340,7 +340,7 @@ A C/C++ compiler is a **driver** that runs a chain of programs — preprocessor 
 stratac run foo.strata                         (native backend: x86-64 Windows, no C headers)
   → (in-process) lexer → parser → checker → lower → opt → x64 → x64asm → coff → foo.o
   → (in-process) pelink: foo.o + <install>/lib/srt.o + msvcrt.dll imports → foo.exe
-    (a program linking C libraries: gcc links it, with lib/srt.c)
+    (a program linking C libraries: gcc links it, with the same lib/srt.o)
 
 stratac run foo.strata --backend c             (C backend: any platform, C interop)
   → ... → checker → codegen → foo.c → gcc/cc -O2 foo.c -I <install>/lib -o foo
@@ -348,7 +348,8 @@ stratac run foo.strata --backend c             (C backend: any platform, C inter
 
 **The road to depending on nothing but the OS** (each step keeps the C path working):
 ~~write object files directly (no assembler)~~ (done, 2.1) → ~~Strata's own linker (no gcc
-for native builds)~~ (done, 2.1) → the runtime (`srt.c`, `lib/*.h`) rewritten in Strata on OS calls (no libc) →
+for native builds)~~ (done, 2.1) → ~~the native runtime in Strata~~ (done: `lib/srt.strata`;
+it still calls msvcrt.dll — next, kernel32 / syscalls directly) →
 C header import (C libraries / engines natively) → ARM64 and Linux / macOS targets →
 the compiler built by its own native backend (the C seed becomes optional).
 
@@ -365,7 +366,8 @@ only the *installed toolchain* is monolithic. Built by `build.ps1`, deployed by
 ├─ libstrata.dll      the core as a shared library (for embedders)
 └─ lib\               the runtime the OUTPUT links against (driver passes -I <home>\lib)
    ├─ arena.h …       header-only C runtime (see lib/README.md)
-   └─ srt.c           the entry points natively compiled programs call
+   ├─ srt.strata      the native runtime, in Strata
+   └─ srt.o           ... compiled (by `stratac object`): what native programs link
 ```
 
 The runtime `lib/` lives in the home for the *compiled program's* sake, not the

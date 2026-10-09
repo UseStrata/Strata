@@ -204,6 +204,7 @@ export bool run_build(BuildSpec s, string libdir) {
     if s.backend != "c" {
         string why = native_target_why(host_os(), host_arch())
         if why == "" && s.dll { why = "the native backend doesn't build dlls yet" }
+        if why == "" && !strata_file_exists(libdir + "/srt.o") { why = "its runtime, lib/srt.o, is missing (build.ps1 makes it from lib/srt.strata)" }
         if why == "" {
             NativeResult nr = native_compile(prog, true, s.release)
             if nr.ok {
@@ -284,8 +285,9 @@ export bool run_build(BuildSpec s, string libdir) {
 // ---- native builds ------------------------------------------------------------------
 // The program as machine code: Strata's assembler (x64asm.strata) turns the backend's
 // assembly into an object file (<name>.o beside where the C would go, coff.strata), and
-// the C toolchain links it with the runtime (lib/srt.c) - for now: Strata's own linker
-// comes next.
+// Strata's linker (pelink.strata) links it with the runtime (lib/srt.o, written in Strata:
+// lib/srt.strata) and the system DLLs. A program that links C libraries is linked by the
+// C toolchain instead (with the same lib/srt.o).
 
 bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, ObjFile* ob) {
     string obj_file = stem_of(s.out_c) + ".o"
@@ -293,8 +295,7 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     argv.push(strata_cc())
     argv.push("-O2")
     argv.push(obj_file)
-    argv.push(libdir + "/srt.c")
-    argv.push("-I" + libdir)
+    argv.push(libdir + "/srt.o")
     for i in 0..s.c_sources.len    { argv.push(s.c_sources[i]) }
     for i in 0..s.include_dirs.len { argv.push("-I" + s.include_dirs[i]) }
     for i in 0..s.defines.len      { argv.push("-D" + s.defines[i]) }
@@ -314,12 +315,12 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     string[dynamic] oa2 = os_link_args(prog, s)
     bool links_c = s.c_sources.len > 0 || s.libs.len > 0 || s.lib_dirs.len > 0 || s.frameworks.len > 0 || oa2.len > 0
     for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { links_c = true } }
-    bool own = !links_c && strata_file_exists(libdir + "/srt.o")
+    bool own = !links_c
     if own { cmd = "strata-link " + libdir + "/srt.o" }
 
     string key = ""
     if s.cache_file != "" {
-        string all = asm_text + "\n" + cmd + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.c")
+        string all = asm_text + "\n" + cmd + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.strata")
         for i in 0..s.c_sources.len { all = all + "\n" + read_file(s.c_sources[i]) }
         key = fingerprint(all)
         if !s.force && read_file(s.cache_file) == key && file_present(s.out_bin) {
