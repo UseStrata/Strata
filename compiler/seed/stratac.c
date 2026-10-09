@@ -16,7 +16,7 @@ typedef enum { TkIdent, TkInt, TkFloat, TkString, TkChar, TkKwVar, TkKwConst, Tk
 typedef enum { TyNamed, TyArray, TyFixedArray, TyPointer, TyDynArray } TypeKind;
 typedef enum { ExIntLit, ExFloatLit, ExStringLit, ExCharLit, ExBoolLit, ExName, ExUnary, ExBinary, ExCall, ExField, ExIndex, ExArrayLit, ExStructLit, ExCast, ExSizeof } ExprKind;
 typedef enum { StBlock, StVar, StReturn, StExprStmt, StAssign, StIf, StWhile, StForIn, StRegion, StSwitch, StBreak, StContinue } StmtKind;
-typedef enum { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport, DcGlobal } DeclKind;
+typedef enum { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport, DcGlobal, DcConst } DeclKind;
 typedef enum { TcInt, TcFloat, TcBool, TcChar, TcStr, TcVoid, TcStruct, TcArray, TcPointer, TcVec, TcMat, TcQuat, TcDynArray, TcUnknown } TCat;
 typedef enum { KVoid, KI8, KI16, KI32, KI64, KU8, KU16, KU32, KU64, KF32, KF64 } IrTy;
 typedef enum { OConst, OFConst, OCopy, OAdd, OSub, OMul, ODiv, OMod, OAnd, OOr, OXor, OShl, OShr, ONeg, ONot, OCmp, OConv, OSqrt, OLoad, OStore, OSlotAddr, OSymAddr, OCopyMem, OZeroMem, OParam, OCall, ORet, OLabel, OJmp, OBr, ONop } IrOp;
@@ -273,6 +273,8 @@ struct GlobalInfo {
     int64_t module;
     bool exported;
     const char* cname;
+    Expr* value;
+    const char* header;
 };
 struct NameEntry {
     const char* name;
@@ -579,6 +581,7 @@ struct Linker {
     Array imp_dll;
     NameIdx impidx;
     Array dlls;
+    Array dll_path;
     Array exp_name;
     Array exp_dll;
     NameIdx expidx;
@@ -719,6 +722,8 @@ Decl* struct_decl(Parser* p);
 Decl* func_decl(Parser* p);
 Decl* global_decl(Parser* p);
 bool at_global(Parser* p);
+Decl* foreign_func(Parser* p);
+Decl* foreign_const(Parser* p);
 bool at_foreign(Parser* p);
 void foreign_block(Parser* p, Array* decls, bool exported);
 Program parse_program(Parser* p);
@@ -790,6 +795,8 @@ bool vec_comp_ok(char c, int64_t dim);
 int64_t vec_swizzle_size(const char* vname, const char* field);
 Type* ck_type(Checker* c, TypeNode* t);
 bool ck_is_constant(Expr* e);
+bool ck_is_const_value(Expr* e);
+bool ck_names_const(Checker* c, const char* name);
 bool ck_assignable(Type* target, Type* value);
 bool t_is_scalar(Type* t);
 bool ck_castable(Type* from, Type* to);
@@ -1128,6 +1135,9 @@ int64_t out_of(Linker* l, const char* name, int64_t flags);
 void link_add(Linker* l, const char* name, Array b);
 int64_t pelink__find_global(Linker* l, const char* name);
 int64_t find_import(Linker* l, const char* name);
+const char* system_dir(void);
+bool is_x64_dll(const char* path);
+bool link_library(Linker* l, const char* name, Array dirs);
 int64_t rva_to_file(Array b, int64_t rva);
 void load_exports(Linker* l);
 int64_t dll_of(Linker* l, const char* name);
@@ -2516,6 +2526,39 @@ bool at_global(Parser* p) {
     return ((i >= 0) && (((Token*)(p->toks).data)[i].kind == TkIdent));
 }
 
+Decl* foreign_func(Parser* p) {
+    Token ft = p_peek(p);
+    Decl* fd = new_decl(DcFunc, ft.line, ft.col);
+    fd->ret = parse_type(p);
+    fd->name = p_expect(p, TkIdent).text;
+    p_expect(p, TkLParen);
+    skip_newlines(p);
+    if (!p_check(p, TkRParen)) {
+        bool more = true;
+        while (more) {
+            TypeNode* pty = parse_type(p);
+            const char* pnm = p_expect(p, TkIdent).text;
+            ({ Param _e = (Param){pnm, pty}; arr_push(&(fd->params), &_e); });
+            more = p_match(p, TkComma);
+            skip_newlines(p);
+        }
+    }
+    p_expect(p, TkRParen);
+    return fd;
+}
+
+Decl* foreign_const(Parser* p) {
+    Token kw = p_advance(p);
+    Decl* d = new_decl(DcConst, kw.line, kw.col);
+    if (!(p_check(p, TkIdent) && (((Token*)(p->toks).data)[(p->pos + 1)].kind == TkAssign))) {
+        d->ret = parse_type(p);
+    }
+    d->name = p_expect(p, TkIdent).text;
+    p_expect(p, TkAssign);
+    d->init = expression(p);
+    return d;
+}
+
 bool at_foreign(Parser* p) {
     if ((!p_check(p, TkIdent)) || (!str_eq(p_peek(p).text, "foreign"))) {
         return false;
@@ -2549,27 +2592,19 @@ void foreign_block(Parser* p, Array* decls, bool exported) {
     p_expect(p, TkLBrace);
     skip_newlines(p);
     while (((!p_check(p, TkRBrace)) && (!p_at_end(p))) && (!p->had_error)) {
-        Token ft = p_peek(p);
-        Decl* fd = new_decl(DcFunc, ft.line, ft.col);
-        fd->is_foreign = true;
-        fd->is_exported = exported;
-        fd->path = header;
-        fd->ret = parse_type(p);
-        fd->name = p_expect(p, TkIdent).text;
-        p_expect(p, TkLParen);
-        skip_newlines(p);
-        if (!p_check(p, TkRParen)) {
-            bool more = true;
-            while (more) {
-                TypeNode* pty = parse_type(p);
-                const char* pnm = p_expect(p, TkIdent).text;
-                ({ Param _e = (Param){pnm, pty}; arr_push(&(fd->params), &_e); });
-                more = p_match(p, TkComma);
-                skip_newlines(p);
-            }
+        Decl* d = 0;
+        if (p_check(p, TkKwStruct)) {
+            d = struct_decl(p);
+        } else 
+        if (p_check(p, TkKwConst)) {
+            d = foreign_const(p);
+        } else {
+            d = foreign_func(p);
         }
-        p_expect(p, TkRParen);
-        ({ Decl* _e = fd; arr_push(&(decls[0]), &_e); });
+        d->is_foreign = true;
+        d->is_exported = exported;
+        d->path = header;
+        ({ Decl* _e = d; arr_push(&(decls[0]), &_e); });
         p_match(p, TkSemicolon);
         skip_newlines(p);
     }
@@ -3849,6 +3884,26 @@ bool ck_is_constant(Expr* e) {
     return false;
 }
 
+bool ck_is_const_value(Expr* e) {
+    if (ck_is_constant(e)) {
+        return true;
+    }
+    if (e->kind != ExStructLit) {
+        return false;
+    }
+    for (int64_t i = 0; i < e->items.len; i++) {
+        if (!ck_is_const_value(((Expr**)(e->items).data)[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ck_names_const(Checker* c, const char* name) {
+    int64_t gi = ck_global_index(c, name);
+    return ((gi >= 0) && (((GlobalInfo*)(c->globals).data)[gi].value != 0));
+}
+
 bool ck_assignable(Type* target, Type* value) {
     if ((target->cat == TcUnknown) || (value->cat == TcUnknown)) {
         return true;
@@ -4008,6 +4063,9 @@ LvalueResult ck_lvalue(Checker* c, Expr* e) {
                 bool cst = false;
                 if (v.found) {
                     cst = v.is_const;
+                } else 
+                if (ck_names_const(c, e->text)) {
+                    return (LvalueResult){false, true};
                 }
                 return (LvalueResult){true, cst};
             }
@@ -4207,6 +4265,10 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 int64_t gi = ck_global_index(c, e->text);
                 if (gi >= 0) {
                     e->text = ((GlobalInfo*)(c->globals).data)[gi].cname;
+                    if (((GlobalInfo*)(c->globals).data)[gi].value != 0) {
+                        e->b = ((GlobalInfo*)(c->globals).data)[gi].value;
+                        e->field = ((GlobalInfo*)(c->globals).data)[gi].header;
+                    }
                     return ((GlobalInfo*)(c->globals).data)[gi].type;
                 }
                 int64_t mi = ck_member_index(c, e->text);
@@ -4940,6 +5002,9 @@ void ck_stmt(Checker* c, Stmt* s) {
         {
             {
                 LvalueResult lv = ck_lvalue(c, s->target);
+                if ((!lv.ok) && lv.is_const) {
+                    ck_error(c, s->line, s->col, "a constant can't be assigned to");
+                } else 
                 if (!lv.ok) {
                     ck_error(c, s->line, s->col, str_concat(str_concat("left side of '", s->op), "' is not assignable"));
                 } else 
@@ -5221,7 +5286,7 @@ bool ck_check(Checker* c, Program prog) {
     }
     ck_visibility(c);
     for (int64_t i = 0; i < prog.decls.len; i++) {
-        if (((Decl**)(prog.decls).data)[i]->kind == DcInclude) {
+        if ((((Decl**)(prog.decls).data)[i]->kind == DcInclude) && (!((Decl**)(prog.decls).data)[i]->is_foreign)) {
             c->has_foreign = true;
         }
     }
@@ -5265,12 +5330,16 @@ bool ck_check(Checker* c, Program prog) {
             ({ StructInfo _e = (StructInfo){d->name, ff, d->module, d->is_exported, d->name}; arr_push(&(c->structs), &_e); });
             ck_note_name(c, d->name, d->module, d->is_exported, d->line, d->col);
         } else 
-        if (d->kind == DcGlobal) {
+        if ((d->kind == DcGlobal) || (d->kind == DcConst)) {
             if (ck_own_global(c, d->name, d->module) >= 0) {
-                ck_error(c, d->line, d->col, str_concat(str_concat("global '", d->name), "' is already defined"));
+                ck_error(c, d->line, d->col, str_concat(str_concat("'", d->name), "' is already defined"));
             }
             idx_add((&c->global_idx), d->name, c->globals.len);
-            ({ GlobalInfo _e = (GlobalInfo){d->name, c->t_unknown, d->module, d->is_exported, d->name}; arr_push(&(c->globals), &_e); });
+            Expr* value = 0;
+            if (d->kind == DcConst) {
+                value = d->init;
+            }
+            ({ GlobalInfo _e = (GlobalInfo){d->name, c->t_unknown, d->module, d->is_exported, d->name, value, d->path}; arr_push(&(c->globals), &_e); });
             ck_note_name(c, d->name, d->module, d->is_exported, d->line, d->col);
         } else 
         if (d->kind == DcFunc) {
@@ -5294,10 +5363,6 @@ bool ck_check(Checker* c, Program prog) {
     for (int64_t i = 0; i < c->structs.len; i++) {
         ((StructInfo*)(c->structs).data)[i].cname = ck_cname(c, ((StructInfo*)(c->structs).data)[i].name, ((StructInfo*)(c->structs).data)[i].module, ((StructInfo*)(c->structs).data)[i].exported);
     }
-    c->cname_idx = new_idx(c->structs.len);
-    for (int64_t i = 0; i < c->structs.len; i++) {
-        idx_add((&c->cname_idx), ((StructInfo*)(c->structs).data)[i].cname, i);
-    }
     for (int64_t i = 0; i < c->funcs.len; i++) {
         ((FuncInfo*)(c->funcs).data)[i].cname = ck_cname(c, ((FuncInfo*)(c->funcs).data)[i].name, ((FuncInfo*)(c->funcs).data)[i].module, ((FuncInfo*)(c->funcs).data)[i].exported);
     }
@@ -5309,6 +5374,16 @@ bool ck_check(Checker* c, Program prog) {
         if ((d->kind == DcFunc) && d->is_foreign) {
             ((FuncInfo*)(c->funcs).data)[ck_own_func(c, d->name, d->module)].cname = d->name;
         }
+        if ((d->kind == DcStruct) && d->is_foreign) {
+            ((StructInfo*)(c->structs).data)[ck_own_struct(c, d->name, d->module)].cname = d->name;
+        }
+        if (d->kind == DcConst) {
+            ((GlobalInfo*)(c->globals).data)[ck_own_global(c, d->name, d->module)].cname = d->name;
+        }
+    }
+    c->cname_idx = new_idx(c->structs.len);
+    for (int64_t i = 0; i < c->structs.len; i++) {
+        idx_add((&c->cname_idx), ((StructInfo*)(c->structs).data)[i].cname, i);
     }
     ck_name_conflicts(c);
     for (int64_t i = 0; i < prog.decls.len; i++) {
@@ -5334,7 +5409,7 @@ bool ck_check(Checker* c, Program prog) {
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (d->kind == DcGlobal) {
+        if ((d->kind == DcGlobal) || (d->kind == DcConst)) {
             c->cur = d->module;
             int64_t gi = ck_own_global(c, d->name, d->module);
             Type* declared = c->t_unknown;
@@ -5342,8 +5417,11 @@ bool ck_check(Checker* c, Program prog) {
                 declared = ck_type(c, d->ret);
             }
             if (d->init != 0) {
-                if (!ck_is_constant(d->init)) {
+                if ((d->kind == DcGlobal) && (!ck_is_constant(d->init))) {
                     ck_error(c, d->line, d->col, "a global's initial value must be a constant (a number, char, bool, string or null)");
+                }
+                if ((d->kind == DcConst) && (!ck_is_const_value(d->init))) {
+                    ck_error(c, d->line, d->col, "a constant's value must be a number, char, bool, string, null or a struct literal of them");
                 }
                 Type* vt = ck_expr_as(c, d->init, declared);
                 if (d->ret == 0) {
@@ -5379,7 +5457,7 @@ bool ck_check(Checker* c, Program prog) {
         if (d->kind == DcFunc) {
             d->name = ((FuncInfo*)(c->funcs).data)[ck_own_func(c, d->name, d->module)].cname;
         }
-        if (d->kind == DcGlobal) {
+        if ((d->kind == DcGlobal) || (d->kind == DcConst)) {
             d->name = ((GlobalInfo*)(c->globals).data)[ck_own_global(c, d->name, d->module)].cname;
         }
         if (d->kind == DcStruct) {
@@ -5929,13 +6007,18 @@ const char* gen_expr(Codegen* cg, Expr* e) {
         }
         case ExName:
         {
-            if (str_eq(e->text, "PI")) {
-                return "SP_PI";
+            {
+                if (str_eq(e->text, "PI")) {
+                    return "SP_PI";
+                }
+                if (str_eq(e->text, "null")) {
+                    return "0";
+                }
+                if ((e->b != 0) && str_eq(e->field, "")) {
+                    return gen_expr(cg, e->b);
+                }
+                return e->text;
             }
-            if (str_eq(e->text, "null")) {
-                return "0";
-            }
-            return e->text;
             break;
         }
         case ExUnary:
@@ -6386,13 +6469,13 @@ void gen_types(Codegen* cg, Program prog) {
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (d->kind == DcStruct) {
+        if ((d->kind == DcStruct) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
             cg_out(cg, str_concat(str_concat(str_concat(str_concat("typedef struct ", d->name), " "), d->name), ";\n"));
         }
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (d->kind == DcStruct) {
+        if ((d->kind == DcStruct) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
             cg_out(cg, str_concat(str_concat("struct ", d->name), " {\n"));
             for (int64_t f = 0; f < d->fields.len; f++) {
                 cg_out(cg, str_concat(str_concat(str_concat(str_concat("    ", ty_to_c(((FieldDef*)(d->fields).data)[f].type)), " "), ((FieldDef*)(d->fields).data)[f].name), ";\n"));
@@ -7957,6 +8040,9 @@ LVal lower_expr(Lower* l, Expr* e) {
 }
 
 LVal lower_name(Lower* l, Expr* e) {
+    if (e->b != 0) {
+        return lower_expr(l, e->b);
+    }
     int64_t k = find_var(l, e->text);
     if (k >= 0) {
         LVar v = ((LVar*)(l->vars).data)[k];
@@ -12983,6 +13069,7 @@ Linker* new_linker(void) {
     Array im = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array id = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array dl = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array dp = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array en = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array ed = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
@@ -12992,9 +13079,12 @@ Linker* new_linker(void) {
     Array t = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
     Array r = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
     Array dt = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    const char* sys = system_dir();
     ({ const char* _e = "msvcrt.dll"; arr_push(&(dl), &_e); });
+    ({ const char* _e = str_concat(sys, "\\msvcrt.dll"); arr_push(&(dp), &_e); });
     ({ const char* _e = "kernel32.dll"; arr_push(&(dl), &_e); });
-    return ({ Linker _v = (Linker){true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, en, ed, new_idx(8192), false, a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0}; Linker* _p = (Linker*)arena_alloc(strata_heap(), sizeof(Linker)); *_p = _v; _p; });
+    ({ const char* _e = str_concat(sys, "\\kernel32.dll"); arr_push(&(dp), &_e); });
+    return ({ Linker _v = (Linker){true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, dp, en, ed, new_idx(8192), false, a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0}; Linker* _p = (Linker*)arena_alloc(strata_heap(), sizeof(Linker)); *_p = _v; _p; });
 }
 
 int64_t out_of(Linker* l, const char* name, int64_t flags) {
@@ -13117,6 +13207,66 @@ int64_t find_import(Linker* l, const char* name) {
     return found;
 }
 
+const char* system_dir(void) {
+    const char* sys = strata_getenv("SystemRoot");
+    if (str_eq(sys, "")) {
+        sys = "C:\\Windows";
+    }
+    return str_concat(sys, "\\System32");
+}
+
+bool is_x64_dll(const char* path) {
+    if (!strata_file_exists(path)) {
+        return false;
+    }
+    Array b = strata_read_bytes(path);
+    if ((b.len < 64) || (rd16(b, 0) != 23117)) {
+        return false;
+    }
+    int64_t pe = rd32(b, 60);
+    return ((((pe > 0) && ((pe + 6) < b.len)) && (rd32(b, pe) == 17744)) && (rd16(b, (pe + 4)) == 34404));
+}
+
+bool link_library(Linker* l, const char* name, Array dirs) {
+    Array where = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = system_dir(); arr_push(&(where), &_e); });
+    for (int64_t i = 0; i < dirs.len; i++) {
+        ({ const char* _e = ((const char**)(dirs).data)[i]; arr_push(&(where), &_e); });
+    }
+    const char* path = strata_getenv("PATH");
+    int64_t start = 0;
+    for (int64_t i = 0; i < (str_len(path) + 1); i++) {
+        if ((i == str_len(path)) || (path[i] == ';')) {
+            if (i > start) {
+                ({ const char* _e = str_sub(path, start, (i - start)); arr_push(&(where), &_e); });
+            }
+            start = (i + 1);
+        }
+    }
+    Array files = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = str_concat(name, ".dll"); arr_push(&(files), &_e); });
+    ({ const char* _e = str_concat(str_concat("lib", name), ".dll"); arr_push(&(files), &_e); });
+    for (int64_t w = 0; w < where.len; w++) {
+        for (int64_t f = 0; f < files.len; f++) {
+            const char* p = str_concat(str_concat(((const char**)(where).data)[w], "\\"), ((const char**)(files).data)[f]);
+            if (is_x64_dll(p)) {
+                bool have = false;
+                for (int64_t d = 0; d < l->dlls.len; d++) {
+                    if (str_eq(((const char**)(l->dlls).data)[d], ((const char**)(files).data)[f])) {
+                        have = true;
+                    }
+                }
+                if (!have) {
+                    ({ const char* _e = ((const char**)(files).data)[f]; arr_push(&(l->dlls), &_e); });
+                    ({ const char* _e = p; arr_push(&(l->dll_path), &_e); });
+                }
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 int64_t rva_to_file(Array b, int64_t rva) {
     int64_t pe = rd32(b, 60);
     int64_t nsec = rd16(b, (pe + 6));
@@ -13141,12 +13291,8 @@ void load_exports(Linker* l) {
         return;
     }
     l->exports_loaded = true;
-    const char* sys = strata_getenv("SystemRoot");
-    if (str_eq(sys, "")) {
-        sys = "C:\\Windows";
-    }
     for (int64_t d = 0; d < l->dlls.len; d++) {
-        Array b = strata_read_bytes(str_concat(str_concat(sys, "\\System32\\"), ((const char**)(l->dlls).data)[d]));
+        Array b = strata_read_bytes(((const char**)(l->dll_path).data)[d]);
         if (b.len < 64) {
             lk_fail(l, str_concat("cannot read ", ((const char**)(l->dlls).data)[d]));
         } else {
@@ -14089,6 +14235,12 @@ void pr_decl(Decl* d) {
             }
             break;
         }
+        case DcConst:
+        {
+            pr(0, str_concat(str_concat(str_concat(str_concat(ex, "Foreign Const "), ast_type_str(d->ret)), " "), d->name));
+            pr_expr(1, d->init);
+            break;
+        }
         case DcEnum:
         {
             pr(0, str_concat(str_concat(ex, "Enum "), d->name));
@@ -14099,7 +14251,11 @@ void pr_decl(Decl* d) {
         }
         case DcStruct:
         {
-            pr(0, str_concat(str_concat(ex, "Struct "), d->name));
+            if (d->is_foreign) {
+                pr(0, str_concat(str_concat(ex, "Foreign Struct "), d->name));
+            } else {
+                pr(0, str_concat(str_concat(ex, "Struct "), d->name));
+            }
             for (int64_t i = 0; i < d->fields.len; i++) {
                 pr(1, str_concat(str_concat(ast_type_str(((FieldDef*)(d->fields).data)[i].type), " "), ((FieldDef*)(d->fields).data)[i].name));
             }
@@ -14743,16 +14899,35 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
     ({ const char* _e = "-o"; arr_push(&(argv), &_e); });
     ({ const char* _e = s.out_bin; arr_push(&(argv), &_e); });
     const char* cmd = spaced(argv);
-    Array oa2 = os_link_args(prog, s);
-    bool links_c = (((((s.c_sources.len > 0) || (s.libs.len > 0)) || (s.lib_dirs.len > 0)) || (s.frameworks.len > 0)) || (oa2.len > 0));
+    Linker* lk = new_linker();
+    bool own = ((s.c_sources.len == 0) && (s.frameworks.len == 0));
+    Array libs = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 0; i < prog.decls.len; i++) {
         if (((Decl**)(prog.decls).data)[i]->kind == DcLink) {
-            links_c = true;
+            ({ const char* _e = ((Decl**)(prog.decls).data)[i]->path; arr_push(&(libs), &_e); });
         }
     }
-    bool own = (!links_c);
+    for (int64_t i = 0; i < s.libs.len; i++) {
+        ({ const char* _e = ((const char**)(s.libs).data)[i]; arr_push(&(libs), &_e); });
+    }
+    for (int64_t i = 0; i < oa.len; i++) {
+        if ((str_len(((const char**)(oa).data)[i]) > 2) && str_eq(str_sub(((const char**)(oa).data)[i], 0, 2), "-l")) {
+            ({ const char* _e = str_sub(((const char**)(oa).data)[i], 2, (str_len(((const char**)(oa).data)[i]) - 2)); arr_push(&(libs), &_e); });
+        } else {
+            own = false;
+        }
+    }
+    const char* dlls = "";
+    for (int64_t i = 0; i < libs.len; i++) {
+        if (own && (!link_library(lk, ((const char**)(libs).data)[i], s.lib_dirs))) {
+            own = false;
+        }
+    }
     if (own) {
-        cmd = str_concat(str_concat("strata-link ", libdir), "/srt.o");
+        for (int64_t i = 0; i < lk->dll_path.len; i++) {
+            dlls = str_concat(str_concat(dlls, " "), ((const char**)(lk->dll_path).data)[i]);
+        }
+        cmd = str_concat(str_concat(str_concat("strata-link ", libdir), "/srt.o"), dlls);
     }
     const char* key = "";
     if (!str_eq(s.cache_file, "")) {
@@ -14778,12 +14953,11 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
     }
     bool linked = false;
     if (own) {
-        Linker* lk = new_linker();
         link_add(lk, obj_file, coff_bytes(ob));
         link_add(lk, "srt.o", strata_read_bytes(str_concat(libdir, "/srt.o")));
         linked = (lk->ok && link_exe(lk, s.out_bin));
         if ((!linked) && str_eq(s.backend, "native")) {
-            strata_report(str_concat(str_concat(basename_of(s.entry), ": error: internal error in the linker: "), lk->err));
+            strata_report(str_concat(str_concat(basename_of(s.entry), ": error: can't link: "), lk->err));
             return false;
         }
     }
@@ -14794,7 +14968,11 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
         strata_write_file(s.cache_file, key);
     }
     if (!s.quiet) {
-        strata_report(str_concat(str_concat("built ", s.out_bin), " (native)"));
+        if (linked) {
+            strata_report(str_concat(str_concat("built ", s.out_bin), " (native)"));
+        } else {
+            strata_report(str_concat(str_concat(str_concat(str_concat("built ", s.out_bin), " (native, linked by "), strata_cc()), ")"));
+        }
     }
     return true;
 }
@@ -15008,7 +15186,7 @@ BuildSpec target_spec(Target t, const char* version, bool release, bool force, b
 }
 
 const char* stratac_version(void) {
-    return "2.2.0 (runtime in Strata)";
+    return "2.3.0 (C libraries without C)";
 }
 
 bool file_exists(const char* p) {

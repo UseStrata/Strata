@@ -6,9 +6,9 @@
 > [`CHANGELOG.md`](CHANGELOG.md) (per-version detail) and
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
-**Current:** stratac **2.2.0** (the runtime in Strata: `foreign` blocks, `global` variables), released 2026-10-09
+**Current:** stratac **2.3.0** (C libraries without C: foreign structs / constants, DLL linking), released 2026-10-09
 · tests **71/71** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
-· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.2.0)
+· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.3.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
 relies on nothing but the OS and what a game engine provides. 2.0 is step one: its own
@@ -31,10 +31,9 @@ plus releases, and approve releases when asked.
   variables (both user-chosen designs, DESIGN.md §3/§8), exact float printing, 68 tests.
 - Releases: follow §3's steps (including `build.ps1 -WriteSeed`). Ask the user before
   pushing / publishing.
-- **On `main` since 2.2.0 (unreleased, pushed):** `struct`s and `const`ants in `foreign`
-  blocks; the raylib examples import `examples/raylib.strata` (a foreign block) and build
-  natively. **Unreleased, local:** Strata's linker links `link "x"` / `libs` itself, against
-  the libraries' DLLs (raylib builds with no gcc). Next release: 2.3.0.
+- **2.3.0** released 2026-10-09: `struct`s and `const`ants in `foreign` blocks; the raylib
+  examples import `examples/raylib.strata` and build natively; Strata's linker links
+  `link "x"` / `libs` against the libraries' DLLs (raylib builds with no gcc). 71 tests.
 
 **Where C is still used (what "move away from C" means concretely)**
 1. **Programs that `import <x.h>`** go through the C backend. ~~Structs / constants in
@@ -431,7 +430,8 @@ arithmetic, shifts, floats, short-circuiting, pointers).
 builds, hardened limits · 1.6 stratac on Windows, macOS and Linux (crossplatform.h, C seed)
 · **2.0 the native backend: x86-64 code + an optimizer, Strata's own** · **2.1 Strata's own
 assembler + COFF writer + linker: native builds need no C compiler.** · **2.2 the native
-runtime in Strata (`foreign` blocks, `global` variables).**
+runtime in Strata (`foreign` blocks, `global` variables).** · **2.3 C libraries without C:
+structs / constants in `foreign` blocks, Strata's linker links DLLs (raylib, no gcc).**
 
 **The independence road (the user's chosen direction; one step at a time, C path kept):**
 1. ~~**Object files directly** (COFF): an x86-64 encoder in Strata, no assembler.~~ Done

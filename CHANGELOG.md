@@ -4,7 +4,7 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
-## [Unreleased]
+## [2.3.0] - 2026-10-09
 **raylib without C headers - or a C compiler.** A `foreign` block can now declare a C
 library's structs and constants as well as its functions, and Strata's linker links
 libraries straight from their DLLs: the raylib examples build with nothing but `stratac`.
