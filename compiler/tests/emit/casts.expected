@@ -22,7 +22,7 @@ int main(int strata_argc_, char** strata_argv_) {
     strata_set_args(strata_argc_, strata_argv_);
     float f = 3.75;
     printf("%lld\n", (long long)(((int64_t)(f))));
-    printf("%g\n", (double)((((float)(7)) / 2.0)));
+    strata_print_f64((double)((((float)(7)) / 2.0)));
     printf("%lld\n", (long long)(((int64_t)('A'))));
     printf("%lld\n", (long long)((((char)(66)) == 'B')));
     Color c = ((Color)(2));

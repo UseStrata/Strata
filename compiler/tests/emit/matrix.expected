@@ -16,14 +16,14 @@ int main(int strata_argc_, char** strata_argv_) {
     strata_set_args(strata_argc_, strata_argv_);
     mat4 m = mat4_translate((vec3){10, 20, 30});
     vec4 p = mat4_mul_vec4(m, (vec4){0, 0, 0, 1});
-    printf("%g\n", (double)(p.x));
-    printf("%g\n", (double)(p.y));
+    strata_print_f64((double)(p.x));
+    strata_print_f64((double)(p.y));
     quat q = quat_axis_angle((vec3){0, 0, 1}, 1.5707963);
     vec3 v = quat_rotate(q, (vec3){1, 0, 0});
-    printf("%g\n", (double)(v.y));
+    strata_print_f64((double)(v.y));
     vec4 a = (vec4){1, 2, 3, 4};
     vec2 s = (vec2){(a).x, (a).y};
-    printf("%g\n", (double)(s.x));
-    printf("%g\n", (double)((vec2){(a).z, (a).w}.y));
+    strata_print_f64((double)(s.x));
+    strata_print_f64((double)((vec2){(a).z, (a).w}.y));
     return 0;
 }

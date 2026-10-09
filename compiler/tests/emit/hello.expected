@@ -34,6 +34,6 @@ int main(int strata_argc_, char** strata_argv_) {
     for (int64_t i = 0; i < 60; i++) {
         update(e, 0.016);
     }
-    printf("%g\n", (double)(vec3_length(e->pos)));
+    strata_print_f64((double)(vec3_length(e->pos)));
     return 0;
 }

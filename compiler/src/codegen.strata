@@ -329,7 +329,7 @@ string gen_call(Codegen* cg, Expr* e) {
         if (arg.kind == ExStringLit) { return "printf(\"%s\\n\", " + gen_expr(cg, arg) + ")"; }
         if (cg_is_str_rt(arg.rtype)) { return "printf(\"%s\\n\", " + gen_expr(cg, arg) + ")"; }
         if (arg.rtype != null && arg.rtype.kind == TyNamed && (arg.rtype.name == "float" || arg.rtype.name == "f32" || arg.rtype.name == "f64")) {
-            return "printf(\"%g\\n\", (double)(" + gen_expr(cg, arg) + "))"
+            return "strata_print_f64((double)(" + gen_expr(cg, arg) + "))"
         }
         return "printf(\"%lld\\n\", (long long)(" + gen_expr(cg, arg) + "))"
     }

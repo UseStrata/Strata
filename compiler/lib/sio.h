@@ -22,6 +22,11 @@
  * The generated main() records argc/argv here before any user code runs. */
 STRATA_STATE(int    strata_argc_v, );
 STRATA_STATE(char** strata_argv_v, );
+/* print(float): printf's %g, except that every NaN prints as "nan" (glibc writes the
+ * negative NaN that 0.0 / 0.0 makes on x86 as "-nan"; msvcrt, macOS and the native
+ * runtime don't). */
+static inline int strata_print_f64(double v) { return v != v ? puts("nan") : printf("%g\n", v); }
+
 static inline void strata_set_args(int argc, char** argv) { strata_argc_v = argc; strata_argv_v = argv; }
 static inline Array strata_args(void) {
     Array a = arr_make(sizeof(const char*));

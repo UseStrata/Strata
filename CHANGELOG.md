@@ -38,6 +38,14 @@ assembler and linker; building Strata on Windows needs no C compiler.
 - The emitted C of calls with several side-effecting arguments changed (the temporaries
   above); emit goldens updated.
 
+### Fixed
+- `print` of a NaN on the C backend printed `-nan` on Linux (glibc shows the sign of the
+  NaN 0.0 / 0.0 makes on x86); every NaN now prints `nan`, as on Windows, macOS and the
+  native backend (`strata_print_f64` in `lib/sio.h`). CI's Linux job had failed on it
+  since 2.2.0.
+- `run.ps1` detects raylib by its files (libraylib.dll and raylib.h beside gcc), so
+  machines without it (CI) skip the raylib checks instead of failing them.
+
 ## [2.3.0] - 2026-10-09
 **raylib without C headers - or a C compiler.** A `foreign` block can now declare a C
 library's structs and constants as well as its functions, and Strata's linker links

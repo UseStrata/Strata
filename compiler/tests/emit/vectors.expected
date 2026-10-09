@@ -15,10 +15,10 @@
 int main(int strata_argc_, char** strata_argv_) {
     strata_set_args(strata_argc_, strata_argv_);
     vec3 a = (vec3){3, 4, 0};
-    printf("%g\n", (double)(vec3_length(a)));
+    strata_print_f64((double)(vec3_length(a)));
     vec3 b = (vec3){1, 0, 0};
     vec3 c = vec3_add(a, vec3_scale(b, 2.0));
-    printf("%g\n", (double)(c.x));
-    printf("%g\n", (double)(vec3_dot(a, b)));
+    strata_print_f64((double)(c.x));
+    strata_print_f64((double)(vec3_dot(a, b)));
     return 0;
 }

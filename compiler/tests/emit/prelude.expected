@@ -14,10 +14,10 @@
 
 int main(int strata_argc_, char** strata_argv_) {
     strata_set_args(strata_argc_, strata_argv_);
-    printf("%g\n", (double)(sp_min(3.0, 5.0)));
-    printf("%g\n", (double)(sp_max(3.0, 5.0)));
-    printf("%g\n", (double)(sp_clamp(12.0, 0.0, 10.0)));
-    printf("%g\n", (double)(sp_lerp(0.0, 100.0, 0.25)));
-    printf("%g\n", (double)(SP_PI));
+    strata_print_f64((double)(sp_min(3.0, 5.0)));
+    strata_print_f64((double)(sp_max(3.0, 5.0)));
+    strata_print_f64((double)(sp_clamp(12.0, 0.0, 10.0)));
+    strata_print_f64((double)(sp_lerp(0.0, 100.0, 0.25)));
+    strata_print_f64((double)(SP_PI));
     return 0;
 }

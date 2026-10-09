@@ -115,8 +115,10 @@ foreach ($backend in @("native", "c")) {
 # (examples/raylib.strata), so they build natively - linked by Strata's linker, straight
 # against libraylib.dll - and through C, with raylib.h.
 $raylibDll = $null
-if ((& gcc -print-file-name=libraylib.a) -ne "libraylib.a") {
-    $raylibDll = Join-Path (Split-Path (Get-Command gcc).Source) "libraylib.dll"
+$gccDir = $null
+if (Get-Command gcc -ErrorAction SilentlyContinue) { $gccDir = Split-Path (Get-Command gcc).Source }
+if ($gccDir -and (Test-Path (Join-Path $gccDir "libraylib.dll")) -and (Test-Path (Join-Path $gccDir "..\include\raylib.h"))) {
+    $raylibDll = Join-Path $gccDir "libraylib.dll"
     $bad = @()
     foreach ($name in @("window", "sprite", "balls")) {
         foreach ($backend in @("native", "c")) {
