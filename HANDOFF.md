@@ -7,12 +7,70 @@
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
 **Current:** stratac **2.1.0** (own assembler + linker), released 2026-10-08
+· `main` has one more commit **not yet released or pushed**: `0d5ab21` (the native runtime in
+Strata, `foreign` blocks, `global` variables; CHANGELOG "Unreleased"; version string still 2.1.0)
 · tests **68/68** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
-· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH)
+· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.1.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
 relies on nothing but the OS and what a game engine provides. 2.0 is step one: its own
 x86-64 code generator and optimizer. C remains an option (`--backend c`). See §12.
+
+---
+
+## 0. Start here (handoff from the 2026-10-09 chat)
+
+**The user's latest instruction, verbatim:** *"do whatevers best but just try to move away
+from c so we can clean up a lot of stuff"* — then: put that in this file and move to a new
+chat. So: **keep moving Strata off C, and clean up what that frees** (fewer C files, fewer
+gcc/C code paths). Use judgment on the order; prefer steps that remove a dependency. The
+user has repeatedly said "do the next best thing" / "release both": they want progress
+plus releases, and approve releases when asked.
+
+**State right now**
+- Unreleased on `main` (local only — `git push origin main` hasn't been run for it):
+  `0d5ab21` = the native runtime rewritten in Strata (`lib/srt.strata`, built by
+  `stratac object`; `lib/srt.c` deleted), the `foreign` block and `global` variables
+  (both user-chosen designs, DESIGN.md §3/§8), exact float printing, 68 tests.
+- The next release would be **2.2.0** (bump `compiler/src/version.strata` +
+  `editors/vscode/package.json`, rename CHANGELOG "Unreleased"; then §3's release steps,
+  including `build.ps1 -WriteSeed`). Ask the user before pushing / publishing.
+
+**Where C is still used (what "move away from C" means concretely)**
+1. **Programs that `import <x.h>`** (e.g. `examples/window|sprite|balls.strata` with raylib)
+   go through the C backend. The way out is already half built: a `foreign "raylib.h" { }`
+   block makes calls native. Missing: **`struct`s inside `foreign` blocks** (raylib passes
+   `Color`, `Vector2` by value — the Win64 rules are in `lower.strata`'s `abi_*`), and
+   constants/macros (`RAYWHITE`). Then convert the examples; then consider reading C
+   headers automatically (HANDOFF §12 step 4).
+2. **The compiler itself is compiled through C** (`stage0` = the 1.1.0 release, a C
+   compiler build; `strata_host.h` and `lib/crossplatform.h` are C). Getting the compiler
+   built by its own native backend needs: the native backend handling everything the
+   compiler's source uses (it imports `strata_host.h` → replace with `foreign` blocks +
+   Strata code), then bootstrapping from a native stratac. Big, but it's what retires the
+   C seed (`compiler/seed/`), `strata_host.h`, and most of `lib/*.h` for the compiler.
+3. **The C runtime headers** `lib/arena.h, sstr.h, sarr.h, sio.h, smath.h, sprelude.h,
+   sstate.h` exist only for the C backend (native uses `lib/srt.strata`). They can't go
+   while the C backend exists, but once the compiler is native they serve only `--backend c`.
+4. **`lib/srt.strata` still calls msvcrt.dll** (memory, files, puts, sinf/cosf/tanf) — an
+   OS DLL, acceptable per the user's goal; going to kernel32 directly is optional polish.
+5. **macOS / Linux** have no native backend (C only). ARM64 + Mach-O / ELF + SysV ABI are
+   the future targets (the user's Mac is Apple Silicon).
+6. **gcc links** native programs that link C libraries (`link "x"`, `libs`, `c_sources`):
+   teach `pelink` to read `.a` import libraries or resolve `-l` DLLs from their export
+   tables (it already does that for system DLLs) and gcc drops out there too.
+
+**Suggested order:** (a) release 2.2.0; (b) `struct` (and constant) declarations in
+`foreign` blocks + native raylib examples; (c) `pelink` resolving `link "x"` DLLs itself;
+(d) the compiler compiled natively (the big one), then clean up the C seed / host C.
+
+**Gotchas learned this session** (also in §13): the shell mangles backslashes in heredocs
+and inline Python (`\n` → newline, `\0` → NUL, `\t` → tab) — write edit scripts with the
+editor tool to a scratch file and run `python -I script.py`; stage0 (1.1.0) emits `1 << k`
+as a 32-bit C shift (use a `u64` variable); C keywords (`asm`, `unsigned`) and Strata
+keywords (`var`) can't be identifiers in the compiler's source; a freshly built `.exe` is
+slow on first launch (Windows scans it) — benchmark best-of-5; msvcrt's float→decimal
+conversions are not correctly rounded (the runtime does its own).
 
 ---
 
