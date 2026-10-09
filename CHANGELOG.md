@@ -4,7 +4,9 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
-## [Unreleased]
+## [2.5.0] - 2026-10-09
+**No C compiler anywhere on Windows**: dlls build natively too (libstrata included), with
+import libraries for GNU ld and MSVC; native stack frames are 63% smaller.
 
 ### Added
 - **Native dlls**: `output = "dll"` builds with Strata's own backend and linker, no C

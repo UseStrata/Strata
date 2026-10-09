@@ -3,4 +3,4 @@
 //
 // src/version.strata - the compiler's version (shared by the CLI and libstrata).
 
-export string stratac_version() { return "2.4.0 (self-hosted natively)" }
+export string stratac_version() { return "2.5.0 (native dlls)" }

@@ -6,9 +6,9 @@
 > [`CHANGELOG.md`](CHANGELOG.md) (per-version detail) and
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
-**Current:** stratac **2.4.0** (self-hosted natively: no C compiler to build Strata on Windows), released 2026-10-09
+**Current:** stratac **2.5.0** (native dlls + import libraries; no C compiler anywhere on Windows), released 2026-10-09
 · tests **72/72** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
-· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.4.0)
+· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.5.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
 relies on nothing but the OS and what a game engine provides. 2.0 is step one: its own
@@ -48,6 +48,11 @@ plus releases, and approve releases when asked.
   a foreign block): `strata_host.h` serves the C build (macOS / Linux, the seed), the
   `strata_*` functions at the end of `lib/srt.strata` the native one. Evaluation order is
   now left to right on both backends (DESIGN.md §8b). 72 tests.
+- **2.5.0** released 2026-10-09: native dlls (libstrata too: build.ps1 needs no gcc at all),
+  relocatable, with import libraries Strata writes (`.dll.a`, `.lib`); native stack frames
+  63% smaller (spilled vregs share slots). 73 tests.
+- **Next (being discussed with the user):** split the assembler into an architecture-neutral
+  `asm.strata` + per-CPU encoder files, before ARM64 / ELF / Mach-O (step 4).
 
 **Where C is still used (what "move away from C" means concretely)**
 1. **Programs that `import <x.h>`** go through the C backend. ~~Structs / constants in
@@ -72,9 +77,9 @@ plus releases, and approve releases when asked.
 **Suggested order:** (a) ~~release 2.2.0~~ done; (b) ~~`struct` (and constant) declarations in
 `foreign` blocks + native raylib examples~~ done; (c) ~~`pelink` resolving `link "x"` DLLs itself~~ done;
 (d) ~~the compiler compiled natively~~ done on Windows (2.4.0). Then: (e) ~~stack-slot
-sharing~~ done for vregs (unreleased: dead vregs get no slot, spilled vregs share slots;
+sharing~~ done for vregs (2.5.0: dead vregs get no slot, spilled vregs share slots;
 frames -63%); IR slots (struct temporaries / locals) still don't share - that needs escape
-+ loop-lifetime analysis, low priority now; (f) ~~native dlls~~ done (unreleased: libstrata
++ loop-lifetime analysis, low priority now; (f) ~~native dlls~~ done (2.5.0: libstrata
 and `output = "dll"` projects build natively, with import libraries); (g) ARM64 / ELF /
 Mach-O targets (what finally retires the C seed); (h) reading C headers into foreign
 blocks. Static `.a` archives in `pelink` were looked at and skipped: MSYS2's libraylib.a
