@@ -112,13 +112,17 @@ foreach ($backend in @("native", "c")) {
     else { Write-Host "FAIL  backend/$backend ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
 }
 # The raylib examples (graphical: built, not run) declare raylib in a foreign block
-# (examples/raylib.strata), so they build natively; and through C, with raylib.h.
+# (examples/raylib.strata), so they build natively - linked by Strata's linker, straight
+# against libraylib.dll - and through C, with raylib.h.
+$raylibDll = $null
 if ((& gcc -print-file-name=libraylib.a) -ne "libraylib.a") {
+    $raylibDll = Join-Path (Split-Path (Get-Command gcc).Source) "libraylib.dll"
     $bad = @()
     foreach ($name in @("window", "sprite", "balls")) {
         foreach ($backend in @("native", "c")) {
             $out = (& $strata build (Join-Path $examples "$name.strata") --backend $backend --force) -join " "
             if ($LASTEXITCODE -ne 0 -or $out -notmatch "built") { $bad += "$name/$backend" }
+            if ($backend -eq "native" -and $out -match "linked by") { $bad += "$name/$backend (linked by the C toolchain)" }
         }
     }
     if ($bad.Count -eq 0) { Write-Host "PASS  backend/raylib (window, sprite, balls: native and C)" -ForegroundColor Green; $pass++ }
@@ -165,8 +169,19 @@ if (Get-Command objdump -ErrorAction SilentlyContinue) {
 # compiles, assembles and links them; the runtime is the prebuilt lib/srt.o).
 $savedPath = $env:Path
 $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
+# raylib's DLL alone on PATH (no gcc beside it): a raylib example links against it
+$dllDir = Join-Path $here "embed\build\dllonly"
+if ($raylibDll -and (Test-Path $raylibDll)) {
+    if (-not (Test-Path $dllDir)) { New-Item -ItemType Directory -Path $dllDir | Out-Null }
+    Copy-Item $raylibDll $dllDir -Force
+    $env:Path = "$env:Path;$dllDir"
+}
 $noCc = @()
 try {
+    if ($raylibDll) {
+        $out = (& $strata build (Join-Path $examples "window.strata") --backend native --force) -join " "
+        if ($LASTEXITCODE -ne 0 -or $out -match "linked by") { $noCc += "window (raylib)" }
+    }
     foreach ($name in @("hello", "abi", "loops", "matrix", "foreign")) {
         $out  = ((& $strata run (Join-Path $examples "$name.strata") --backend native) -join "`n") -replace "`r",""
         $want = ((Get-Content (Join-Path $here "run\$name.expected") -Raw) -replace "`r","").TrimEnd("`n")

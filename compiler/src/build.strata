@@ -286,8 +286,10 @@ export bool run_build(BuildSpec s, string libdir) {
 // The program as machine code: Strata's assembler (x64asm.strata) turns the backend's
 // assembly into an object file (<name>.o beside where the C would go, coff.strata), and
 // Strata's linker (pelink.strata) links it with the runtime (lib/srt.o, written in Strata:
-// lib/srt.strata) and the system DLLs. A program that links C libraries is linked by the
-// C toolchain instead (with the same lib/srt.o).
+// lib/srt.strata), the system DLLs and the DLLs of the libraries it links (`link "x"`,
+// `libs`: x.dll / libx.dll, found in System32, lib_dirs or on PATH). A program with C
+// sources, or a library that's no DLL (a static one), is linked by the C toolchain
+// instead (with the same lib/srt.o).
 
 bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, ObjFile* ob) {
     string obj_file = stem_of(s.out_c) + ".o"
@@ -311,12 +313,23 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     string cmd = spaced(argv)
 
     // Strata's own linker, when the program needs nothing but the runtime (lib/srt.o,
-    // made by build.ps1) and the system DLLs; else the C toolchain links
-    string[dynamic] oa2 = os_link_args(prog, s)
-    bool links_c = s.c_sources.len > 0 || s.libs.len > 0 || s.lib_dirs.len > 0 || s.frameworks.len > 0 || oa2.len > 0
-    for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { links_c = true } }
-    bool own = !links_c
-    if own { cmd = "strata-link " + libdir + "/srt.o" }
+    // made by build.ps1) and DLLs; else the C toolchain links
+    Linker* lk = new_linker()
+    bool own = s.c_sources.len == 0 && s.frameworks.len == 0
+    string[dynamic] libs = []
+    for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { libs.push(prog.decls[i].path) } }
+    for i in 0..s.libs.len { libs.push(s.libs[i]) }
+    for i in 0..oa.len {
+        if oa[i].len > 2 && substr(oa[i], 0, 2) == "-l" { libs.push(substr(oa[i], 2, oa[i].len - 2)) } else { own = false }
+    }
+    string dlls = ""
+    for i in 0..libs.len {
+        if own && !link_library(lk, libs[i], s.lib_dirs) { own = false }
+    }
+    if own {
+        for i in 0..lk.dll_path.len { dlls = dlls + " " + lk.dll_path[i] }
+        cmd = "strata-link " + libdir + "/srt.o" + dlls
+    }
 
     string key = ""
     if s.cache_file != "" {
@@ -333,18 +346,21 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     if !write_coff(obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
     bool linked = false
     if own {
-        Linker* lk = new_linker()
         link_add(lk, obj_file, coff_bytes(ob))
         link_add(lk, "srt.o", strata_read_bytes(libdir + "/srt.o"))
         linked = lk.ok && link_exe(lk, s.out_bin)
+        // --backend native: no C toolchain behind it (e.g. an undefined symbol is an error)
         if !linked && s.backend == "native" {
-            strata_report(basename_of(s.entry) + ": error: internal error in the linker: " + lk.err)
+            strata_report(basename_of(s.entry) + ": error: can't link: " + lk.err)
             return false
         }
     }
     if !linked && strata_run_argv(&argv) != 0 { return false }
     if s.cache_file != "" { write_file(s.cache_file, key) }
-    if !s.quiet { strata_report("built " + s.out_bin + " (native)") }
+    if !s.quiet {
+        if linked { strata_report("built " + s.out_bin + " (native)") }
+        else { strata_report("built " + s.out_bin + " (native, linked by " + strata_cc() + ")") }
+    }
     return true
 }
 

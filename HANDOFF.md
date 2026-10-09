@@ -31,8 +31,10 @@ plus releases, and approve releases when asked.
   variables (both user-chosen designs, DESIGN.md §3/§8), exact float printing, 68 tests.
 - Releases: follow §3's steps (including `build.ps1 -WriteSeed`). Ask the user before
   pushing / publishing.
-- **On `main` since 2.2.0 (unreleased):** `struct`s and `const`ants in `foreign` blocks;
-  the raylib examples import `examples/raylib.strata` (a foreign block) and build natively.
+- **On `main` since 2.2.0 (unreleased, pushed):** `struct`s and `const`ants in `foreign`
+  blocks; the raylib examples import `examples/raylib.strata` (a foreign block) and build
+  natively. **Unreleased, local:** Strata's linker links `link "x"` / `libs` itself, against
+  the libraries' DLLs (raylib builds with no gcc). Next release: 2.3.0.
 
 **Where C is still used (what "move away from C" means concretely)**
 1. **Programs that `import <x.h>`** go through the C backend. ~~Structs / constants in
@@ -51,12 +53,13 @@ plus releases, and approve releases when asked.
    OS DLL, acceptable per the user's goal; going to kernel32 directly is optional polish.
 5. **macOS / Linux** have no native backend (C only). ARM64 + Mach-O / ELF + SysV ABI are
    the future targets (the user's Mac is Apple Silicon).
-6. **gcc links** native programs that link C libraries (`link "x"`, `libs`, `c_sources`):
-   teach `pelink` to read `.a` import libraries or resolve `-l` DLLs from their export
-   tables (it already does that for system DLLs) and gcc drops out there too.
+6. ~~**gcc links** native programs that link C libraries~~ — done for DLLs: `pelink`
+   finds `link "x"` as x.dll / libx.dll (System32, lib_dirs, PATH) and reads its exports.
+   gcc still links programs with `c_sources` and static-only libraries (`libx.a`, no DLL):
+   reading `ar` archives in `pelink` would remove that too.
 
 **Suggested order:** (a) ~~release 2.2.0~~ done; (b) ~~`struct` (and constant) declarations in
-`foreign` blocks + native raylib examples~~ done; (c) `pelink` resolving `link "x"` DLLs itself;
+`foreign` blocks + native raylib examples~~ done; (c) ~~`pelink` resolving `link "x"` DLLs itself~~ done;
 (d) the compiler compiled natively (the big one), then clean up the C seed / host C.
 
 **Gotchas learned this session** (also in §13): the shell mangles backslashes in heredocs
@@ -168,8 +171,11 @@ the current folder). A single `.strata` file builds optimized into `<name>.exe` 
 C headers imported), else C; `native` / `c` force one. Native output: `<name>.o` beside
 where the `.c` would go (Strata's own assembler + COFF writer), then **Strata's own linker**
 makes the `.exe` from it + `lib/srt.o` (the runtime, written in Strata, prebuilt by
-`build.ps1`), importing from `msvcrt.dll` directly: **no C compiler needed**. Programs that
-link C libraries are linked by gcc (with the same `lib/srt.o`).
+`build.ps1`), importing from `msvcrt.dll` directly: **no C compiler needed**. Libraries
+(`link "x"`, `libs`) are linked against their DLLs (x.dll / libx.dll in System32, the
+project's `lib_dirs`, or on PATH), still by Strata's linker. Programs with `c_sources`, or
+a library that has no DLL, are linked by gcc (with the same `lib/srt.o`; the build says
+"linked by gcc").
 
 **Projects (`strata.toml`)** — every key is documented at the top of `src/project.strata`:
 `[project]` name / entry / output (`exe`|`dll`) / out_dir; `[build]` defines, include_dirs,
@@ -212,7 +218,7 @@ file.strata → lexer → parser → (module loader) → checker ─┬→ lower
 | `x64` | IR → x86-64 GNU-as assembly, Windows x64 ABI; immediates / folded addresses ("lazy" vregs), cmp+branch fusion, stack probes |
 | `x64asm` | Strata's x86-64 assembler: GNU-as AT&T text (the subset `x64` writes) → bytes, symbols, relocations (`ObjFile`); rel32 jumps always, fixups resolved in one pass |
 | `coff` | writes an `ObjFile` as a Windows x64 COFF object (`.text`, `.rdata`, REL32 relocations) |
-| `pelink` | Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from the system DLLs' export tables (no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000 |
+| `pelink` | Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from DLLs' export tables (the system's, and `link "x"`'s found by `link_library`; no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000 |
 | `native` | the native driver (`native_compile`, `native_target_why`) |
 | `core` | umbrella: `export import`s every phase = the compiler as a library (no `main`) |
 | `project`, `build` | the build system: `strata.toml`; pipeline, cache, split builds, dll + header |
@@ -356,8 +362,9 @@ arithmetic, shifts, floats, short-circuiting, pointers).
    unoptimized, of a multi-module program).
 4. **Incremental:** editing one function body in a copy of `multi` recompiles one C file.
    **No C compiler:** with gcc off PATH, five examples and `projects/pure` build natively
-   and print their goldens. **raylib:** `window`, `sprite`, `balls` build through both
-   backends (skipped without raylib).
+   and print their goldens, and `window` links against a lone copy of libraylib.dll.
+   **raylib:** `window`, `sprite`, `balls` build through both backends, natively linked by
+   Strata's linker (skipped without raylib).
    **Backends:** every run golden again with `--backend native` (all but `interop`, which
    imports C headers) and with `--backend c`; **the assembler**: ten examples (debug +
    optimized) must disassemble (objdump) to the same instructions as GNU as's object of
@@ -403,7 +410,8 @@ arithmetic, shifts, floats, short-circuiting, pointers).
   stepping in a debugger: use `--backend c` for that). Huge functions (liveness bitsets
   over 4M words) skip register allocation. u64 ↔ float conversions of values ≥ 2^63 are
   treated as signed.
-- **Needs gcc** (or cc) to build programs (check/emit/asm don't).
+- **Needs gcc** (or cc) for the C backend, `c_sources` and static libraries; native
+  builds on Windows need none.
 - **Build cache** doesn't track C headers your program `import`s — use `--force` after
   editing one.
 - **`link "x"`** only produces `-lx`; library paths / flags / frameworks need a `strata.toml`.

@@ -5,9 +5,9 @@ All notable changes to Strata are recorded here. Versions follow
 and a GitHub Release.
 
 ## [Unreleased]
-**raylib without C headers.** A `foreign` block can now declare a C library's structs and
-constants as well as its functions, so the raylib examples build with Strata's own
-backend.
+**raylib without C headers - or a C compiler.** A `foreign` block can now declare a C
+library's structs and constants as well as its functions, and Strata's linker links
+libraries straight from their DLLs: the raylib examples build with nothing but `stratac`.
 
 ### Added
 - **`struct`s and constants in `foreign` blocks:**
@@ -26,11 +26,20 @@ backend.
   when the block names a header, where the header's own struct and macro are used.
 - `examples/raylib.strata`: the raylib functions, structs and constants the graphical
   examples use, as a foreign block. `window`, `sprite` and `balls` import it instead of
-  `raylib.h`, so they build natively (gcc still links raylib).
+  `raylib.h`, so they build natively - and with no C compiler (below).
+- **Strata's linker links libraries itself**: `link "x"` and a project's `libs` are
+  resolved to their DLLs - `x.dll` or `libx.dll` (MinGW's name), looked for in System32,
+  the project's `lib_dirs`, then on PATH - whose export tables say what they provide, as
+  for the system DLLs. A raylib program builds with nothing but `stratac` and
+  `libraylib.dll`. gcc still links programs with `c_sources`, and libraries that have no
+  DLL (static `.a` only); the build then says "(native, linked by gcc)".
 - Tests (71): `foreign` (run on both backends, and with no C compiler; and its AST), and
-  the raylib examples built through both backends (when raylib is installed).
+  the raylib examples built through both backends (when raylib is installed), natively by
+  Strata's linker - also with no C compiler, only libraylib.dll, on PATH.
 
 ### Changed
+- `--backend native`: a link failure (e.g. an undefined symbol) is reported as such
+  ("can't link: undefined symbol 'x'"), not as an internal error.
 - A foreign block's header no longer makes unknown names resolve as C (only
   `import <x.h>` does): the block declares what the program uses.
 

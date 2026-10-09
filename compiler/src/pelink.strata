@@ -9,9 +9,10 @@
 //   * merges their sections into .text / .rdata / .data / .bss (by name, `$` suffixes
 //     grouped; .drectve, debug info and unwind tables are dropped);
 //   * resolves their global symbols; whatever stays undefined is IMPORTED - looked up in
-//     the export tables of the system DLLs themselves (msvcrt.dll, kernel32.dll in
-//     System32), so no import libraries are needed. A call to an import goes through a
-//     6-byte jump stub; `__imp_name` is the import's address slot (IAT) itself;
+//     the export tables of the DLLs themselves: the system's (msvcrt.dll, kernel32.dll in
+//     System32) and those of the libraries the program links (`link "x"`: x.dll or
+//     libx.dll, see link_library), so no import libraries are needed. A call to an import
+//     goes through a 6-byte jump stub; `__imp_name` is the import's address slot (IAT);
 //   * applies the relocations (REL32 and its +1..5 forms, ADDR64, ADDR32NB, ADDR32);
 //   * lays the image out at a fixed base (0x140000000: no relocation table) and writes
 //     the PE file with its import directory.
@@ -56,8 +57,9 @@ export struct Linker {
     string[dynamic]  imp          // function names
     int[dynamic]     imp_dll
     NameIdx          impidx
-    // the DLLs and their exports
+    // the DLLs (their file names, and where they were found) and their exports
     string[dynamic]  dlls
+    string[dynamic]  dll_path
     string[dynamic]  exp_name
     int[dynamic]     exp_dll
     NameIdx          expidx
@@ -96,6 +98,7 @@ export Linker* new_linker() {
     string[dynamic] im = []
     int[dynamic] id = []
     string[dynamic] dl = []
+    string[dynamic] dp = []
     string[dynamic] en = []
     int[dynamic] ed = []
     int[dynamic] a = []
@@ -105,9 +108,12 @@ export Linker* new_linker() {
     u8[dynamic] t = []
     u8[dynamic] r = []
     u8[dynamic] dt = []
+    string sys = system_dir()
     dl.push("msvcrt.dll")
+    dp.push(sys + "\\msvcrt.dll")
     dl.push("kernel32.dll")
-    return alloc(Linker{ true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, en, ed, new_idx(8192), false,
+    dp.push(sys + "\\kernel32.dll")
+    return alloc(Linker{ true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, dp, en, ed, new_idx(8192), false,
                          a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0 })
 }
 
@@ -196,7 +202,55 @@ int find_import(Linker* l, string name) {
     return found
 }
 
-// ---- the system DLLs' exports -------------------------------------------------------------------
+// ---- the DLLs and their exports ------------------------------------------------------------------
+
+string system_dir() {
+    string sys = strata_getenv("SystemRoot")
+    if sys == "" { sys = "C:\\Windows" }
+    return sys + "\\System32"
+}
+
+// Is the file at `path` an x86-64 DLL (a PE image for this machine)?
+bool is_x64_dll(string path) {
+    if !strata_file_exists(path) { return false }
+    u8[dynamic] b = strata_read_bytes(path)
+    if b.len < 64 || rd16(b, 0) != 23117 { return false }
+    int pe = rd32(b, 60)
+    return pe > 0 && pe + 6 < b.len && rd32(b, pe) == 17744 && rd16(b, pe + 4) == 34404
+}
+
+// The library `name` of a `link "name"`: the DLL it stands for - name.dll or libname.dll
+// (MinGW's spelling), looked for in System32, then in `dirs` (a project's lib_dirs), then
+// on PATH (where Windows will look for it when the program runs). False if there's none
+// (a static library, say): then the C toolchain has to link the program.
+export bool link_library(Linker* l, string name, string[dynamic] dirs) {
+    string[dynamic] where = []
+    where.push(system_dir())
+    for i in 0..dirs.len { where.push(dirs[i]) }
+    string path = strata_getenv("PATH")
+    int start = 0
+    for i in 0..path.len + 1 {
+        if i == path.len || path[i] == ';' {
+            if i > start { where.push(substr(path, start, i - start)) }
+            start = i + 1
+        }
+    }
+    string[dynamic] files = []
+    files.push(name + ".dll")
+    files.push("lib" + name + ".dll")
+    for w in 0..where.len {
+        for f in 0..files.len {
+            string p = where[w] + "\\" + files[f]
+            if is_x64_dll(p) {
+                bool have = false
+                for d in 0..l.dlls.len { if l.dlls[d] == files[f] { have = true } }
+                if !have { l.dlls.push(files[f]); l.dll_path.push(p) }
+                return true
+            }
+        }
+    }
+    return false
+}
 
 // RVA -> file offset in a PE file
 int rva_to_file(u8[dynamic] b, int rva) {
@@ -217,10 +271,8 @@ int rva_to_file(u8[dynamic] b, int rva) {
 void load_exports(Linker* l) {
     if l.exports_loaded { return }
     l.exports_loaded = true
-    string sys = strata_getenv("SystemRoot")
-    if sys == "" { sys = "C:\\Windows" }
     for d in 0..l.dlls.len {
-        u8[dynamic] b = strata_read_bytes(sys + "\\System32\\" + l.dlls[d])
+        u8[dynamic] b = strata_read_bytes(l.dll_path[d])
         if b.len < 64 { lk_fail(l, "cannot read " + l.dlls[d]) }
         else {
             int pe = rd32(b, 60)
