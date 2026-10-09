@@ -6,11 +6,9 @@
 > [`CHANGELOG.md`](CHANGELOG.md) (per-version detail) and
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
-**Current:** stratac **2.1.0** (own assembler + linker), released 2026-10-08
-· `main` has one more commit **not yet released or pushed**: `0d5ab21` (the native runtime in
-Strata, `foreign` blocks, `global` variables; CHANGELOG "Unreleased"; version string still 2.1.0)
+**Current:** stratac **2.2.0** (the runtime in Strata: `foreign` blocks, `global` variables), released 2026-10-09
 · tests **68/68** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
-· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.1.0)
+· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.2.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
 relies on nothing but the OS and what a game engine provides. 2.0 is step one: its own
@@ -28,13 +26,11 @@ user has repeatedly said "do the next best thing" / "release both": they want pr
 plus releases, and approve releases when asked.
 
 **State right now**
-- Unreleased on `main` (local only — `git push origin main` hasn't been run for it):
-  `0d5ab21` = the native runtime rewritten in Strata (`lib/srt.strata`, built by
-  `stratac object`; `lib/srt.c` deleted), the `foreign` block and `global` variables
-  (both user-chosen designs, DESIGN.md §3/§8), exact float printing, 68 tests.
-- The next release would be **2.2.0** (bump `compiler/src/version.strata` +
-  `editors/vscode/package.json`, rename CHANGELOG "Unreleased"; then §3's release steps,
-  including `build.ps1 -WriteSeed`). Ask the user before pushing / publishing.
+- **2.2.0** released 2026-10-09: the native runtime rewritten in Strata (`lib/srt.strata`,
+  built by `stratac object`; `lib/srt.c` deleted), the `foreign` block and `global`
+  variables (both user-chosen designs, DESIGN.md §3/§8), exact float printing, 68 tests.
+- Releases: follow §3's steps (including `build.ps1 -WriteSeed`). Ask the user before
+  pushing / publishing.
 
 **Where C is still used (what "move away from C" means concretely)**
 1. **Programs that `import <x.h>`** (e.g. `examples/window|sprite|balls.strata` with raylib)
@@ -60,7 +56,7 @@ plus releases, and approve releases when asked.
    teach `pelink` to read `.a` import libraries or resolve `-l` DLLs from their export
    tables (it already does that for system DLLs) and gcc drops out there too.
 
-**Suggested order:** (a) release 2.2.0; (b) `struct` (and constant) declarations in
+**Suggested order:** (a) ~~release 2.2.0~~ done; (b) `struct` (and constant) declarations in
 `foreign` blocks + native raylib examples; (c) `pelink` resolving `link "x"` DLLs itself;
 (d) the compiler compiled natively (the big one), then clean up the C seed / host C.
 
@@ -424,8 +420,8 @@ arithmetic, shifts, floats, short-circuiting, pointers).
 · 1.3 embedding API · 1.4 compiler 25–540× faster · 1.5 break/continue, incremental parallel
 builds, hardened limits · 1.6 stratac on Windows, macOS and Linux (crossplatform.h, C seed)
 · **2.0 the native backend: x86-64 code + an optimizer, Strata's own** · **2.1 Strata's own
-assembler + COFF writer + linker: native builds need no C compiler.** · unreleased: the native
-runtime in Strata (`foreign` blocks, `global` variables).
+assembler + COFF writer + linker: native builds need no C compiler.** · **2.2 the native
+runtime in Strata (`foreign` blocks, `global` variables).**
 
 **The independence road (the user's chosen direction; one step at a time, C path kept):**
 1. ~~**Object files directly** (COFF): an x86-64 encoder in Strata, no assembler.~~ Done

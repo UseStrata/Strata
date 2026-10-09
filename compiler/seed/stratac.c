@@ -16,7 +16,7 @@ typedef enum { TkIdent, TkInt, TkFloat, TkString, TkChar, TkKwVar, TkKwConst, Tk
 typedef enum { TyNamed, TyArray, TyFixedArray, TyPointer, TyDynArray } TypeKind;
 typedef enum { ExIntLit, ExFloatLit, ExStringLit, ExCharLit, ExBoolLit, ExName, ExUnary, ExBinary, ExCall, ExField, ExIndex, ExArrayLit, ExStructLit, ExCast, ExSizeof } ExprKind;
 typedef enum { StBlock, StVar, StReturn, StExprStmt, StAssign, StIf, StWhile, StForIn, StRegion, StSwitch, StBreak, StContinue } StmtKind;
-typedef enum { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport } DeclKind;
+typedef enum { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport, DcGlobal } DeclKind;
 typedef enum { TcInt, TcFloat, TcBool, TcChar, TcStr, TcVoid, TcStruct, TcArray, TcPointer, TcVec, TcMat, TcQuat, TcDynArray, TcUnknown } TCat;
 typedef enum { KVoid, KI8, KI16, KI32, KI64, KU8, KU16, KU32, KU64, KF32, KF64 } IrTy;
 typedef enum { OConst, OFConst, OCopy, OAdd, OSub, OMul, ODiv, OMod, OAnd, OOr, OXor, OShl, OShr, ONeg, ONot, OCmp, OConv, OSqrt, OLoad, OStore, OSlotAddr, OSymAddr, OCopyMem, OZeroMem, OParam, OCall, ORet, OLabel, OJmp, OBr, ONop } IrOp;
@@ -44,6 +44,7 @@ typedef struct StructInfo StructInfo;
 typedef struct FuncInfo FuncInfo;
 typedef struct EnumInfo EnumInfo;
 typedef struct EnumMember EnumMember;
+typedef struct GlobalInfo GlobalInfo;
 typedef struct NameEntry NameEntry;
 typedef struct Checker Checker;
 typedef struct LookupResult LookupResult;
@@ -55,12 +56,14 @@ typedef struct Ins Ins;
 typedef struct IrSlot IrSlot;
 typedef struct IrFunc IrFunc;
 typedef struct IrData IrData;
+typedef struct IrGlobal IrGlobal;
 typedef struct IrProgram IrProgram;
 typedef struct FieldLay FieldLay;
 typedef struct StructLay StructLay;
 typedef struct TInfo TInfo;
 typedef struct LVal LVal;
 typedef struct LVar LVar;
+typedef struct LGlobal LGlobal;
 typedef struct Lower Lower;
 typedef struct FieldRef FieldRef;
 typedef struct Base Base;
@@ -181,6 +184,8 @@ struct Decl {
     bool is_system;
     bool is_exported;
     int64_t module;
+    bool is_foreign;
+    Expr* init;
 };
 struct Module {
     const char* name;
@@ -262,6 +267,13 @@ struct EnumMember {
     bool exported;
     const char* cname;
 };
+struct GlobalInfo {
+    const char* name;
+    Type* type;
+    int64_t module;
+    bool exported;
+    const char* cname;
+};
 struct NameEntry {
     const char* name;
     int64_t module;
@@ -277,6 +289,8 @@ struct Checker {
     Array funcs;
     Array enums;
     Array enum_members;
+    Array globals;
+    NameIdx global_idx;
     Scope* scope;
     Type* cur_ret;
     Array mods;
@@ -360,9 +374,20 @@ struct IrData {
     const char* sym;
     const char* text;
 };
+struct IrGlobal {
+    const char* sym;
+    bool global;
+    int64_t size;
+    int64_t align;
+    int64_t kind;
+    int64_t ival;
+    const char* text;
+    int64_t ty;
+};
 struct IrProgram {
     Array funcs;
     Array strings;
+    Array globals;
 };
 struct FieldLay {
     const char* name;
@@ -395,6 +420,10 @@ struct LVar {
     int64_t ty;
     TypeNode* type;
 };
+struct LGlobal {
+    const char* name;
+    TypeNode* type;
+};
 struct Lower {
     bool ok;
     const char* err;
@@ -404,6 +433,7 @@ struct Lower {
     Array enums;
     Array members;
     Array member_values;
+    Array globals;
     IrFunc f;
     Array vars;
     Array scopes;
@@ -459,9 +489,11 @@ struct NativeResult {
     const char* ir;
 };
 struct ObjReloc {
+    int64_t section;
     int64_t offset;
     int64_t symbol;
     int64_t after;
+    int64_t kind;
 };
 struct ObjSymbol {
     const char* name;
@@ -474,6 +506,7 @@ struct ObjFile {
     const char* err;
     Array text;
     Array rdata;
+    Array data;
     Array relocs;
     Array symbols;
 };
@@ -490,6 +523,7 @@ struct Fix {
     const char* label;
     int64_t addend;
     int64_t after;
+    int64_t section;
 };
 struct Asm {
     ObjFile o;
@@ -683,6 +717,10 @@ Decl* link_decl(Parser* p);
 Decl* enum_decl(Parser* p);
 Decl* struct_decl(Parser* p);
 Decl* func_decl(Parser* p);
+Decl* global_decl(Parser* p);
+bool at_global(Parser* p);
+bool at_foreign(Parser* p);
+void foreign_block(Parser* p, Array* decls, bool exported);
 Program parse_program(Parser* p);
 Stmt* block(Parser* p);
 Stmt* var_decl_core(Parser* p);
@@ -743,12 +781,15 @@ int64_t ck_struct_index(Checker* c, const char* name);
 int64_t ck_struct_by_cname(Checker* c, const char* cname);
 int64_t ck_func_index(Checker* c, const char* name);
 int64_t ck_enum_index(Checker* c, const char* name);
+int64_t ck_global_index(Checker* c, const char* name);
+int64_t ck_own_global(Checker* c, const char* name, int64_t module);
 int64_t ck_member_index(Checker* c, const char* name);
 Type* ck_prim(const char* n);
 int64_t vec_dim(const char* vname);
 bool vec_comp_ok(char c, int64_t dim);
 int64_t vec_swizzle_size(const char* vname, const char* field);
 Type* ck_type(Checker* c, TypeNode* t);
+bool ck_is_constant(Expr* e);
 bool ck_assignable(Type* target, Type* value);
 bool t_is_scalar(Type* t);
 bool ck_castable(Type* from, Type* to);
@@ -809,6 +850,7 @@ const char* export_prefix(Codegen* cg, Decl* d);
 void gen_includes(Codegen* cg, Program prog);
 void gen_types(Codegen* cg, Program prog);
 void gen_function(Codegen* cg, Decl* d, const char* prefix);
+void gen_globals(Codegen* cg, Program prog, int64_t module);
 void gen_main(Codegen* cg, Program prog);
 const char* generate(Codegen* cg, Program prog);
 const char* unit_name(int64_t m, const char* name);
@@ -888,6 +930,9 @@ int64_t digit_val(char c);
 int64_t parse_int(const char* s);
 int64_t char_val(const char* s);
 const char* strip_us(const char* s);
+const char* string_data(Lower* l, const char* text);
+int64_t sym_addr(Lower* l, const char* sym);
+int64_t lower__find_global(Lower* l, const char* name);
 int64_t lower__string_lit(Lower* l, const char* text);
 void push_scope(Lower* l);
 void pop_scope(Lower* l);
@@ -949,6 +994,7 @@ void lower_function(Lower* l, Decl* d);
 void lower_main(Lower* l, Program prog);
 Lower* new_lower(void);
 bool lower_program(Lower* l, Program prog, bool with_main);
+void lower_global(Lower* l, Decl* d);
 Facts facts(IrFunc* f);
 bool single(Facts* fa, int64_t v);
 bool is_const(IrFunc* f, Facts* fa, int64_t v);
@@ -1024,6 +1070,7 @@ void find_lazy(X64* x, IrFunc* f);
 Array x64_lazy(IrFunc* f);
 void x64_function(X64* x, IrFunc* f, Array regs);
 void x64_begin(X64* x);
+void x64_global(X64* x, IrGlobal g);
 const char* x64_finish(X64* x, IrProgram* prog);
 const char* native_target_why(const char* os, const char* arch);
 NativeResult native_compile(Program prog, bool with_main, bool optimize_code);
@@ -1057,6 +1104,7 @@ void directive(Asm* a, const char* s);
 void define_label(Asm* a, const char* name);
 int64_t find_label(Asm* a, const char* name);
 int64_t symbol_index(Asm* a, const char* name, int64_t section, int64_t value);
+void patch64_data(Asm* a, int64_t at, int64_t v);
 void patch32(Asm* a, int64_t at, int64_t v);
 ObjFile assemble_x64(const char* src);
 void u8put(Out* o, int64_t v);
@@ -1068,6 +1116,8 @@ void section_header(Out* o, const char* name, int64_t size, int64_t data_at, int
 void symbol(Out* o, const char* name, int64_t value, int64_t section, int64_t typ, int64_t cls, int64_t naux);
 void section_aux(Out* o, int64_t size, int64_t nrelocs);
 bool write_coff(const char* path, ObjFile* f);
+void put_relocs(Out* o, ObjFile* f, int64_t section, int64_t count, bool overflow);
+int64_t count_relocs(ObjFile* f, int64_t section);
 Array coff_bytes(ObjFile* f);
 void lk_fail(Linker* l, const char* msg);
 int64_t rd16(Array b, int64_t at);
@@ -1076,7 +1126,7 @@ const char* rdstr(Array b, int64_t at, int64_t max);
 Linker* new_linker(void);
 int64_t out_of(Linker* l, const char* name, int64_t flags);
 void link_add(Linker* l, const char* name, Array b);
-int64_t find_global(Linker* l, const char* name);
+int64_t pelink__find_global(Linker* l, const char* name);
 int64_t find_import(Linker* l, const char* name);
 int64_t rva_to_file(Array b, int64_t rva);
 void load_exports(Linker* l);
@@ -1161,6 +1211,7 @@ int64_t cmd_check(const char* path);
 int64_t cmd_emit(const char* path);
 int64_t cmd_native(const char* path, bool show_ir, bool opt);
 int64_t cmd_assemble(const char* path, const char* out);
+int64_t cmd_object(const char* path, const char* out);
 BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend);
 int64_t cmd_build(Target t, const char* libdir, bool release, bool force, const char* backend);
 int64_t cmd_run(Target t, const char* libdir, bool release, bool force, const char* backend, Array prog_args);
@@ -2179,7 +2230,7 @@ Decl* new_decl(DeclKind k, int64_t line, int64_t col) {
     Array params = ({ Array _a = arr_make(sizeof(Param)); _a; });
     Array fields = ({ Array _a = arr_make(sizeof(FieldDef)); _a; });
     Array members = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    return ({ Decl _v = (Decl){k, line, col, "", params, 0, 0, fields, members, "", false, false, 0}; Decl* _p = (Decl*)arena_alloc(strata_heap(), sizeof(Decl)); *_p = _v; _p; });
+    return ({ Decl _v = (Decl){k, line, col, "", params, 0, 0, fields, members, "", false, false, 0, false, 0}; Decl* _p = (Decl*)arena_alloc(strata_heap(), sizeof(Decl)); *_p = _v; _p; });
 }
 
 Module new_module(const char* name, const char* path, const char* file) {
@@ -2441,6 +2492,90 @@ Decl* func_decl(Parser* p) {
     return fd;
 }
 
+Decl* global_decl(Parser* p) {
+    Token kw = p_advance(p);
+    Decl* d = new_decl(DcGlobal, kw.line, kw.col);
+    if (p_check(p, TkKwConst)) {
+        p_error(p, p_peek(p), "a global can't be const yet (use 'global var' or a type)");
+    }
+    Stmt* s = var_decl_core(p);
+    d->name = s->name;
+    d->ret = s->type;
+    d->init = s->init;
+    return d;
+}
+
+bool at_global(Parser* p) {
+    if ((!p_check(p, TkIdent)) || (!str_eq(p_peek(p).text, "global"))) {
+        return false;
+    }
+    if ((((Token*)(p->toks).data)[(p->pos + 1)].kind == TkKwVar) || (((Token*)(p->toks).data)[(p->pos + 1)].kind == TkKwConst)) {
+        return true;
+    }
+    int64_t i = skip_type_at(p, (p->pos + 1));
+    return ((i >= 0) && (((Token*)(p->toks).data)[i].kind == TkIdent));
+}
+
+bool at_foreign(Parser* p) {
+    if ((!p_check(p, TkIdent)) || (!str_eq(p_peek(p).text, "foreign"))) {
+        return false;
+    }
+    TokKind k = ((Token*)(p->toks).data)[(p->pos + 1)].kind;
+    return (((k == TkLBrace) || (k == TkString)) || (k == TkLt));
+}
+
+void foreign_block(Parser* p, Array* decls, bool exported) {
+    Token kw = p_advance(p);
+    const char* header = "";
+    if (p_check(p, TkString) || p_check(p, TkLt)) {
+        Decl* inc = new_decl(DcInclude, kw.line, kw.col);
+        inc->is_foreign = true;
+        if (p_check(p, TkString)) {
+            inc->path = p_advance(p).text;
+            inc->is_system = false;
+        } else {
+            p_advance(p);
+            const char* path = "";
+            while ((!p_check(p, TkGt)) && (!p_at_end(p))) {
+                path = str_concat(path, p_advance(p).text);
+            }
+            p_expect(p, TkGt);
+            inc->path = path;
+            inc->is_system = true;
+        }
+        ({ Decl* _e = inc; arr_push(&(decls[0]), &_e); });
+        header = inc->path;
+    }
+    p_expect(p, TkLBrace);
+    skip_newlines(p);
+    while (((!p_check(p, TkRBrace)) && (!p_at_end(p))) && (!p->had_error)) {
+        Token ft = p_peek(p);
+        Decl* fd = new_decl(DcFunc, ft.line, ft.col);
+        fd->is_foreign = true;
+        fd->is_exported = exported;
+        fd->path = header;
+        fd->ret = parse_type(p);
+        fd->name = p_expect(p, TkIdent).text;
+        p_expect(p, TkLParen);
+        skip_newlines(p);
+        if (!p_check(p, TkRParen)) {
+            bool more = true;
+            while (more) {
+                TypeNode* pty = parse_type(p);
+                const char* pnm = p_expect(p, TkIdent).text;
+                ({ Param _e = (Param){pnm, pty}; arr_push(&(fd->params), &_e); });
+                more = p_match(p, TkComma);
+                skip_newlines(p);
+            }
+        }
+        p_expect(p, TkRParen);
+        ({ Decl* _e = fd; arr_push(&(decls[0]), &_e); });
+        p_match(p, TkSemicolon);
+        skip_newlines(p);
+    }
+    p_expect(p, TkRBrace);
+}
+
 Program parse_program(Parser* p) {
     Array decls = ({ Array _a = arr_make(sizeof(Decl*)); _a; });
     Array main = ({ Array _a = arr_make(sizeof(Stmt*)); _a; });
@@ -2452,6 +2587,14 @@ Program parse_program(Parser* p) {
             exported = true;
             skip_newlines(p);
         }
+        if (at_global(p)) {
+            Decl* d = global_decl(p);
+            d->is_exported = exported;
+            ({ Decl* _e = d; arr_push(&(decls), &_e); });
+        } else 
+        if (at_foreign(p)) {
+            foreign_block(p, (&decls), exported);
+        } else 
         if (p_check(p, TkKwStruct)) {
             Decl* d = struct_decl(p);
             d->is_exported = exported;
@@ -3546,6 +3689,31 @@ int64_t ck_enum_index(Checker* c, const char* name) {
     return found;
 }
 
+int64_t ck_global_index(Checker* c, const char* name) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&c->global_idx), name);
+    while (k >= 0) {
+        GlobalInfo g = ((GlobalInfo*)(c->globals).data)[k];
+        if (str_eq(g.name, name) && ck_sees(c, g.module, g.exported)) {
+            found = k;
+        }
+        k = idx_next((&c->global_idx), k);
+    }
+    return found;
+}
+
+int64_t ck_own_global(Checker* c, const char* name, int64_t module) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&c->global_idx), name);
+    while (k >= 0) {
+        if (str_eq(((GlobalInfo*)(c->globals).data)[k].name, name) && (((GlobalInfo*)(c->globals).data)[k].module == module)) {
+            found = k;
+        }
+        k = idx_next((&c->global_idx), k);
+    }
+    return found;
+}
+
 int64_t ck_member_index(Checker* c, const char* name) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&c->member_idx), name);
@@ -3668,6 +3836,19 @@ Type* ck_type(Checker* c, TypeNode* t) {
     return c->t_unknown;
 }
 
+bool ck_is_constant(Expr* e) {
+    if (((((e->kind == ExIntLit) || (e->kind == ExFloatLit)) || (e->kind == ExBoolLit)) || (e->kind == ExCharLit)) || (e->kind == ExStringLit)) {
+        return true;
+    }
+    if ((e->kind == ExName) && str_eq(e->text, "null")) {
+        return true;
+    }
+    if (((e->kind == ExUnary) && str_eq(e->text, "-")) && ((e->a->kind == ExIntLit) || (e->a->kind == ExFloatLit))) {
+        return true;
+    }
+    return false;
+}
+
 bool ck_assignable(Type* target, Type* value) {
     if ((target->cat == TcUnknown) || (value->cat == TcUnknown)) {
         return true;
@@ -3777,6 +3958,9 @@ bool ck_castable(Type* from, Type* to) {
         return true;
     }
     if ((to->cat == TcPointer) && (from->cat == TcInt)) {
+        return true;
+    }
+    if (((from->cat == TcStr) && (to->cat == TcPointer)) || ((from->cat == TcPointer) && (to->cat == TcStr))) {
         return true;
     }
     return false;
@@ -4020,6 +4204,11 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 if (v.found) {
                     return v.type;
                 }
+                int64_t gi = ck_global_index(c, e->text);
+                if (gi >= 0) {
+                    e->text = ((GlobalInfo*)(c->globals).data)[gi].cname;
+                    return ((GlobalInfo*)(c->globals).data)[gi].type;
+                }
                 int64_t mi = ck_member_index(c, e->text);
                 if (mi >= 0) {
                     e->text = ((EnumMember*)(c->enum_members).data)[mi].cname;
@@ -4126,6 +4315,19 @@ Type* ck_expr_i(Checker* c, Expr* e) {
             {
                 Type* ot = ck_expr(c, e->a);
                 if (t_is_unknown(ot)) {
+                    return c->t_unknown;
+                }
+                if (((ot->cat == TcPointer) && (ot->elem != 0)) && ((ot->elem->cat == TcVec) || (ot->elem->cat == TcQuat))) {
+                    ot = ot->elem;
+                    if ((ot->cat == TcVec) && (str_len(e->field) > 1)) {
+                        ck_error(c, e->line, e->col, str_concat(str_concat("a swizzle needs the vector itself, not a pointer to it (use (*p).", e->field), ")"));
+                    }
+                }
+                if (ot->cat == TcQuat) {
+                    if (((str_eq(e->field, "x") || str_eq(e->field, "y")) || str_eq(e->field, "z")) || str_eq(e->field, "w")) {
+                        return c->t_float;
+                    }
+                    ck_error(c, e->line, e->col, str_concat(str_concat("quat has components x, y, z and w (no '", e->field), "')"));
                     return c->t_unknown;
                 }
                 if (ot->cat == TcVec) {
@@ -5033,6 +5235,7 @@ bool ck_check(Checker* c, Program prog) {
     c->member_idx = new_idx(n_all);
     c->name_idx = new_idx(n_all);
     c->node_idx = new_idx(n_all);
+    c->global_idx = new_idx(n_all);
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         c->cur = d->module;
@@ -5060,6 +5263,14 @@ bool ck_check(Checker* c, Program prog) {
             Array ff = ({ Array _a = arr_make(sizeof(FieldInfo)); _a; });
             idx_add((&c->struct_idx), d->name, c->structs.len);
             ({ StructInfo _e = (StructInfo){d->name, ff, d->module, d->is_exported, d->name}; arr_push(&(c->structs), &_e); });
+            ck_note_name(c, d->name, d->module, d->is_exported, d->line, d->col);
+        } else 
+        if (d->kind == DcGlobal) {
+            if (ck_own_global(c, d->name, d->module) >= 0) {
+                ck_error(c, d->line, d->col, str_concat(str_concat("global '", d->name), "' is already defined"));
+            }
+            idx_add((&c->global_idx), d->name, c->globals.len);
+            ({ GlobalInfo _e = (GlobalInfo){d->name, c->t_unknown, d->module, d->is_exported, d->name}; arr_push(&(c->globals), &_e); });
             ck_note_name(c, d->name, d->module, d->is_exported, d->line, d->col);
         } else 
         if (d->kind == DcFunc) {
@@ -5090,6 +5301,15 @@ bool ck_check(Checker* c, Program prog) {
     for (int64_t i = 0; i < c->funcs.len; i++) {
         ((FuncInfo*)(c->funcs).data)[i].cname = ck_cname(c, ((FuncInfo*)(c->funcs).data)[i].name, ((FuncInfo*)(c->funcs).data)[i].module, ((FuncInfo*)(c->funcs).data)[i].exported);
     }
+    for (int64_t i = 0; i < c->globals.len; i++) {
+        ((GlobalInfo*)(c->globals).data)[i].cname = ck_cname(c, ((GlobalInfo*)(c->globals).data)[i].name, ((GlobalInfo*)(c->globals).data)[i].module, ((GlobalInfo*)(c->globals).data)[i].exported);
+    }
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        Decl* d = ((Decl**)(prog.decls).data)[i];
+        if ((d->kind == DcFunc) && d->is_foreign) {
+            ((FuncInfo*)(c->funcs).data)[ck_own_func(c, d->name, d->module)].cname = d->name;
+        }
+    }
     ck_name_conflicts(c);
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
@@ -5114,7 +5334,35 @@ bool ck_check(Checker* c, Program prog) {
     }
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (d->kind == DcFunc) {
+        if (d->kind == DcGlobal) {
+            c->cur = d->module;
+            int64_t gi = ck_own_global(c, d->name, d->module);
+            Type* declared = c->t_unknown;
+            if (d->ret != 0) {
+                declared = ck_type(c, d->ret);
+            }
+            if (d->init != 0) {
+                if (!ck_is_constant(d->init)) {
+                    ck_error(c, d->line, d->col, "a global's initial value must be a constant (a number, char, bool, string or null)");
+                }
+                Type* vt = ck_expr_as(c, d->init, declared);
+                if (d->ret == 0) {
+                    declared = vt;
+                    d->ret = type_to_node(vt);
+                } else 
+                if (!ck_assignable(declared, vt)) {
+                    ck_error(c, d->line, d->col, str_concat(str_concat(str_concat(str_concat(str_concat("cannot initialize global '", d->name), "' of type "), t_str(declared)), " with a value of type "), t_str(vt)));
+                }
+            } else 
+            if (d->ret == 0) {
+                ck_error(c, d->line, d->col, "'global var' needs an initial value");
+            }
+            ((GlobalInfo*)(c->globals).data)[gi].type = declared;
+        }
+    }
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        Decl* d = ((Decl**)(prog.decls).data)[i];
+        if ((d->kind == DcFunc) && (!d->is_foreign)) {
             c->cur = d->module;
             ck_func(c, d, ck_own_func(c, d->name, d->module));
         }
@@ -5130,6 +5378,9 @@ bool ck_check(Checker* c, Program prog) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if (d->kind == DcFunc) {
             d->name = ((FuncInfo*)(c->funcs).data)[ck_own_func(c, d->name, d->module)].cname;
+        }
+        if (d->kind == DcGlobal) {
+            d->name = ((GlobalInfo*)(c->globals).data)[ck_own_global(c, d->name, d->module)].cname;
         }
         if (d->kind == DcStruct) {
             d->name = ((StructInfo*)(c->structs).data)[ck_own_struct(c, d->name, d->module)].cname;
@@ -5149,10 +5400,11 @@ Checker* new_checker(const char* file) {
     Array fs = ({ Array _a = arr_make(sizeof(FuncInfo)); _a; });
     Array es = ({ Array _a = arr_make(sizeof(EnumInfo)); _a; });
     Array ems = ({ Array _a = arr_make(sizeof(EnumMember)); _a; });
+    Array gls = ({ Array _a = arr_make(sizeof(GlobalInfo)); _a; });
     Array mods = ({ Array _a = arr_make(sizeof(Module)); _a; });
     Array names = ({ Array _a = arr_make(sizeof(NameEntry)); _a; });
     Array nodes = ({ Array _a = arr_make(sizeof(TypeNode*)); _a; });
-    return ({ Checker _v = (Checker){file, false, false, ss, fs, es, ems, 0, ty(TcVoid, "void"), mods, 0, names, new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), nodes, new_idx(0), 0, ty(TcInt, "int"), ty(TcBool, "bool"), ty(TcFloat, "float"), ty(TcStr, "string"), ty(TcVoid, "void"), ty(TcUnknown, "?"), ty(TcChar, "char")}; Checker* _p = (Checker*)arena_alloc(strata_heap(), sizeof(Checker)); *_p = _v; _p; });
+    return ({ Checker _v = (Checker){file, false, false, ss, fs, es, ems, gls, new_idx(0), 0, ty(TcVoid, "void"), mods, 0, names, new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), nodes, new_idx(0), 0, ty(TcInt, "int"), ty(TcBool, "bool"), ty(TcFloat, "float"), ty(TcStr, "string"), ty(TcVoid, "void"), ty(TcUnknown, "?"), ty(TcChar, "char")}; Checker* _p = (Checker*)arena_alloc(strata_heap(), sizeof(Checker)); *_p = _v; _p; });
 }
 
 Codegen new_codegen(void) {
@@ -6158,6 +6410,31 @@ void gen_function(Codegen* cg, Decl* d, const char* prefix) {
     cg_out(cg, "\n\n");
 }
 
+void gen_globals(Codegen* cg, Program prog, int64_t module) {
+    bool any = false;
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        Decl* d = ((Decl**)(prog.decls).data)[i];
+        if ((d->kind == DcGlobal) && ((module < 0) || (d->module == module))) {
+            const char* head = "";
+            if (!d->is_exported) {
+                head = "static ";
+            }
+            const char* init = "";
+            if (d->init != 0) {
+                init = str_concat(" = ", gen_expr(cg, d->init));
+            } else 
+            if ((d->ret != 0) && (d->ret->kind == TyDynArray)) {
+                init = str_concat(str_concat(" = { 0, 0, 0, sizeof(", ty_to_c(d->ret->elem)), ") }");
+            }
+            cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(head, ty_to_c(d->ret)), " "), d->name), init), ";\n"));
+            any = true;
+        }
+    }
+    if (any) {
+        cg_out(cg, "\n");
+    }
+}
+
 void gen_main(Codegen* cg, Program prog) {
     if (!cg->no_main) {
         cg->ret_c = "int";
@@ -6177,14 +6454,15 @@ const char* generate(Codegen* cg, Program prog) {
     gen_types(cg, prog);
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (d->kind == DcFunc) {
+        if ((d->kind == DcFunc) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
             cg_out(cg, str_concat(str_concat(export_prefix(cg, d), func_sig(d)), ";\n"));
         }
     }
     cg_out(cg, "\n");
+    gen_globals(cg, prog, (0 - 1));
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (d->kind == DcFunc) {
+        if ((d->kind == DcFunc) && (!d->is_foreign)) {
             gen_function(cg, d, export_prefix(cg, d));
         }
     }
@@ -6213,6 +6491,12 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
     cg_out(cg, "#define STRATA_SPLIT 1\n");
     gen_includes(cg, prog);
     gen_types(cg, prog);
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        Decl* d = ((Decl**)(prog.decls).data)[i];
+        if ((d->kind == DcGlobal) && d->is_exported) {
+            cg_out(cg, str_concat(str_concat(str_concat(str_concat("extern ", ty_to_c(d->ret)), " "), d->name), ";\n"));
+        }
+    }
     cg_out(cg, "#endif\n");
     const char* header = join_pieces(cg->parts);
     Array names = ({ Array _a = arr_make(sizeof(const char*)); _a; });
@@ -6220,7 +6504,7 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
     for (int64_t m = 0; m < prog.modules.len; m++) {
         bool any = (m == 0);
         for (int64_t i = 0; i < prog.decls.len; i++) {
-            if ((((Decl**)(prog.decls).data)[i]->module == m) && (((Decl**)(prog.decls).data)[i]->kind == DcFunc)) {
+            if ((((Decl**)(prog.decls).data)[i]->module == m) && ((((Decl**)(prog.decls).data)[i]->kind == DcFunc) || (((Decl**)(prog.decls).data)[i]->kind == DcGlobal))) {
                 any = true;
             }
         }
@@ -6233,20 +6517,25 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
             cg_out(cg, str_concat(str_concat("#include \"", header_name), "\"\n\n"));
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if (((d->kind == DcFunc) && d->is_exported) && ((d->module == m) || module_sees(prog, m, d->module))) {
+                if ((((d->kind == DcFunc) && d->is_exported) && ((d->module == m) || module_sees(prog, m, d->module))) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
                     cg_out(cg, str_concat(str_concat(export_prefix(cg, d), func_sig(d)), ";\n"));
                 }
             }
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if (((d->module == m) && (d->kind == DcFunc)) && (!d->is_exported)) {
-                    cg_out(cg, str_concat(str_concat("static ", func_sig(d)), ";\n"));
+                if ((((d->module == m) && (d->kind == DcFunc)) && (!d->is_exported)) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
+                    if (d->is_foreign) {
+                        cg_out(cg, str_concat(func_sig(d), ";\n"));
+                    } else {
+                        cg_out(cg, str_concat(str_concat("static ", func_sig(d)), ";\n"));
+                    }
                 }
             }
             cg_out(cg, "\n");
+            gen_globals(cg, prog, m);
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if ((d->module == m) && (d->kind == DcFunc)) {
+                if (((d->module == m) && (d->kind == DcFunc)) && (!d->is_foreign)) {
                     if (d->is_exported) {
                         gen_function(cg, d, export_prefix(cg, d));
                     } else {
@@ -6486,7 +6775,8 @@ IrFunc new_ir_func(const char* name, bool global) {
 IrProgram new_ir_program(void) {
     Array fs = ({ Array _a = arr_make(sizeof(IrFunc)); _a; });
     Array ds = ({ Array _a = arr_make(sizeof(IrData)); _a; });
-    return (IrProgram){fs, ds};
+    Array gs = ({ Array _a = arr_make(sizeof(IrGlobal)); _a; });
+    return (IrProgram){fs, ds, gs};
 }
 
 int64_t ir_vreg(IrFunc* f, int64_t ty) {
@@ -6867,6 +7157,10 @@ const char* ir_program_text(IrProgram* prog) {
     Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t k = 0; k < prog->strings.len; k++) {
         ({ const char* _e = str_concat(str_concat(str_concat(str_concat("data ", ((IrData*)(prog->strings).data)[k].sym), " = \""), ((IrData*)(prog->strings).data)[k].text), "\"\n"); arr_push(&(p), &_e); });
+    }
+    for (int64_t k = 0; k < prog->globals.len; k++) {
+        IrGlobal g = ((IrGlobal*)(prog->globals).data)[k];
+        ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("global ", g.sym), ": "), str_from_int(g.size)), " bytes, kind "), str_from_int(g.kind)), "\n"); arr_push(&(p), &_e); });
     }
     for (int64_t k = 0; k < prog->funcs.len; k++) {
         ({ const char* _e = "\n"; arr_push(&(p), &_e); });
@@ -7371,9 +7665,32 @@ const char* strip_us(const char* s) {
     return strata_join((&p));
 }
 
-int64_t lower__string_lit(Lower* l, const char* text) {
+const char* string_data(Lower* l, const char* text) {
     const char* sym = str_concat(".Lstr", str_from_int(l->prog.strings.len));
     ({ IrData _e = (IrData){sym, text}; arr_push(&(l->prog.strings), &_e); });
+    return sym;
+}
+
+int64_t sym_addr(Lower* l, const char* sym) {
+    int64_t r = vreg(l, KU64);
+    Ins i = new_ins(OSymAddr, KU64, r, (0 - 1), (0 - 1));
+    i.sym = sym;
+    emit(l, i);
+    return r;
+}
+
+int64_t lower__find_global(Lower* l, const char* name) {
+    int64_t found = (0 - 1);
+    for (int64_t i = 0; i < l->globals.len; i++) {
+        if (str_eq(((LGlobal*)(l->globals).data)[i].name, name)) {
+            found = i;
+        }
+    }
+    return found;
+}
+
+int64_t lower__string_lit(Lower* l, const char* text) {
+    const char* sym = string_data(l, text);
     int64_t r = vreg(l, KU64);
     Ins i = new_ins(OSymAddr, KU64, r, (0 - 1), (0 - 1));
     i.sym = sym;
@@ -7650,6 +7967,10 @@ LVal lower_name(Lower* l, Expr* e) {
             return scalar(load(l, v.ty, v.reg, 0), v.ty);
         }
         return scalar(v.reg, v.ty);
+    }
+    int64_t g = lower__find_global(l, e->text);
+    if (g >= 0) {
+        return load_val(l, ((LGlobal*)(l->globals).data)[g].type, sym_addr(l, e->text), 0);
     }
     for (int64_t i = 0; i < l->members.len; i++) {
         if (str_eq(((const char**)(l->members).data)[i], e->text)) {
@@ -7972,6 +8293,9 @@ int64_t lvalue_addr(Lower* l, Expr* e) {
         int64_t k = find_var(l, e->text);
         if ((k >= 0) && ((LVar*)(l->vars).data)[k].mem) {
             return ((LVar*)(l->vars).data)[k].reg;
+        }
+        if ((k < 0) && (lower__find_global(l, e->text) >= 0)) {
+            return sym_addr(l, e->text);
         }
         return (0 - 1);
     }
@@ -8732,7 +9056,7 @@ int64_t param(Lower* l, int64_t ty, int64_t index) {
 }
 
 void lower_function(Lower* l, Decl* d) {
-    begin_function(l, d->name, true);
+    begin_function(l, d->name, d->is_exported);
     scan_stmt(l, d->body);
     l->ret_type = d->ret;
     TInfo ri = tinfo(l, d->ret);
@@ -8809,6 +9133,7 @@ Lower* new_lower(void) {
     Array es = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array ms = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array mv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array gl = ({ Array _a = arr_make(sizeof(LGlobal)); _a; });
     Array vs = ({ Array _a = arr_make(sizeof(LVar)); _a; });
     Array sc = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array at = ({ Array _a = arr_make(sizeof(const char*)); _a; });
@@ -8816,14 +9141,17 @@ Lower* new_lower(void) {
     Array cl = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array lr = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array rg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return ({ Lower _v = (Lower){true, "", new_ir_program(), fs, ss, es, ms, mv, new_ir_func("", false), vs, sc, at, bl, cl, lr, rg, 0, (0 - 1), 0}; Lower* _p = (Lower*)arena_alloc(strata_heap(), sizeof(Lower)); *_p = _v; _p; });
+    return ({ Lower _v = (Lower){true, "", new_ir_program(), fs, ss, es, ms, mv, gl, new_ir_func("", false), vs, sc, at, bl, cl, lr, rg, 0, (0 - 1), 0}; Lower* _p = (Lower*)arena_alloc(strata_heap(), sizeof(Lower)); *_p = _v; _p; });
 }
 
 bool lower_program(Lower* l, Program prog, bool with_main) {
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if (d->kind == DcInclude) {
-            lw_fail(l, d->line, str_concat(str_concat("imports C header ", d->path), " (the native backend can't read C headers yet)"));
+        if ((d->kind == DcInclude) && (!d->is_foreign)) {
+            lw_fail(l, d->line, str_concat(str_concat("imports C header ", d->path), " (the native backend can't read C headers yet: declare what you use in a foreign block)"));
+        }
+        if (d->kind == DcGlobal) {
+            ({ LGlobal _e = (LGlobal){d->name, d->ret}; arr_push(&(l->globals), &_e); });
         }
         if (d->kind == DcFunc) {
             ({ Decl* _e = d; arr_push(&(l->funcs), &_e); });
@@ -8846,13 +9174,68 @@ bool lower_program(Lower* l, Program prog, bool with_main) {
     if (!l->ok) {
         return false;
     }
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        if (((Decl**)(prog.decls).data)[i]->kind == DcGlobal) {
+            lower_global(l, ((Decl**)(prog.decls).data)[i]);
+        }
+    }
     for (int64_t i = 0; i < l->funcs.len; i++) {
-        lower_function(l, ((Decl**)(l->funcs).data)[i]);
+        if (!((Decl**)(l->funcs).data)[i]->is_foreign) {
+            lower_function(l, ((Decl**)(l->funcs).data)[i]);
+        }
     }
     if (with_main) {
         lower_main(l, prog);
     }
     return l->ok;
+}
+
+void lower_global(Lower* l, Decl* d) {
+    TInfo ti = tinfo(l, d->ret);
+    IrGlobal g = (IrGlobal){d->name, d->is_exported, ti.size, ti.align, 0, 0, "", ti.ty};
+    if ((d->ret != 0) && (d->ret->kind == TyDynArray)) {
+        g.kind = 4;
+        g.ival = tinfo(l, elem_of(d->ret)).size;
+    }
+    Expr* e = d->init;
+    bool neg = false;
+    if (((e != 0) && (e->kind == ExUnary)) && str_eq(e->text, "-")) {
+        neg = true;
+        e = e->a;
+    }
+    if ((e != 0) && (ti.kind == TK_SCALAR())) {
+        if (e->kind == ExStringLit) {
+            g.kind = 3;
+            g.text = string_data(l, e->text);
+        } else 
+        if ((e->kind == ExFloatLit) || ((e->kind == ExIntLit) && ir_is_float(ti.ty))) {
+            g.kind = 2;
+            g.text = strip_us(e->text);
+            if (e->kind == ExIntLit) {
+                g.text = str_concat(str_from_int(parse_int(e->text)), ".0");
+            }
+            if (neg) {
+                g.text = str_concat("-", g.text);
+            }
+        } else {
+            int64_t v = 0;
+            if (e->kind == ExIntLit) {
+                v = parse_int(e->text);
+            } else 
+            if (e->kind == ExCharLit) {
+                v = char_val(e->text);
+            } else 
+            if ((e->kind == ExBoolLit) && e->bval) {
+                v = 1;
+            }
+            if (neg) {
+                v = (0 - v);
+            }
+            g.kind = 1;
+            g.ival = ir_norm_imm(ti.ty, v);
+        }
+    }
+    ({ IrGlobal _e = g; arr_push(&(l->prog.globals), &_e); });
 }
 
 Facts facts(IrFunc* f) {
@@ -11053,7 +11436,56 @@ void x64_begin(X64* x) {
     out(x, ".text");
 }
 
+void x64_global(X64* x, IrGlobal g) {
+    int64_t p = 0;
+    int64_t a = 1;
+    while (a < g.align) {
+        a = (a * 2);
+        p += 1;
+    }
+    out(x, str_concat(".p2align ", str_from_int(p)));
+    if (g.global) {
+        out(x, str_concat(".globl ", g.sym));
+    }
+    out_label(x, g.sym);
+    if (g.kind == 1) {
+        const char* d = ".quad ";
+        if (g.size == 4) {
+            d = ".long ";
+        } else 
+        if (g.size == 2) {
+            d = ".short ";
+        } else 
+        if (g.size == 1) {
+            d = ".byte ";
+        }
+        out(x, str_concat(d, str_from_int(g.ival)));
+    } else 
+    if (g.kind == 2) {
+        if (g.ty == KF64) {
+            out(x, str_concat(".double ", g.text));
+        } else {
+            out(x, str_concat(".float ", g.text));
+        }
+    } else 
+    if (g.kind == 3) {
+        out(x, str_concat(".quad ", g.text));
+    } else 
+    if (g.kind == 4) {
+        out(x, ".zero 24");
+        out(x, str_concat(".quad ", str_from_int(g.ival)));
+    } else {
+        out(x, str_concat(".zero ", str_from_int(g.size)));
+    }
+}
+
 const char* x64_finish(X64* x, IrProgram* prog) {
+    if (prog->globals.len > 0) {
+        out(x, ".data");
+        for (int64_t k = 0; k < prog->globals.len; k++) {
+            x64_global(x, ((IrGlobal*)(prog->globals).data)[k]);
+        }
+    }
     if ((prog->strings.len > 0) || (x->data.len > 0)) {
         out(x, ".section .rdata,\"dr\"");
         for (int64_t k = 0; k < prog->strings.len; k++) {
@@ -11420,12 +11852,18 @@ int64_t pos(Asm* a) {
     if (a->sec == 2) {
         return a->o.rdata.len;
     }
+    if (a->sec == 3) {
+        return a->o.data.len;
+    }
     return a->o.text.len;
 }
 
 void byte(Asm* a, int64_t v) {
     if (a->sec == 2) {
         ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.rdata), &_e); });
+    } else 
+    if (a->sec == 3) {
+        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.data), &_e); });
     } else {
         ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.text), &_e); });
     }
@@ -11490,7 +11928,7 @@ void enc(Asm* a, int64_t prefix, bool w, int64_t op1, int64_t op2, int64_t op3, 
     if ((rm.kind == 3) && (rm.base < 0)) {
         byte(a, (5 | r));
         if (!str_eq(rm.sym, "")) {
-            ({ Fix _e = (Fix){a->o.text.len, rm.sym, rm.imm, isz}; arr_push(&(a->fixes), &_e); });
+            ({ Fix _e = (Fix){a->o.text.len, rm.sym, rm.imm, isz, 1}; arr_push(&(a->fixes), &_e); });
             bytes_le(a, 0, 4);
         } else {
             bytes_le(a, rm.imm, 4);
@@ -11532,7 +11970,7 @@ void enc(Asm* a, int64_t prefix, bool w, int64_t op1, int64_t op2, int64_t op3, 
 }
 
 void rel32(Asm* a, const char* label) {
-    ({ Fix _e = (Fix){a->o.text.len, label, 0, 0}; arr_push(&(a->fixes), &_e); });
+    ({ Fix _e = (Fix){a->o.text.len, label, 0, 0, 1}; arr_push(&(a->fixes), &_e); });
     bytes_le(a, 0, 4);
 }
 
@@ -12083,14 +12521,59 @@ void directive(Asm* a, const char* s) {
     if (str_eq(name, ".text")) {
         a->sec = 1;
     } else 
+    if (str_eq(name, ".data")) {
+        a->sec = 3;
+    } else 
     if (str_eq(name, ".section")) {
         if ((str_len(arg) >= 6) && str_eq(str_sub(arg, 0, 6), ".rdata")) {
             a->sec = 2;
         } else 
         if ((str_len(arg) >= 5) && str_eq(str_sub(arg, 0, 5), ".text")) {
             a->sec = 1;
+        } else 
+        if ((str_len(arg) >= 5) && str_eq(str_sub(arg, 0, 5), ".data")) {
+            a->sec = 3;
         } else {
             x64asm__fail(a, str_concat("unknown section ", arg));
+        }
+    } else 
+    if (((str_eq(name, ".quad") || str_eq(name, ".long")) || str_eq(name, ".short")) || str_eq(name, ".byte")) {
+        int64_t n = 8;
+        if (str_eq(name, ".long")) {
+            n = 4;
+        } else 
+        if (str_eq(name, ".short")) {
+            n = 2;
+        } else 
+        if (str_eq(name, ".byte")) {
+            n = 1;
+        }
+        if ((str_len(arg) > 0) && ((x64asm__is_digit(arg[0]) || (arg[0] == '-')) || (arg[0] == '+'))) {
+            bytes_le(a, parse_num(a, arg), n);
+        } else 
+        if ((n == 8) && (a->sec == 3)) {
+            const char* sym = arg;
+            int64_t off = 0;
+            int64_t q = (0 - 1);
+            for (int64_t i = 1; i < str_len(arg); i++) {
+                if ((q < 0) && ((arg[i] == '+') || (arg[i] == '-'))) {
+                    q = i;
+                }
+            }
+            if (q > 0) {
+                sym = str_sub(arg, 0, q);
+                off = parse_num(a, str_sub(arg, q, (str_len(arg) - q)));
+            }
+            ({ Fix _e = (Fix){a->o.data.len, sym, off, 0, 3}; arr_push(&(a->fixes), &_e); });
+            bytes_le(a, 0, 8);
+        } else {
+            x64asm__fail(a, "a symbol needs .quad in .data");
+        }
+    } else 
+    if (str_eq(name, ".zero")) {
+        int64_t n = parse_num(a, arg);
+        for (int64_t i = 0; i < n; i++) {
+            byte(a, 0);
         }
     } else 
     if (str_eq(name, ".globl")) {
@@ -12159,6 +12642,14 @@ int64_t symbol_index(Asm* a, const char* name, int64_t section, int64_t value) {
     return (a->o.symbols.len - 1);
 }
 
+void patch64_data(Asm* a, int64_t at, int64_t v) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < 8; i++) {
+        ((uint8_t*)(a->o.data).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
 void patch32(Asm* a, int64_t at, int64_t v) {
     uint64_t x = ((uint64_t)(v));
     for (int64_t i = 0; i < 4; i++) {
@@ -12177,6 +12668,7 @@ ObjFile assemble_x64(const char* src) {
     }
     Array t = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
     Array r = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array dt = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
     Array rl = ({ Array _a = arr_make(sizeof(ObjReloc)); _a; });
     Array sy = ({ Array _a = arr_make(sizeof(ObjSymbol)); _a; });
     Array ln = ({ Array _a = arr_make(sizeof(const char*)); _a; });
@@ -12184,7 +12676,7 @@ ObjFile assemble_x64(const char* src) {
     Array lo = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array gl = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array fx = ({ Array _a = arr_make(sizeof(Fix)); _a; });
-    Asm a = (Asm){(ObjFile){true, "", t, r, rl, sy}, 1, ln, ls, lo, new_idx(((lines / 2) + 16)), gl, fx, new_idx(((lines / 8) + 16)), 0, ""};
+    Asm a = (Asm){(ObjFile){true, "", t, r, dt, rl, sy}, 1, ln, ls, lo, new_idx(((lines / 2) + 16)), gl, fx, new_idx(((lines / 8) + 16)), 0, ""};
     int64_t start = 0;
     int64_t i = 0;
     while ((i <= n) && a.o.ok) {
@@ -12221,22 +12713,31 @@ ObjFile assemble_x64(const char* src) {
     }
     for (int64_t k = 0; k < a.lnames.len; k++) {
         const char* nm = ((const char**)(a.lnames).data)[k];
-        if ((((int64_t*)(a.lsec).data)[k] == 1) && (!(((str_len(nm) > 1) && (nm[0] == '.')) && (nm[1] == 'L')))) {
-            symbol_index((&a), nm, 1, ((int64_t*)(a.loff).data)[k]);
+        if (((((int64_t*)(a.lsec).data)[k] == 1) || (((int64_t*)(a.lsec).data)[k] == 3)) && (!(((str_len(nm) > 1) && (nm[0] == '.')) && (nm[1] == 'L')))) {
+            symbol_index((&a), nm, ((int64_t*)(a.lsec).data)[k], ((int64_t*)(a.loff).data)[k]);
         }
     }
     for (int64_t k = 0; k < a.fixes.len; k++) {
         Fix f = ((Fix*)(a.fixes).data)[k];
         int64_t li = find_label((&a), f.label);
+        if (f.section == 3) {
+            if (li >= 0) {
+                patch64_data((&a), f.pos, (((int64_t*)(a.loff).data)[li] + f.addend));
+                ({ ObjReloc _e = (ObjReloc){3, f.pos, (0 - ((int64_t*)(a.lsec).data)[li]), 0, 1}; arr_push(&(a.o.relocs), &_e); });
+            } else {
+                patch64_data((&a), f.pos, f.addend);
+                ({ ObjReloc _e = (ObjReloc){3, f.pos, symbol_index((&a), f.label, 0, 0), 0, 1}; arr_push(&(a.o.relocs), &_e); });
+            }
+        } else 
         if ((li >= 0) && (((int64_t*)(a.lsec).data)[li] == 1)) {
             patch32((&a), f.pos, ((((int64_t*)(a.loff).data)[li] + f.addend) - ((f.pos + 4) + f.after)));
         } else 
         if (li >= 0) {
             patch32((&a), f.pos, (((int64_t*)(a.loff).data)[li] + f.addend));
-            ({ ObjReloc _e = (ObjReloc){f.pos, (0 - 2), f.after}; arr_push(&(a.o.relocs), &_e); });
+            ({ ObjReloc _e = (ObjReloc){1, f.pos, (0 - ((int64_t*)(a.lsec).data)[li]), f.after, 0}; arr_push(&(a.o.relocs), &_e); });
         } else {
             patch32((&a), f.pos, f.addend);
-            ({ ObjReloc _e = (ObjReloc){f.pos, symbol_index((&a), f.label, 0, 0), f.after}; arr_push(&(a.o.relocs), &_e); });
+            ({ ObjReloc _e = (ObjReloc){1, f.pos, symbol_index((&a), f.label, 0, 0), f.after, 0}; arr_push(&(a.o.relocs), &_e); });
         }
     }
     return a.o;
@@ -12334,64 +12835,107 @@ bool write_coff(const char* path, ObjFile* f) {
     return strata_write_bytes(path, (&bytes));
 }
 
+void put_relocs(Out* o, ObjFile* f, int64_t section, int64_t count, bool overflow) {
+    if (overflow) {
+        u32put(o, (count + 1));
+        u32put(o, 0);
+        u16put(o, 0);
+    }
+    for (int64_t i = 0; i < f->relocs.len; i++) {
+        ObjReloc r = ((ObjReloc*)(f->relocs).data)[i];
+        if (r.section == section) {
+            int64_t sym = (6 + r.symbol);
+            if (r.symbol == (0 - 1)) {
+                sym = 0;
+            }
+            if (r.symbol == (0 - 2)) {
+                sym = 2;
+            }
+            if (r.symbol == (0 - 3)) {
+                sym = 4;
+            }
+            u32put(o, r.offset);
+            u32put(o, sym);
+            if (r.kind == 1) {
+                u16put(o, 1);
+            } else {
+                u16put(o, (4 + r.after));
+            }
+        }
+    }
+}
+
+int64_t count_relocs(ObjFile* f, int64_t section) {
+    int64_t n = 0;
+    for (int64_t i = 0; i < f->relocs.len; i++) {
+        if (((ObjReloc*)(f->relocs).data)[i].section == section) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
 Array coff_bytes(ObjFile* f) {
     Array b = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
     Array st = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
     Out o = (Out){b, st};
     int64_t text_size = f->text.len;
     int64_t rdata_size = f->rdata.len;
-    int64_t text_at = (20 + (40 * 2));
+    int64_t data_size = f->data.len;
+    int64_t text_at = (20 + (40 * 3));
     int64_t rdata_at = (text_at + text_size);
-    int64_t relocs_at = (rdata_at + rdata_size);
-    int64_t nrel = f->relocs.len;
-    bool overflow = (nrel > 65535);
-    int64_t nrec = nrel;
-    if (overflow) {
-        nrec = (nrel + 1);
+    int64_t data_at = (rdata_at + rdata_size);
+    int64_t trel_at = (data_at + data_size);
+    int64_t ntrel = count_relocs(f, 1);
+    int64_t ndrel = count_relocs(f, 3);
+    bool tover = (ntrel > 65535);
+    bool dover = (ndrel > 65535);
+    int64_t ntrec = ntrel;
+    if (tover) {
+        ntrec = (ntrel + 1);
     }
-    int64_t symtab_at = (relocs_at + (10 * nrec));
-    int64_t nsyms = (4 + f->symbols.len);
+    int64_t ndrec = ndrel;
+    if (dover) {
+        ndrec = (ndrel + 1);
+    }
+    int64_t drel_at = (trel_at + (10 * ntrec));
+    int64_t symtab_at = (drel_at + (10 * ndrec));
+    int64_t nsyms = (6 + f->symbols.len);
     u16put((&o), 34404);
-    u16put((&o), 2);
+    u16put((&o), 3);
     u32put((&o), 0);
     u32put((&o), symtab_at);
     u32put((&o), nsyms);
     u16put((&o), 0);
     u16put((&o), 0);
     int64_t text_flags = 1615855648;
-    if (overflow) {
+    if (tover) {
         text_flags = (text_flags | 16777216);
     }
-    section_header((&o), ".text", text_size, text_at, relocs_at, nrec, text_flags);
+    int64_t data_flags = 3226468416;
+    if (dover) {
+        data_flags = (data_flags | 16777216);
+    }
+    section_header((&o), ".text", text_size, text_at, trel_at, ntrec, text_flags);
     section_header((&o), ".rdata", rdata_size, rdata_at, 0, 0, 1079001152);
+    section_header((&o), ".data", data_size, data_at, drel_at, ndrec, data_flags);
     for (int64_t i = 0; i < text_size; i++) {
         ({ uint8_t _e = ((uint8_t*)(f->text).data)[i]; arr_push(&(o.b), &_e); });
     }
     for (int64_t i = 0; i < rdata_size; i++) {
         ({ uint8_t _e = ((uint8_t*)(f->rdata).data)[i]; arr_push(&(o.b), &_e); });
     }
-    if (overflow) {
-        u32put((&o), nrec);
-        u32put((&o), 0);
-        u16put((&o), 0);
+    for (int64_t i = 0; i < data_size; i++) {
+        ({ uint8_t _e = ((uint8_t*)(f->data).data)[i]; arr_push(&(o.b), &_e); });
     }
-    for (int64_t i = 0; i < nrel; i++) {
-        ObjReloc r = ((ObjReloc*)(f->relocs).data)[i];
-        int64_t sym = (4 + r.symbol);
-        if (r.symbol == (0 - 1)) {
-            sym = 0;
-        }
-        if (r.symbol == (0 - 2)) {
-            sym = 2;
-        }
-        u32put((&o), r.offset);
-        u32put((&o), sym);
-        u16put((&o), (4 + r.after));
-    }
+    put_relocs((&o), f, 1, ntrel, tover);
+    put_relocs((&o), f, 3, ndrel, dover);
     symbol((&o), ".text", 0, 1, 0, 3, 1);
-    section_aux((&o), text_size, nrel);
+    section_aux((&o), text_size, ntrel);
     symbol((&o), ".rdata", 0, 2, 0, 3, 1);
     section_aux((&o), rdata_size, 0);
+    symbol((&o), ".data", 0, 3, 0, 3, 1);
+    section_aux((&o), data_size, ndrel);
     for (int64_t i = 0; i < f->symbols.len; i++) {
         ObjSymbol s = ((ObjSymbol*)(f->symbols).data)[i];
         int64_t cls = 3;
@@ -12399,7 +12943,7 @@ Array coff_bytes(ObjFile* f) {
             cls = 2;
         }
         int64_t typ = 0;
-        if (s.section != 2) {
+        if ((s.section == 1) || (s.section == 0)) {
             typ = 32;
         }
         symbol((&o), s.name, s.value, s.section, typ, cls, 0);
@@ -12535,7 +13079,7 @@ void link_add(Linker* l, const char* name, Array b) {
     for (int64_t i = 0; i < syms.len; i++) {
         LSym s = ((LSym*)(syms).data)[i];
         if ((s.cls == 2) && (s.section > 0)) {
-            if (find_global(l, s.name) >= 0) {
+            if (pelink__find_global(l, s.name) >= 0) {
                 lk_fail(l, str_concat(str_concat(str_concat(str_concat("'", s.name), "' is defined twice ("), name), ")"));
             }
             idx_add((&l->gidx), s.name, l->gname.len);
@@ -12549,7 +13093,7 @@ void link_add(Linker* l, const char* name, Array b) {
     }
 }
 
-int64_t find_global(Linker* l, const char* name) {
+int64_t pelink__find_global(Linker* l, const char* name) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&l->gidx), name);
     while ((k >= 0) && (found < 0)) {
@@ -12668,7 +13212,7 @@ void find_imports(Linker* l) {
             for (int64_t r = 0; r < n; r++) {
                 int64_t symi = rd32(o.b, ((at + (10 * r)) + 4));
                 LSym y = ((LSym*)(o.syms).data)[symi];
-                if ((y.section == 0) && (find_global(l, y.name) < 0)) {
+                if ((y.section == 0) && (pelink__find_global(l, y.name) < 0)) {
                     const char* base = import_base(y.name);
                     if (find_import(l, base) < 0) {
                         int64_t d = dll_of(l, base);
@@ -12774,7 +13318,7 @@ int64_t symbol_rva(Linker* l, ImpLayout il, int64_t oi, int64_t symi) {
         return ((((int64_t*)(l->orva).data)[s.out] + s.at) + y.value);
     }
     if (y.section == 0) {
-        int64_t g = find_global(l, y.name);
+        int64_t g = pelink__find_global(l, y.name);
         if (g >= 0) {
             LSec s = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
             return ((((int64_t*)(l->orva).data)[s.out] + s.at) + ((int64_t*)(l->gval).data)[g]);
@@ -12908,7 +13452,7 @@ bool link_exe(Linker* l, const char* path) {
     if (!l->ok) {
         return false;
     }
-    if (find_global(l, "main") < 0) {
+    if (pelink__find_global(l, "main") < 0) {
         lk_fail(l, "no main");
         return false;
     }
@@ -13058,7 +13602,7 @@ bool link_exe(Linker* l, const char* path) {
         iat_rva = (base + il.iat);
         iat_size = (il.names - il.iat);
     }
-    int64_t g = find_global(l, "_strata_start");
+    int64_t g = pelink__find_global(l, "_strata_start");
     LSec es = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
     int64_t entry = ((((int64_t*)(l->orva).data)[es.out] + es.at) + ((int64_t*)(l->gval).data)[g]);
     Array ob = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
@@ -13528,8 +14072,20 @@ void pr_decl(Decl* d) {
                     head = str_concat(str_concat(str_concat(head, ast_type_str(((Param*)(d->params).data)[i].type)), " "), ((Param*)(d->params).data)[i].name);
                 }
                 head = str_concat(head, ")");
-                pr(0, head);
-                pr_stmt(1, d->body);
+                if (d->is_foreign) {
+                    pr(0, str_concat("Foreign ", head));
+                } else {
+                    pr(0, head);
+                    pr_stmt(1, d->body);
+                }
+            }
+            break;
+        }
+        case DcGlobal:
+        {
+            pr(0, str_concat(str_concat(str_concat(str_concat(ex, "Global "), ast_type_str(d->ret)), " "), d->name));
+            if (d->init != 0) {
+                pr_expr(1, d->init);
             }
             break;
         }
@@ -14029,6 +14585,9 @@ bool run_build(BuildSpec s, const char* libdir) {
         if (str_eq(why, "") && s.dll) {
             why = "the native backend doesn't build dlls yet";
         }
+        if (str_eq(why, "") && (!strata_file_exists(str_concat(libdir, "/srt.o")))) {
+            why = "its runtime, lib/srt.o, is missing (build.ps1 makes it from lib/srt.strata)";
+        }
         if (str_eq(why, "")) {
             NativeResult nr = native_compile(prog, true, s.release);
             if (nr.ok) {
@@ -14156,8 +14715,7 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
     ({ const char* _e = strata_cc(); arr_push(&(argv), &_e); });
     ({ const char* _e = "-O2"; arr_push(&(argv), &_e); });
     ({ const char* _e = obj_file; arr_push(&(argv), &_e); });
-    ({ const char* _e = str_concat(libdir, "/srt.c"); arr_push(&(argv), &_e); });
-    ({ const char* _e = str_concat("-I", libdir); arr_push(&(argv), &_e); });
+    ({ const char* _e = str_concat(libdir, "/srt.o"); arr_push(&(argv), &_e); });
     for (int64_t i = 0; i < s.c_sources.len; i++) {
         ({ const char* _e = ((const char**)(s.c_sources).data)[i]; arr_push(&(argv), &_e); });
     }
@@ -14192,13 +14750,13 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
             links_c = true;
         }
     }
-    bool own = ((!links_c) && strata_file_exists(str_concat(libdir, "/srt.o")));
+    bool own = (!links_c);
     if (own) {
         cmd = str_concat(str_concat("strata-link ", libdir), "/srt.o");
     }
     const char* key = "";
     if (!str_eq(s.cache_file, "")) {
-        const char* all = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(asm_text, "\n"), cmd), "\n"), s.tool_version), "\n"), strata_read_file(str_concat(libdir, "/srt.c")));
+        const char* all = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(asm_text, "\n"), cmd), "\n"), s.tool_version), "\n"), strata_read_file(str_concat(libdir, "/srt.strata")));
         for (int64_t i = 0; i < s.c_sources.len; i++) {
             all = str_concat(str_concat(all, "\n"), strata_read_file(((const char**)(s.c_sources).data)[i]));
         }
@@ -14450,7 +15008,7 @@ BuildSpec target_spec(Target t, const char* version, bool release, bool force, b
 }
 
 const char* stratac_version(void) {
-    return "2.1.0 (own assembler + linker)";
+    return "2.2.0 (runtime in Strata)";
 }
 
 bool file_exists(const char* p) {
@@ -14581,6 +15139,42 @@ int64_t cmd_assemble(const char* path, const char* out) {
     return 0;
 }
 
+int64_t cmd_object(const char* path, const char* out) {
+    LoadResult lr = load_program(path);
+    if (!lr.ok) {
+        return 1;
+    }
+    Program prog = lr.prog;
+    Checker* ck = new_checker(basename_of(path));
+    ck_check(ck, prog);
+    if (ck->had_error) {
+        return 1;
+    }
+    if (prog.main.len > 0) {
+        Stmt* st = ((Stmt**)(prog.main).data)[0];
+        printf("%s\n", str_concat(str_concat(str_concat(str_concat(str_concat(basename_of(path), ":"), str_from_int(st->line)), ":"), str_from_int(st->col)), ": error: an object file has no main, so its file can't contain top-level code"));
+        return 1;
+    }
+    NativeResult nr = native_compile(prog, false, true);
+    if (!nr.ok) {
+        printf("%s\n", str_concat(str_concat(basename_of(path), ": error: can't compile natively: "), nr.why));
+        return 1;
+    }
+    ObjFile ob = assemble_x64(nr.asm_text);
+    if (!ob.ok) {
+        printf("%s\n", str_concat(str_concat(basename_of(path), ": internal error in the assembler: "), ob.err));
+        return 1;
+    }
+    if (str_eq(out, "")) {
+        out = str_concat(stem_of(path), ".o");
+    }
+    if (!write_coff(out, (&ob))) {
+        printf("%s\n", str_concat("error: cannot write ", out));
+        return 1;
+    }
+    return 0;
+}
+
 BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend) {
     BuildSpec s = target_spec(t, stratac_version(), release, force, quiet);
     s.backend = backend;
@@ -14652,6 +15246,7 @@ int64_t usage(void) {
     printf("%s\n", "  stratac asm    [target] [--release]   print the generated assembly (native backend)");
     printf("%s\n", "  stratac ir     [target] [--release]   print the native backend's IR");
     printf("%s\n", "  stratac assemble <file.s> [out.o]     assemble x86-64 (AT&T) into an object file");
+    printf("%s\n", "  stratac object <file.strata> [out.o]  compile a module (no main) into an object file");
     printf("%s\n", "  stratac ast    <file.strata>     parse and print the AST");
     printf("%s\n", "  stratac tokens <file.strata>     print the token stream");
     printf("%s\n", "");
@@ -14719,6 +15314,17 @@ int64_t dmm_main(Array args) {
             return 2;
         }
         return cmd_new(target);
+    }
+    if (str_eq(cmd, "object")) {
+        if (!have_target) {
+            printf("%s\n", "usage: stratac object <file.strata> [out.o]");
+            return 2;
+        }
+        const char* out = "";
+        if (prog_args.len > 0) {
+            out = ((const char**)(prog_args).data)[0];
+        }
+        return cmd_object(target, out);
     }
     if (str_eq(cmd, "assemble")) {
         if (!have_target) {

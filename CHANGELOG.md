@@ -4,7 +4,7 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
-## [Unreleased]
+## [2.2.0] - 2026-10-09
 **The native runtime is written in Strata.** Native programs are now Strata code (and the
 OS) all the way down: their runtime, `lib/srt.strata`, is compiled by Strata's own native
 backend, and building Strata no longer needs gcc for it.
