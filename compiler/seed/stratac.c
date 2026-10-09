@@ -336,6 +336,7 @@ struct Codegen {
     int64_t switch_depth;
     int64_t labels;
     const char* ret_c;
+    int64_t temps;
 };
 struct BinParts {
     const char* pre;
@@ -846,6 +847,12 @@ bool cg_is_quat_rt(TypeNode* t);
 bool cg_is_str_rt(TypeNode* t);
 bool cg_is_dynarr_rt(TypeNode* t);
 const char* cg_dynarr_elem(TypeNode* t);
+bool cg_pure_call(Expr* e);
+bool cg_calls(Expr* e);
+bool cg_constant(Expr* e);
+int64_t cg_hoist_count(Array items);
+const char* cg_temp(Codegen* cg);
+const char* cg_ordered(Codegen* cg, Expr* e, int64_t n);
 const char* gen_call(Codegen* cg, Expr* e);
 BinParts gen_binary(Codegen* cg, Expr* e, const char* b);
 const char* gen_expr(Codegen* cg, Expr* e);
@@ -1218,7 +1225,7 @@ const char* resolve_libdir(const char* argv0);
 int64_t cmd_tokens(const char* path);
 int64_t cmd_ast(const char* path);
 int64_t cmd_check(const char* path);
-int64_t cmd_emit(const char* path);
+int64_t cmd_emit(const char* path, const char* out_file);
 int64_t cmd_native(const char* path, bool show_ir, bool opt);
 int64_t cmd_assemble(const char* path, const char* out);
 int64_t cmd_object(const char* path, const char* out);
@@ -1358,9 +1365,9 @@ const char* intern(Lexer* l, int64_t start, int64_t n) {
 
 Token make(Lexer* l, TokKind kind) {
     if (((kind == TkIdent) || (kind == TkInt)) || (kind == TkFloat)) {
-        return (Token){kind, intern(l, l->start, (l->pos - l->start)), l->start_line, l->start_col};
+        return (({ __auto_type strata_t1_ = kind; __auto_type strata_t2_ = intern(l, l->start, (l->pos - l->start)); (Token){strata_t1_, strata_t2_, l->start_line, l->start_col}; }));
     }
-    return (Token){kind, kind_name(kind), l->start_line, l->start_col};
+    return (({ __auto_type strata_t3_ = kind; __auto_type strata_t4_ = kind_name(kind); (Token){strata_t3_, strata_t4_, l->start_line, l->start_col}; }));
 }
 
 Token make_text(Lexer* l, TokKind kind, const char* text) {
@@ -1441,7 +1448,7 @@ Token lexer__string_lit(Lexer* l) {
         return lexer__fail(l);
     }
     advance(l);
-    return make_text(l, TkString, literal_body(l));
+    return (({ __auto_type strata_t5_ = l; __auto_type strata_t6_ = TkString; __auto_type strata_t7_ = literal_body(l); make_text(strata_t5_, strata_t6_, strata_t7_); }));
 }
 
 Token char_lit(Lexer* l) {
@@ -1457,7 +1464,7 @@ Token char_lit(Lexer* l) {
     if (!match(l, '\'')) {
         return lexer__fail(l);
     }
-    return make_text(l, TkChar, literal_body(l));
+    return (({ __auto_type strata_t8_ = l; __auto_type strata_t9_ = TkChar; __auto_type strata_t10_ = literal_body(l); make_text(strata_t8_, strata_t9_, strata_t10_); }));
 }
 
 Token number(Lexer* l) {
@@ -1581,7 +1588,7 @@ Token identifier(Lexer* l) {
         advance(l);
     }
     const char* word = str_sub(l->src, l->start, (l->pos - l->start));
-    return make(l, keyword_kind(word));
+    return (({ __auto_type strata_t11_ = l; __auto_type strata_t12_ = keyword_kind(word); make(strata_t11_, strata_t12_); }));
 }
 
 Token scan_token(Lexer* l) {
@@ -1815,7 +1822,7 @@ bool ends_statement(TokKind k) {
 Array lex(const char* src) {
     Array tokens = ({ Array _a = arr_make(sizeof(Token)); _a; });
     Array names = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    Lexer lx = (Lexer){src, 0, 1, 1, 0, 1, 1, false, false, names, new_idx((str_len(src) / 32))};
+    Lexer lx = (({ __auto_type strata_t13_ = src; __auto_type strata_t14_ = names; __auto_type strata_t15_ = new_idx((str_len(src) / 32)); (Lexer){strata_t13_, 0, 1, 1, 0, 1, 1, false, false, strata_t14_, strata_t15_}; }));
     TokKind last = TkError;
     bool have_last = false;
     int64_t nest = 0;
@@ -1845,9 +1852,9 @@ Array lex(const char* src) {
         ({ Token _e = (Token){TkNewline, "", lx.line, lx.col}; arr_push(&(tokens), &_e); });
     }
     ({ Token _e = (Token){TkEof, "", lx.line, lx.col}; arr_push(&(tokens), &_e); });
-    strata_array_free((&lx.names));
-    strata_array_free((&lx.names_idx.head));
-    strata_array_free((&lx.names_idx.next));
+    strata_array_free(((uint8_t*)((&lx.names))));
+    strata_array_free(((uint8_t*)((&lx.names_idx.head))));
+    strata_array_free(((uint8_t*)((&lx.names_idx.next))));
     return tokens;
 }
 
@@ -2319,14 +2326,14 @@ void p_error(Parser* p, Token t, const char* msg) {
 }
 
 void p_unexpected(Parser* p) {
-    p_error(p, p_peek(p), str_concat("unexpected ", tok_desc(p_peek(p))));
+    (({ __auto_type strata_t16_ = p; __auto_type strata_t17_ = p_peek(p); __auto_type strata_t18_ = str_concat("unexpected ", tok_desc(p_peek(p))); p_error(strata_t16_, strata_t17_, strata_t18_); }));
 }
 
 Token p_expect(Parser* p, TokKind k) {
     if (p_check(p, k)) {
         return p_advance(p);
     }
-    p_error(p, p_peek(p), str_concat(str_concat(str_concat("expected '", kind_name(k)), "', got "), tok_desc(p_peek(p))));
+    (({ __auto_type strata_t19_ = p; __auto_type strata_t20_ = p_peek(p); __auto_type strata_t21_ = (({ __auto_type strata_t22_ = str_concat(str_concat("expected '", kind_name(k)), "', got "); __auto_type strata_t23_ = tok_desc(p_peek(p)); str_concat(strata_t22_, strata_t23_); })); p_error(strata_t19_, strata_t20_, strata_t21_); }));
     return p_peek(p);
 }
 
@@ -2418,7 +2425,7 @@ Decl* import_decl(Parser* p) {
         const char* path = p_advance(p).text;
         while (p_check(p, TkDot)) {
             p_advance(p);
-            path = str_concat(str_concat(path, "."), p_expect(p, TkIdent).text);
+            path = (({ __auto_type strata_t24_ = str_concat(path, "."); __auto_type strata_t25_ = p_expect(p, TkIdent).text; str_concat(strata_t24_, strata_t25_); }));
         }
         d->path = path;
     } else 
@@ -2430,7 +2437,7 @@ Decl* import_decl(Parser* p) {
         p_advance(p);
         const char* path = "";
         while ((!p_check(p, TkGt)) && (!p_at_end(p))) {
-            path = str_concat(path, p_advance(p).text);
+            path = (({ __auto_type strata_t26_ = path; __auto_type strata_t27_ = p_advance(p).text; str_concat(strata_t26_, strata_t27_); }));
         }
         p_expect(p, TkGt);
         d->path = path;
@@ -2506,7 +2513,7 @@ Decl* global_decl(Parser* p) {
     Token kw = p_advance(p);
     Decl* d = new_decl(DcGlobal, kw.line, kw.col);
     if (p_check(p, TkKwConst)) {
-        p_error(p, p_peek(p), "a global can't be const yet (use 'global var' or a type)");
+        (({ __auto_type strata_t28_ = p; __auto_type strata_t29_ = p_peek(p); p_error(strata_t28_, strata_t29_, "a global can't be const yet (use 'global var' or a type)"); }));
     }
     Stmt* s = var_decl_core(p);
     d->name = s->name;
@@ -2580,7 +2587,7 @@ void foreign_block(Parser* p, Array* decls, bool exported) {
             p_advance(p);
             const char* path = "";
             while ((!p_check(p, TkGt)) && (!p_at_end(p))) {
-                path = str_concat(path, p_advance(p).text);
+                path = (({ __auto_type strata_t30_ = path; __auto_type strata_t31_ = p_advance(p).text; str_concat(strata_t30_, strata_t31_); }));
             }
             p_expect(p, TkGt);
             inc->path = path;
@@ -2648,13 +2655,13 @@ Program parse_program(Parser* p) {
         if (exported && p_check(p, TkKwImport)) {
             Decl* d = import_decl(p);
             if (d->kind != DcImport) {
-                p_error(p, p_prev(p), "only a Strata module can be re-exported ('export import Name')");
+                (({ __auto_type strata_t32_ = p; __auto_type strata_t33_ = p_prev(p); p_error(strata_t32_, strata_t33_, "only a Strata module can be re-exported ('export import Name')"); }));
             }
             d->is_exported = true;
             ({ Decl* _e = d; arr_push(&(decls), &_e); });
         } else 
         if (exported) {
-            p_error(p, p_peek(p), "'export' must precede a declaration");
+            (({ __auto_type strata_t34_ = p; __auto_type strata_t35_ = p_peek(p); p_error(strata_t34_, strata_t35_, "'export' must precede a declaration"); }));
             p_advance(p);
         } else 
         if (p_check(p, TkKwImport)) {
@@ -2815,7 +2822,7 @@ Stmt* switch_stmt(Parser* p) {
                 more = p_match(p, TkComma);
             }
         } else {
-            p_error(p, p_peek(p), str_concat("expected 'case' or 'default', got ", tok_desc(p_peek(p))));
+            (({ __auto_type strata_t36_ = p; __auto_type strata_t37_ = p_peek(p); __auto_type strata_t38_ = str_concat("expected 'case' or 'default', got ", tok_desc(p_peek(p))); p_error(strata_t36_, strata_t37_, strata_t38_); }));
             return s;
         }
         p_expect(p, TkColon);
@@ -2916,8 +2923,8 @@ int64_t max_nesting(void) {
 
 bool nest_enter(Parser* p) {
     p->depth += 1;
-    if (p->depth > max_nesting()) {
-        p_error(p, p_peek(p), str_concat(str_concat("code is nested too deeply (more than ", str_from_int(max_nesting())), " levels)"));
+    if (({ __auto_type strata_t39_ = p->depth; __auto_type strata_t40_ = max_nesting(); (strata_t39_ > strata_t40_); })) {
+        (({ __auto_type strata_t41_ = p; __auto_type strata_t42_ = p_peek(p); __auto_type strata_t43_ = str_concat(str_concat("code is nested too deeply (more than ", str_from_int(max_nesting())), " levels)"); p_error(strata_t41_, strata_t42_, strata_t43_); }));
         p->depth -= 1;
         return false;
     }
@@ -2939,7 +2946,7 @@ Expr* range_expr(Parser* p) {
     Expr* e = or_expr(p);
     if (p_check(p, TkDotDot)) {
         p_advance(p);
-        e = make_binary("..", e, or_expr(p));
+        e = (({ __auto_type strata_t44_ = e; __auto_type strata_t45_ = or_expr(p); make_binary("..", strata_t44_, strata_t45_); }));
     }
     return e;
 }
@@ -2948,7 +2955,7 @@ Expr* or_expr(Parser* p) {
     Expr* e = and_expr(p);
     while (p_check(p, TkPipePipe)) {
         p_advance(p);
-        e = make_binary("||", e, and_expr(p));
+        e = (({ __auto_type strata_t46_ = e; __auto_type strata_t47_ = and_expr(p); make_binary("||", strata_t46_, strata_t47_); }));
     }
     return e;
 }
@@ -2957,7 +2964,7 @@ Expr* and_expr(Parser* p) {
     Expr* e = bit_or(p);
     while (p_check(p, TkAmpAmp)) {
         p_advance(p);
-        e = make_binary("&&", e, bit_or(p));
+        e = (({ __auto_type strata_t48_ = e; __auto_type strata_t49_ = bit_or(p); make_binary("&&", strata_t48_, strata_t49_); }));
     }
     return e;
 }
@@ -2966,7 +2973,7 @@ Expr* bit_or(Parser* p) {
     Expr* e = bit_xor(p);
     while (p_check(p, TkPipe)) {
         p_advance(p);
-        e = make_binary("|", e, bit_xor(p));
+        e = (({ __auto_type strata_t50_ = e; __auto_type strata_t51_ = bit_xor(p); make_binary("|", strata_t50_, strata_t51_); }));
     }
     return e;
 }
@@ -2975,7 +2982,7 @@ Expr* bit_xor(Parser* p) {
     Expr* e = bit_and(p);
     while (p_check(p, TkCaret)) {
         p_advance(p);
-        e = make_binary("^", e, bit_and(p));
+        e = (({ __auto_type strata_t52_ = e; __auto_type strata_t53_ = bit_and(p); make_binary("^", strata_t52_, strata_t53_); }));
     }
     return e;
 }
@@ -2984,7 +2991,7 @@ Expr* bit_and(Parser* p) {
     Expr* e = equality(p);
     while (p_check(p, TkAmp)) {
         p_advance(p);
-        e = make_binary("&", e, equality(p));
+        e = (({ __auto_type strata_t54_ = e; __auto_type strata_t55_ = equality(p); make_binary("&", strata_t54_, strata_t55_); }));
     }
     return e;
 }
@@ -2993,7 +3000,7 @@ Expr* equality(Parser* p) {
     Expr* e = comparison(p);
     while (p_check(p, TkEqEq) || p_check(p, TkBangEq)) {
         const char* op = p_advance(p).text;
-        e = make_binary(op, e, comparison(p));
+        e = (({ __auto_type strata_t56_ = op; __auto_type strata_t57_ = e; __auto_type strata_t58_ = comparison(p); make_binary(strata_t56_, strata_t57_, strata_t58_); }));
     }
     return e;
 }
@@ -3002,7 +3009,7 @@ Expr* comparison(Parser* p) {
     Expr* e = shift(p);
     while (((p_check(p, TkLt) || p_check(p, TkLtEq)) || p_check(p, TkGt)) || p_check(p, TkGtEq)) {
         const char* op = p_advance(p).text;
-        e = make_binary(op, e, shift(p));
+        e = (({ __auto_type strata_t59_ = op; __auto_type strata_t60_ = e; __auto_type strata_t61_ = shift(p); make_binary(strata_t59_, strata_t60_, strata_t61_); }));
     }
     return e;
 }
@@ -3011,7 +3018,7 @@ Expr* shift(Parser* p) {
     Expr* e = term(p);
     while (p_check(p, TkShl) || p_check(p, TkShr)) {
         const char* op = p_advance(p).text;
-        e = make_binary(op, e, term(p));
+        e = (({ __auto_type strata_t62_ = op; __auto_type strata_t63_ = e; __auto_type strata_t64_ = term(p); make_binary(strata_t62_, strata_t63_, strata_t64_); }));
     }
     return e;
 }
@@ -3020,7 +3027,7 @@ Expr* term(Parser* p) {
     Expr* e = factor(p);
     while (p_check(p, TkPlus) || p_check(p, TkMinus)) {
         const char* op = p_advance(p).text;
-        e = make_binary(op, e, factor(p));
+        e = (({ __auto_type strata_t65_ = op; __auto_type strata_t66_ = e; __auto_type strata_t67_ = factor(p); make_binary(strata_t65_, strata_t66_, strata_t67_); }));
     }
     return e;
 }
@@ -3029,7 +3036,7 @@ Expr* factor(Parser* p) {
     Expr* e = unary(p);
     while ((p_check(p, TkStar) || p_check(p, TkSlash)) || p_check(p, TkPercent)) {
         const char* op = p_advance(p).text;
-        e = make_binary(op, e, unary(p));
+        e = (({ __auto_type strata_t68_ = op; __auto_type strata_t69_ = e; __auto_type strata_t70_ = unary(p); make_binary(strata_t68_, strata_t69_, strata_t70_); }));
     }
     return e;
 }
@@ -3246,7 +3253,7 @@ Expr* primary(Parser* p) {
             break;
         }
         default: {
-            p_error(p, t, str_concat("expected an expression, got ", tok_desc(t)));
+            (({ __auto_type strata_t71_ = p; __auto_type strata_t72_ = t; __auto_type strata_t73_ = str_concat("expected an expression, got ", tok_desc(t)); p_error(strata_t71_, strata_t72_, strata_t73_); }));
             p_advance(p);
             return new_expr(ExName, t.line, t.col);
             break;
@@ -3301,7 +3308,7 @@ const char* module_rel_path(const char* name) {
         if (name[i] == '.') {
             rel = str_concat(rel, "/");
         } else {
-            rel = str_concat(rel, str_sub(name, i, 1));
+            rel = (({ __auto_type strata_t74_ = rel; __auto_type strata_t75_ = str_sub(name, i, 1); str_concat(strata_t74_, strata_t75_); }));
         }
     }
     return str_concat(rel, ".strata");
@@ -3309,7 +3316,7 @@ const char* module_rel_path(const char* name) {
 
 void ld_error(Loader* ld, const char* file, int64_t line, int64_t col, const char* msg) {
     ld->had_error = true;
-    strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(file, ":"), str_from_int(line)), ":"), str_from_int(col)), ": error: "), msg));
+    strata_report(str_concat(str_concat((({ __auto_type strata_t78_ = str_concat((({ __auto_type strata_t76_ = str_concat(file, ":"); __auto_type strata_t77_ = str_from_int(line); str_concat(strata_t76_, strata_t77_); })), ":"); __auto_type strata_t79_ = str_from_int(col); str_concat(strata_t78_, strata_t79_); })), ": error: "), msg));
 }
 
 int64_t ld_find(Loader* ld, const char* path) {
@@ -3336,9 +3343,9 @@ int64_t ld_module(Loader* ld, const char* path, const char* file, const char* na
     }
     Parser p = new_parser(lex(src));
     Program part = parse_program((&p));
-    strata_array_free((&p.toks));
+    strata_array_free(((uint8_t*)((&p.toks))));
     if (p.had_error) {
-        strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(file, ":"), str_from_int(p.err_line)), ":"), str_from_int(p.err_col)), ": parse error: "), p.err_msg));
+        strata_report(str_concat(str_concat((({ __auto_type strata_t82_ = str_concat((({ __auto_type strata_t80_ = str_concat(file, ":"); __auto_type strata_t81_ = str_from_int(p.err_line); str_concat(strata_t80_, strata_t81_); })), ":"); __auto_type strata_t83_ = str_from_int(p.err_col); str_concat(strata_t82_, strata_t83_); })), ": parse error: "), p.err_msg));
         ld->had_error = true;
         return idx;
     }
@@ -3383,8 +3390,8 @@ LoadResult load_program_impl(const char* path, bool has_text, const char* text) 
     Array decls = ({ Array _a = arr_make(sizeof(Decl*)); _a; });
     Array main = ({ Array _a = arr_make(sizeof(Stmt*)); _a; });
     Array mods = ({ Array _a = arr_make(sizeof(Module)); _a; });
-    Loader ld = (Loader){(Program){decls, main, mods}, false, dirname_of(path), has_text, text};
-    ld_module((&ld), path, basename_of(path), stem_of(basename_of(path)), true);
+    Loader ld = (({ __auto_type strata_t84_ = (Program){decls, main, mods}; __auto_type strata_t85_ = dirname_of(path); (Loader){strata_t84_, false, strata_t85_, has_text, text}; }));
+    (({ __auto_type strata_t86_ = (&ld); __auto_type strata_t87_ = path; __auto_type strata_t88_ = basename_of(path); __auto_type strata_t89_ = stem_of(basename_of(path)); ld_module(strata_t86_, strata_t87_, strata_t88_, strata_t89_, true); }));
     return (LoadResult){ld.prog, (!ld.had_error)};
 }
 
@@ -3601,7 +3608,7 @@ void ck_error(Checker* c, int64_t line, int64_t col, const char* msg) {
     if ((c->cur >= 0) && (c->cur < c->mods.len)) {
         file = ((Module*)(c->mods).data)[c->cur].file;
     }
-    strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(file, ":"), str_from_int(line)), ":"), str_from_int(col)), ": error: "), msg));
+    strata_report(str_concat(str_concat((({ __auto_type strata_t92_ = str_concat((({ __auto_type strata_t90_ = str_concat(file, ":"); __auto_type strata_t91_ = str_from_int(line); str_concat(strata_t90_, strata_t91_); })), ":"); __auto_type strata_t93_ = str_from_int(col); str_concat(strata_t92_, strata_t93_); })), ": error: "), msg));
 }
 
 bool ck_sees(Checker* c, int64_t owner, bool exported) {
@@ -4155,7 +4162,7 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
             if ((lt->cat == TcQuat) && (rt->cat == TcQuat)) {
                 return lt;
             }
-            ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("'*' is not defined between ", t_str(lt)), " and "), t_str(rt)));
+            (({ __auto_type strata_t94_ = c; __auto_type strata_t95_ = e->line; __auto_type strata_t96_ = e->col; __auto_type strata_t97_ = (({ __auto_type strata_t98_ = str_concat(str_concat("'*' is not defined between ", t_str(lt)), " and "); __auto_type strata_t99_ = t_str(rt); str_concat(strata_t98_, strata_t99_); })); ck_error(strata_t94_, strata_t95_, strata_t96_, strata_t97_); }));
             return c->t_unknown;
         }
         ck_error(c, e->line, e->col, "only '*' is defined for matrices/quaternions");
@@ -4166,7 +4173,7 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
             if (((lt->cat == TcVec) && (rt->cat == TcVec)) && str_eq(lt->name, rt->name)) {
                 return lt;
             }
-            ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("'", op), "' requires two vectors of the same size, got "), t_str(lt)), " and "), t_str(rt)));
+            (({ __auto_type strata_t100_ = c; __auto_type strata_t101_ = e->line; __auto_type strata_t102_ = e->col; __auto_type strata_t103_ = (({ __auto_type strata_t106_ = str_concat((({ __auto_type strata_t104_ = str_concat(str_concat("'", op), "' requires two vectors of the same size, got "); __auto_type strata_t105_ = t_str(lt); str_concat(strata_t104_, strata_t105_); })), " and "); __auto_type strata_t107_ = t_str(rt); str_concat(strata_t106_, strata_t107_); })); ck_error(strata_t100_, strata_t101_, strata_t102_, strata_t103_); }));
             return c->t_unknown;
         }
         if (str_eq(op, "*")) {
@@ -4179,7 +4186,7 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
             if ((rt->cat == TcVec) && t_is_numeric(lt)) {
                 return rt;
             }
-            ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("'*' on a vector needs a matching vector or a scalar, got ", t_str(lt)), " and "), t_str(rt)));
+            (({ __auto_type strata_t108_ = c; __auto_type strata_t109_ = e->line; __auto_type strata_t110_ = e->col; __auto_type strata_t111_ = (({ __auto_type strata_t112_ = str_concat(str_concat("'*' on a vector needs a matching vector or a scalar, got ", t_str(lt)), " and "); __auto_type strata_t113_ = t_str(rt); str_concat(strata_t112_, strata_t113_); })); ck_error(strata_t108_, strata_t109_, strata_t110_, strata_t111_); }));
             return c->t_unknown;
         }
         ck_error(c, e->line, e->col, str_concat(str_concat("'", op), "' is not defined for vectors"));
@@ -4193,7 +4200,7 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
     }
     if (str_eq(op, "==") || str_eq(op, "!=")) {
         if ((((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (lt->cat != rt->cat)) && (!(t_ordered(lt) && t_ordered(rt)))) {
-            ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("cannot compare ", t_str(lt)), " and "), t_str(rt)));
+            (({ __auto_type strata_t114_ = c; __auto_type strata_t115_ = e->line; __auto_type strata_t116_ = e->col; __auto_type strata_t117_ = (({ __auto_type strata_t118_ = str_concat(str_concat("cannot compare ", t_str(lt)), " and "); __auto_type strata_t119_ = t_str(rt); str_concat(strata_t118_, strata_t119_); })); ck_error(strata_t114_, strata_t115_, strata_t116_, strata_t117_); }));
         }
         return c->t_bool;
     }
@@ -4205,18 +4212,18 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
     }
     if (str_eq(op, "+") && ((lt->cat == TcStr) || (rt->cat == TcStr))) {
         if (((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (!((lt->cat == TcStr) && (rt->cat == TcStr)))) {
-            ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("cannot concatenate ", t_str(lt)), " and "), t_str(rt)));
+            (({ __auto_type strata_t120_ = c; __auto_type strata_t121_ = e->line; __auto_type strata_t122_ = e->col; __auto_type strata_t123_ = (({ __auto_type strata_t124_ = str_concat(str_concat("cannot concatenate ", t_str(lt)), " and "); __auto_type strata_t125_ = t_str(rt); str_concat(strata_t124_, strata_t125_); })); ck_error(strata_t120_, strata_t121_, strata_t122_, strata_t123_); }));
         }
         return c->t_str_;
     }
     if ((((str_eq(op, "|") || str_eq(op, "&")) || str_eq(op, "^")) || str_eq(op, "<<")) || str_eq(op, ">>")) {
         if ((((!t_is_integer(lt)) && (lt->cat != TcChar)) && (!t_is_unknown(lt))) || (((!t_is_integer(rt)) && (rt->cat != TcChar)) && (!t_is_unknown(rt)))) {
-            ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("'", op), "' requires integer operands, got "), t_str(lt)), " and "), t_str(rt)));
+            (({ __auto_type strata_t126_ = c; __auto_type strata_t127_ = e->line; __auto_type strata_t128_ = e->col; __auto_type strata_t129_ = (({ __auto_type strata_t132_ = str_concat((({ __auto_type strata_t130_ = str_concat(str_concat("'", op), "' requires integer operands, got "); __auto_type strata_t131_ = t_str(lt); str_concat(strata_t130_, strata_t131_); })), " and "); __auto_type strata_t133_ = t_str(rt); str_concat(strata_t132_, strata_t133_); })); ck_error(strata_t126_, strata_t127_, strata_t128_, strata_t129_); }));
         }
         return c->t_int;
     }
     if (((!t_ordered(lt)) && (!t_is_unknown(lt))) || ((!t_ordered(rt)) && (!t_is_unknown(rt)))) {
-        ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("'", op), "' requires numeric operands, got "), t_str(lt)), " and "), t_str(rt)));
+        (({ __auto_type strata_t134_ = c; __auto_type strata_t135_ = e->line; __auto_type strata_t136_ = e->col; __auto_type strata_t137_ = (({ __auto_type strata_t140_ = str_concat((({ __auto_type strata_t138_ = str_concat(str_concat("'", op), "' requires numeric operands, got "); __auto_type strata_t139_ = t_str(lt); str_concat(strata_t138_, strata_t139_); })), " and "); __auto_type strata_t141_ = t_str(rt); str_concat(strata_t140_, strata_t141_); })); ck_error(strata_t134_, strata_t135_, strata_t136_, strata_t137_); }));
         return c->t_unknown;
     }
     if (str_eq(op, "%") && ((lt->cat == TcFloat) || (rt->cat == TcFloat))) {
@@ -4313,24 +4320,24 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                         return c->t_unknown;
                     }
                     if (!t_is_unknown(t)) {
-                        ck_error(c, e->line, e->col, str_concat("cannot dereference a value of type ", t_str(t)));
+                        (({ __auto_type strata_t142_ = c; __auto_type strata_t143_ = e->line; __auto_type strata_t144_ = e->col; __auto_type strata_t145_ = str_concat("cannot dereference a value of type ", t_str(t)); ck_error(strata_t142_, strata_t143_, strata_t144_, strata_t145_); }));
                     }
                     return c->t_unknown;
                 }
                 if (str_eq(e->text, "!")) {
                     if ((t->cat != TcBool) && (!t_is_unknown(t))) {
-                        ck_error(c, e->line, e->col, str_concat("'!' requires bool, got ", t_str(t)));
+                        (({ __auto_type strata_t146_ = c; __auto_type strata_t147_ = e->line; __auto_type strata_t148_ = e->col; __auto_type strata_t149_ = str_concat("'!' requires bool, got ", t_str(t)); ck_error(strata_t146_, strata_t147_, strata_t148_, strata_t149_); }));
                     }
                     return c->t_bool;
                 }
                 if (str_eq(e->text, "~")) {
                     if (((!t_is_integer(t)) && (t->cat != TcChar)) && (!t_is_unknown(t))) {
-                        ck_error(c, e->line, e->col, str_concat("'~' requires an integer operand, got ", t_str(t)));
+                        (({ __auto_type strata_t150_ = c; __auto_type strata_t151_ = e->line; __auto_type strata_t152_ = e->col; __auto_type strata_t153_ = str_concat("'~' requires an integer operand, got ", t_str(t)); ck_error(strata_t150_, strata_t151_, strata_t152_, strata_t153_); }));
                     }
                     return t;
                 }
                 if ((!t_is_numeric(t)) && (!t_is_unknown(t))) {
-                    ck_error(c, e->line, e->col, str_concat("'-' requires a numeric operand, got ", t_str(t)));
+                    (({ __auto_type strata_t154_ = c; __auto_type strata_t155_ = e->line; __auto_type strata_t156_ = e->col; __auto_type strata_t157_ = str_concat("'-' requires a numeric operand, got ", t_str(t)); ck_error(strata_t154_, strata_t155_, strata_t156_, strata_t157_); }));
                 }
                 return t;
             }
@@ -4413,7 +4420,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     if (str_eq(e->field, "len")) {
                         return c->t_int;
                     }
-                    ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(t_str(ot), " has no field '"), e->field), "' (did you mean 'len'?)"));
+                    (({ __auto_type strata_t158_ = c; __auto_type strata_t159_ = e->line; __auto_type strata_t160_ = e->col; __auto_type strata_t161_ = str_concat(str_concat(str_concat(t_str(ot), " has no field '"), e->field), "' (did you mean 'len'?)"); ck_error(strata_t158_, strata_t159_, strata_t160_, strata_t161_); }));
                     return c->t_unknown;
                 }
                 const char* sname = "";
@@ -4423,7 +4430,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 if (((ot->cat == TcPointer) && (ot->elem != 0)) && (ot->elem->cat == TcStruct)) {
                     sname = ot->elem->name;
                 } else {
-                    ck_error(c, e->line, e->col, str_concat(str_concat("type ", t_str(ot)), " has no fields"));
+                    (({ __auto_type strata_t162_ = c; __auto_type strata_t163_ = e->line; __auto_type strata_t164_ = e->col; __auto_type strata_t165_ = str_concat(str_concat("type ", t_str(ot)), " has no fields"); ck_error(strata_t162_, strata_t163_, strata_t164_, strata_t165_); }));
                     return c->t_unknown;
                 }
                 int64_t si = ck_struct_by_cname(c, sname);
@@ -4445,7 +4452,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 Type* ot = ck_expr(c, e->a);
                 Type* it = ck_expr(c, e->b);
                 if ((!t_is_integer(it)) && (!t_is_unknown(it))) {
-                    ck_error(c, e->line, e->col, str_concat("index must be an integer, got ", t_str(it)));
+                    (({ __auto_type strata_t166_ = c; __auto_type strata_t167_ = e->line; __auto_type strata_t168_ = e->col; __auto_type strata_t169_ = str_concat("index must be an integer, got ", t_str(it)); ck_error(strata_t166_, strata_t167_, strata_t168_, strata_t169_); }));
                 }
                 if (ot->cat == TcStr) {
                     return c->t_char;
@@ -4469,7 +4476,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     return c->t_unknown;
                 }
                 if (!t_is_unknown(ot)) {
-                    ck_error(c, e->line, e->col, str_concat("cannot index a value of type ", t_str(ot)));
+                    (({ __auto_type strata_t170_ = c; __auto_type strata_t171_ = e->line; __auto_type strata_t172_ = e->col; __auto_type strata_t173_ = str_concat("cannot index a value of type ", t_str(ot)); ck_error(strata_t170_, strata_t171_, strata_t172_, strata_t173_); }));
                 }
                 return c->t_unknown;
             }
@@ -4485,7 +4492,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 for (int64_t i = 1; i < e->items.len; i++) {
                     Type* et = ck_expr(c, ((Expr**)(e->items).data)[i]);
                     if ((!ck_assignable(first, et)) && (!ck_assignable(et, first))) {
-                        ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(str_concat(str_concat(str_concat("array element ", str_from_int((i + 1))), " has type "), t_str(et)), ", expected "), t_str(first)));
+                        (({ __auto_type strata_t174_ = c; __auto_type strata_t175_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t176_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t177_ = (({ __auto_type strata_t180_ = str_concat((({ __auto_type strata_t178_ = str_concat(str_concat("array element ", str_from_int((i + 1))), " has type "); __auto_type strata_t179_ = t_str(et); str_concat(strata_t178_, strata_t179_); })), ", expected "); __auto_type strata_t181_ = t_str(first); str_concat(strata_t180_, strata_t181_); })); ck_error(strata_t174_, strata_t175_, strata_t176_, strata_t177_); }));
                     }
                 }
                 return ty_dynarr(first);
@@ -4510,7 +4517,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 }
                 int64_t nf = ((StructInfo*)(c->structs).data)[si].fields.len;
                 if (e->items.len != nf) {
-                    ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("struct ", e->type_name), " has "), str_from_int(nf)), " field(s), but "), str_from_int(e->items.len)), " given"));
+                    (({ __auto_type strata_t182_ = c; __auto_type strata_t183_ = e->line; __auto_type strata_t184_ = e->col; __auto_type strata_t185_ = str_concat((({ __auto_type strata_t188_ = str_concat((({ __auto_type strata_t186_ = str_concat(str_concat("struct ", e->type_name), " has "); __auto_type strata_t187_ = str_from_int(nf); str_concat(strata_t186_, strata_t187_); })), " field(s), but "); __auto_type strata_t189_ = str_from_int(e->items.len); str_concat(strata_t188_, strata_t189_); })), " given"); ck_error(strata_t182_, strata_t183_, strata_t184_, strata_t185_); }));
                 }
                 int64_t k = e->items.len;
                 if (nf < k) {
@@ -4519,7 +4526,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 for (int64_t i = 0; i < k; i++) {
                     Type* at = ck_expr(c, ((Expr**)(e->items).data)[i]);
                     if (!ck_assignable(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type, at)) {
-                        ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("field '", ((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].name), "' of "), e->type_name), " expects "), t_str(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type)), ", got "), t_str(at)));
+                        (({ __auto_type strata_t190_ = c; __auto_type strata_t191_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t192_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t193_ = (({ __auto_type strata_t196_ = str_concat((({ __auto_type strata_t194_ = str_concat(str_concat(str_concat(str_concat("field '", ((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].name), "' of "), e->type_name), " expects "); __auto_type strata_t195_ = t_str(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type); str_concat(strata_t194_, strata_t195_); })), ", got "); __auto_type strata_t197_ = t_str(at); str_concat(strata_t196_, strata_t197_); })); ck_error(strata_t190_, strata_t191_, strata_t192_, strata_t193_); }));
                     }
                 }
                 for (int64_t i = k; i < e->items.len; i++) {
@@ -4536,7 +4543,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 Type* from = ck_expr(c, e->a);
                 Type* to = ck_type(c, e->type);
                 if (!ck_castable(from, to)) {
-                    ck_error(c, e->line, e->col, str_concat(str_concat(str_concat("cannot cast ", t_str(from)), " to "), t_str(to)));
+                    (({ __auto_type strata_t198_ = c; __auto_type strata_t199_ = e->line; __auto_type strata_t200_ = e->col; __auto_type strata_t201_ = (({ __auto_type strata_t202_ = str_concat(str_concat("cannot cast ", t_str(from)), " to "); __auto_type strata_t203_ = t_str(to); str_concat(strata_t202_, strata_t203_); })); ck_error(strata_t198_, strata_t199_, strata_t200_, strata_t201_); }));
                 }
                 return to;
             }
@@ -4565,7 +4572,7 @@ Type* ck_call(Checker* c, Expr* e) {
             Type* recv = ck_expr(c, callee->a);
             if ((recv->cat != TcStruct) || (!str_eq(recv->name, "Arena"))) {
                 if (!t_is_unknown(recv)) {
-                    ck_error(c, e->line, e->col, str_concat(".new is only valid on an arena, got ", t_str(recv)));
+                    (({ __auto_type strata_t204_ = c; __auto_type strata_t205_ = e->line; __auto_type strata_t206_ = e->col; __auto_type strata_t207_ = str_concat(".new is only valid on an arena, got ", t_str(recv)); ck_error(strata_t204_, strata_t205_, strata_t206_, strata_t207_); }));
                 }
             }
             if (e->items.len != 1) {
@@ -4604,12 +4611,12 @@ Type* ck_call(Checker* c, Expr* e) {
                 } else {
                     Type* at = ck_expr(c, ((Expr**)(e->items).data)[0]);
                     if ((recv->elem != 0) && (!ck_assignable(recv->elem, at))) {
-                        ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(str_concat(str_concat("push expects ", t_str(recv->elem)), ", got "), t_str(at)));
+                        (({ __auto_type strata_t208_ = c; __auto_type strata_t209_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t210_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t211_ = (({ __auto_type strata_t212_ = str_concat(str_concat("push expects ", t_str(recv->elem)), ", got "); __auto_type strata_t213_ = t_str(at); str_concat(strata_t212_, strata_t213_); })); ck_error(strata_t208_, strata_t209_, strata_t210_, strata_t211_); }));
                     }
                 }
             } else {
                 if (!t_is_unknown(recv)) {
-                    ck_error(c, e->line, e->col, str_concat("push is only valid on a dynamic array, got ", t_str(recv)));
+                    (({ __auto_type strata_t214_ = c; __auto_type strata_t215_ = e->line; __auto_type strata_t216_ = e->col; __auto_type strata_t217_ = str_concat("push is only valid on a dynamic array, got ", t_str(recv)); ck_error(strata_t214_, strata_t215_, strata_t216_, strata_t217_); }));
                 }
                 for (int64_t i = 0; i < e->items.len; i++) {
                     ck_expr(c, ((Expr**)(e->items).data)[i]);
@@ -4647,7 +4654,7 @@ Type* ck_call(Checker* c, Expr* e) {
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
                 if ((!t_is_numeric(a)) && (!t_is_unknown(a))) {
-                    ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(name, " expects numbers, got "), t_str(a)));
+                    (({ __auto_type strata_t218_ = c; __auto_type strata_t219_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t220_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t221_ = (({ __auto_type strata_t222_ = str_concat(name, " expects numbers, got "); __auto_type strata_t223_ = t_str(a); str_concat(strata_t222_, strata_t223_); })); ck_error(strata_t218_, strata_t219_, strata_t220_, strata_t221_); }));
                 }
             }
             return c->t_float;
@@ -4659,7 +4666,7 @@ Type* ck_call(Checker* c, Expr* e) {
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
                 if ((!t_is_numeric(a)) && (!t_is_unknown(a))) {
-                    ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(name, " expects numbers, got "), t_str(a)));
+                    (({ __auto_type strata_t224_ = c; __auto_type strata_t225_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t226_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t227_ = (({ __auto_type strata_t228_ = str_concat(name, " expects numbers, got "); __auto_type strata_t229_ = t_str(a); str_concat(strata_t228_, strata_t229_); })); ck_error(strata_t224_, strata_t225_, strata_t226_, strata_t227_); }));
                 }
             }
             return c->t_float;
@@ -4672,13 +4679,13 @@ Type* ck_call(Checker* c, Expr* e) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[1]);
                 Type* n = ck_expr(c, ((Expr**)(e->items).data)[2]);
                 if ((s->cat != TcStr) && (!t_is_unknown(s))) {
-                    ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat("substr expects a string, got ", t_str(s)));
+                    (({ __auto_type strata_t230_ = c; __auto_type strata_t231_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t232_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t233_ = str_concat("substr expects a string, got ", t_str(s)); ck_error(strata_t230_, strata_t231_, strata_t232_, strata_t233_); }));
                 }
                 if ((!t_is_integer(a)) && (!t_is_unknown(a))) {
-                    ck_error(c, ((Expr**)(e->items).data)[1]->line, ((Expr**)(e->items).data)[1]->col, str_concat("substr start must be an integer, got ", t_str(a)));
+                    (({ __auto_type strata_t234_ = c; __auto_type strata_t235_ = ((Expr**)(e->items).data)[1]->line; __auto_type strata_t236_ = ((Expr**)(e->items).data)[1]->col; __auto_type strata_t237_ = str_concat("substr start must be an integer, got ", t_str(a)); ck_error(strata_t234_, strata_t235_, strata_t236_, strata_t237_); }));
                 }
                 if ((!t_is_integer(n)) && (!t_is_unknown(n))) {
-                    ck_error(c, ((Expr**)(e->items).data)[2]->line, ((Expr**)(e->items).data)[2]->col, str_concat("substr length must be an integer, got ", t_str(n)));
+                    (({ __auto_type strata_t238_ = c; __auto_type strata_t239_ = ((Expr**)(e->items).data)[2]->line; __auto_type strata_t240_ = ((Expr**)(e->items).data)[2]->col; __auto_type strata_t241_ = str_concat("substr length must be an integer, got ", t_str(n)); ck_error(strata_t238_, strata_t239_, strata_t240_, strata_t241_); }));
                 }
             }
             return c->t_str_;
@@ -4689,7 +4696,7 @@ Type* ck_call(Checker* c, Expr* e) {
             } else {
                 Type* n = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 if ((!t_is_integer(n)) && (!t_is_unknown(n))) {
-                    ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat("int_to_str expects an integer, got ", t_str(n)));
+                    (({ __auto_type strata_t242_ = c; __auto_type strata_t243_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t244_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t245_ = str_concat("int_to_str expects an integer, got ", t_str(n)); ck_error(strata_t242_, strata_t243_, strata_t244_, strata_t245_); }));
                 }
             }
             return c->t_str_;
@@ -4700,7 +4707,7 @@ Type* ck_call(Checker* c, Expr* e) {
             } else {
                 Type* p = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 if ((p->cat != TcStr) && (!t_is_unknown(p))) {
-                    ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(str_concat(name, " expects a string, got "), t_str(p)));
+                    (({ __auto_type strata_t246_ = c; __auto_type strata_t247_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t248_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t249_ = (({ __auto_type strata_t250_ = str_concat(name, " expects a string, got "); __auto_type strata_t251_ = t_str(p); str_concat(strata_t250_, strata_t251_); })); ck_error(strata_t246_, strata_t247_, strata_t248_, strata_t249_); }));
                 }
             }
             return c->t_str_;
@@ -4718,7 +4725,7 @@ Type* ck_call(Checker* c, Expr* e) {
                 for (int64_t i = 0; i < 2; i++) {
                     Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
                     if ((a->cat != TcStr) && (!t_is_unknown(a))) {
-                        ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat("write_file expects strings, got ", t_str(a)));
+                        (({ __auto_type strata_t252_ = c; __auto_type strata_t253_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t254_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t255_ = str_concat("write_file expects strings, got ", t_str(a)); ck_error(strata_t252_, strata_t253_, strata_t254_, strata_t255_); }));
                     }
                 }
             }
@@ -4741,12 +4748,12 @@ Type* ck_call(Checker* c, Expr* e) {
                 n = 4;
             }
             if ((e->items.len != n) && (e->items.len != 1)) {
-                ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(name, "() takes "), str_from_int(n)), " components (or 1 to splat)"));
+                (({ __auto_type strata_t256_ = c; __auto_type strata_t257_ = e->line; __auto_type strata_t258_ = e->col; __auto_type strata_t259_ = str_concat((({ __auto_type strata_t260_ = str_concat(name, "() takes "); __auto_type strata_t261_ = str_from_int(n); str_concat(strata_t260_, strata_t261_); })), " components (or 1 to splat)"); ck_error(strata_t256_, strata_t257_, strata_t258_, strata_t259_); }));
             }
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* at = ck_expr(c, ((Expr**)(e->items).data)[i]);
                 if ((!t_is_numeric(at)) && (!t_is_unknown(at))) {
-                    ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(name, " components must be numeric, got "), t_str(at)));
+                    (({ __auto_type strata_t262_ = c; __auto_type strata_t263_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t264_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t265_ = (({ __auto_type strata_t266_ = str_concat(name, " components must be numeric, got "); __auto_type strata_t267_ = t_str(at); str_concat(strata_t266_, strata_t267_); })); ck_error(strata_t262_, strata_t263_, strata_t264_, strata_t265_); }));
                 }
             }
             return ty(TcVec, name);
@@ -4770,7 +4777,7 @@ Type* ck_call(Checker* c, Expr* e) {
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 if ((a->cat != TcVec) && (!t_is_unknown(a))) {
-                    ck_error(c, ((Expr**)(e->items).data)[0]->line, ((Expr**)(e->items).data)[0]->col, str_concat(str_concat(name, " expects a vector, got "), t_str(a)));
+                    (({ __auto_type strata_t268_ = c; __auto_type strata_t269_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t270_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t271_ = (({ __auto_type strata_t272_ = str_concat(name, " expects a vector, got "); __auto_type strata_t273_ = t_str(a); str_concat(strata_t272_, strata_t273_); })); ck_error(strata_t268_, strata_t269_, strata_t270_, strata_t271_); }));
                 }
                 if (str_eq(name, "normalize")) {
                     r = a;
@@ -4894,7 +4901,7 @@ Type* ck_call(Checker* c, Expr* e) {
             callee->text = ((FuncInfo*)(c->funcs).data)[fi].cname;
             int64_t np = ((FuncInfo*)(c->funcs).data)[fi].params.len;
             if (e->items.len != np) {
-                ck_error(c, e->line, e->col, str_concat(str_concat(str_concat(str_concat(str_concat("function '", name), "' expects "), str_from_int(np)), " argument(s), got "), str_from_int(e->items.len)));
+                (({ __auto_type strata_t274_ = c; __auto_type strata_t275_ = e->line; __auto_type strata_t276_ = e->col; __auto_type strata_t277_ = (({ __auto_type strata_t280_ = str_concat((({ __auto_type strata_t278_ = str_concat(str_concat("function '", name), "' expects "); __auto_type strata_t279_ = str_from_int(np); str_concat(strata_t278_, strata_t279_); })), " argument(s), got "); __auto_type strata_t281_ = str_from_int(e->items.len); str_concat(strata_t280_, strata_t281_); })); ck_error(strata_t274_, strata_t275_, strata_t276_, strata_t277_); }));
             }
             int64_t k = e->items.len;
             if (np < k) {
@@ -4903,7 +4910,7 @@ Type* ck_call(Checker* c, Expr* e) {
             for (int64_t i = 0; i < k; i++) {
                 Type* at = ck_expr_as(c, ((Expr**)(e->items).data)[i], ((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i]);
                 if (!ck_assignable(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i], at)) {
-                    ck_error(c, ((Expr**)(e->items).data)[i]->line, ((Expr**)(e->items).data)[i]->col, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("argument ", str_from_int((i + 1))), " to '"), name), "' expects "), t_str(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i])), ", got "), t_str(at)));
+                    (({ __auto_type strata_t282_ = c; __auto_type strata_t283_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t284_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t285_ = (({ __auto_type strata_t288_ = str_concat((({ __auto_type strata_t286_ = str_concat(str_concat(str_concat(str_concat("argument ", str_from_int((i + 1))), " to '"), name), "' expects "); __auto_type strata_t287_ = t_str(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i]); str_concat(strata_t286_, strata_t287_); })), ", got "); __auto_type strata_t289_ = t_str(at); str_concat(strata_t288_, strata_t289_); })); ck_error(strata_t282_, strata_t283_, strata_t284_, strata_t285_); }));
                 }
             }
             for (int64_t i = k; i < e->items.len; i++) {
@@ -4962,7 +4969,7 @@ void ck_stmt(Checker* c, Stmt* s) {
                         s->type = type_to_node(vt);
                     } else {
                         if (!ck_assignable(declared, vt)) {
-                            ck_error(c, s->line, s->col, str_concat(str_concat(str_concat(str_concat(str_concat("cannot initialize '", s->name), "' of type "), t_str(declared)), " with a value of type "), t_str(vt)));
+                            (({ __auto_type strata_t290_ = c; __auto_type strata_t291_ = s->line; __auto_type strata_t292_ = s->col; __auto_type strata_t293_ = (({ __auto_type strata_t296_ = str_concat((({ __auto_type strata_t294_ = str_concat(str_concat("cannot initialize '", s->name), "' of type "); __auto_type strata_t295_ = t_str(declared); str_concat(strata_t294_, strata_t295_); })), " with a value of type "); __auto_type strata_t297_ = t_str(vt); str_concat(strata_t296_, strata_t297_); })); ck_error(strata_t290_, strata_t291_, strata_t292_, strata_t293_); }));
                         }
                     }
                 } else {
@@ -4983,11 +4990,11 @@ void ck_stmt(Checker* c, Stmt* s) {
                         ck_error(c, s->line, s->col, "returning a value from a void function");
                     } else 
                     if (!ck_assignable(c->cur_ret, vt)) {
-                        ck_error(c, s->line, s->col, str_concat(str_concat(str_concat("returning ", t_str(vt)), " from a function declared to return "), t_str(c->cur_ret)));
+                        (({ __auto_type strata_t298_ = c; __auto_type strata_t299_ = s->line; __auto_type strata_t300_ = s->col; __auto_type strata_t301_ = (({ __auto_type strata_t302_ = str_concat(str_concat("returning ", t_str(vt)), " from a function declared to return "); __auto_type strata_t303_ = t_str(c->cur_ret); str_concat(strata_t302_, strata_t303_); })); ck_error(strata_t298_, strata_t299_, strata_t300_, strata_t301_); }));
                     }
                 } else {
                     if (c->cur_ret->cat != TcVoid) {
-                        ck_error(c, s->line, s->col, str_concat("missing return value; function returns ", t_str(c->cur_ret)));
+                        (({ __auto_type strata_t304_ = c; __auto_type strata_t305_ = s->line; __auto_type strata_t306_ = s->col; __auto_type strata_t307_ = str_concat("missing return value; function returns ", t_str(c->cur_ret)); ck_error(strata_t304_, strata_t305_, strata_t306_, strata_t307_); }));
                     }
                 }
             }
@@ -5028,10 +5035,10 @@ void ck_stmt(Checker* c, Stmt* s) {
                     }
                 } else {
                     if (((!str_eq(s->op, "=")) && (!t_is_numeric(tt))) && (!t_is_unknown(tt))) {
-                        ck_error(c, s->line, s->col, str_concat(str_concat(str_concat("'", s->op), "' requires a numeric operand, got "), t_str(tt)));
+                        (({ __auto_type strata_t308_ = c; __auto_type strata_t309_ = s->line; __auto_type strata_t310_ = s->col; __auto_type strata_t311_ = (({ __auto_type strata_t312_ = str_concat(str_concat("'", s->op), "' requires a numeric operand, got "); __auto_type strata_t313_ = t_str(tt); str_concat(strata_t312_, strata_t313_); })); ck_error(strata_t308_, strata_t309_, strata_t310_, strata_t311_); }));
                     }
                     if (!ck_assignable(tt, vt)) {
-                        ck_error(c, s->line, s->col, str_concat(str_concat(str_concat("cannot assign ", t_str(vt)), " to "), t_str(tt)));
+                        (({ __auto_type strata_t314_ = c; __auto_type strata_t315_ = s->line; __auto_type strata_t316_ = s->col; __auto_type strata_t317_ = (({ __auto_type strata_t318_ = str_concat(str_concat("cannot assign ", t_str(vt)), " to "); __auto_type strata_t319_ = t_str(tt); str_concat(strata_t318_, strata_t319_); })); ck_error(strata_t314_, strata_t315_, strata_t316_, strata_t317_); }));
                     }
                 }
             }
@@ -5042,7 +5049,7 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 Type* cd = ck_expr(c, s->cond);
                 if ((cd->cat != TcBool) && (!t_is_unknown(cd))) {
-                    ck_error(c, s->line, s->col, str_concat("if condition must be bool, got ", t_str(cd)));
+                    (({ __auto_type strata_t320_ = c; __auto_type strata_t321_ = s->line; __auto_type strata_t322_ = s->col; __auto_type strata_t323_ = str_concat("if condition must be bool, got ", t_str(cd)); ck_error(strata_t320_, strata_t321_, strata_t322_, strata_t323_); }));
                 }
                 ck_block(c, s->then_block);
                 if (s->else_branch != 0) {
@@ -5056,7 +5063,7 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 Type* cd = ck_expr(c, s->cond);
                 if ((cd->cat != TcBool) && (!t_is_unknown(cd))) {
-                    ck_error(c, s->line, s->col, str_concat("while condition must be bool, got ", t_str(cd)));
+                    (({ __auto_type strata_t324_ = c; __auto_type strata_t325_ = s->line; __auto_type strata_t326_ = s->col; __auto_type strata_t327_ = str_concat("while condition must be bool, got ", t_str(cd)); ck_error(strata_t324_, strata_t325_, strata_t326_, strata_t327_); }));
                 }
                 c->loop_depth += 1;
                 ck_block(c, s->body);
@@ -5072,10 +5079,10 @@ void ck_stmt(Checker* c, Stmt* s) {
                     Type* lo = ck_expr(c, s->iter->a);
                     Type* hi = ck_expr(c, s->iter->b);
                     if ((!t_is_integer(lo)) && (!t_is_unknown(lo))) {
-                        ck_error(c, s->iter->line, s->iter->col, str_concat("range start must be an integer, got ", t_str(lo)));
+                        (({ __auto_type strata_t328_ = c; __auto_type strata_t329_ = s->iter->line; __auto_type strata_t330_ = s->iter->col; __auto_type strata_t331_ = str_concat("range start must be an integer, got ", t_str(lo)); ck_error(strata_t328_, strata_t329_, strata_t330_, strata_t331_); }));
                     }
                     if ((!t_is_integer(hi)) && (!t_is_unknown(hi))) {
-                        ck_error(c, s->iter->line, s->iter->col, str_concat("range end must be an integer, got ", t_str(hi)));
+                        (({ __auto_type strata_t332_ = c; __auto_type strata_t333_ = s->iter->line; __auto_type strata_t334_ = s->iter->col; __auto_type strata_t335_ = str_concat("range end must be an integer, got ", t_str(hi)); ck_error(strata_t332_, strata_t333_, strata_t334_, strata_t335_); }));
                     }
                 } else 
                 if (s->iter != 0) {
@@ -5088,7 +5095,7 @@ void ck_stmt(Checker* c, Stmt* s) {
                         }
                     } else 
                     if (!t_is_unknown(it)) {
-                        ck_error(c, s->line, s->col, str_concat("for-in needs an integer range or an array, got ", t_str(it)));
+                        (({ __auto_type strata_t336_ = c; __auto_type strata_t337_ = s->line; __auto_type strata_t338_ = s->col; __auto_type strata_t339_ = str_concat("for-in needs an integer range or an array, got ", t_str(it)); ck_error(strata_t336_, strata_t337_, strata_t338_, strata_t339_); }));
                     } else {
                         elemT = c->t_unknown;
                     }
@@ -5109,7 +5116,7 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 ck_push(c);
                 if (str_len(s->name) > 0) {
-                    ck_declare(c, s->name, ty(TcStruct, "Arena"), false, s->line, s->col);
+                    (({ __auto_type strata_t340_ = c; __auto_type strata_t341_ = s->name; __auto_type strata_t342_ = ty(TcStruct, "Arena"); ck_declare(strata_t340_, strata_t341_, strata_t342_, false, s->line, s->col); }));
                 }
                 ck_block(c, s->body);
                 ck_pop(c);
@@ -5121,14 +5128,14 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 Type* st = ck_expr(c, s->subject);
                 if (((!t_is_integer(st)) && (st->cat != TcChar)) && (!t_is_unknown(st))) {
-                    ck_error(c, s->line, s->col, str_concat("switch subject must be an integer, char, or enum, got ", t_str(st)));
+                    (({ __auto_type strata_t343_ = c; __auto_type strata_t344_ = s->line; __auto_type strata_t345_ = s->col; __auto_type strata_t346_ = str_concat("switch subject must be an integer, char, or enum, got ", t_str(st)); ck_error(strata_t343_, strata_t344_, strata_t345_, strata_t346_); }));
                 }
                 for (int64_t i = 0; i < s->cases.len; i++) {
                     SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
                     for (int64_t j = 0; j < sc.values.len; j++) {
                         Type* vt = ck_expr(c, ((Expr**)(sc.values).data)[j]);
                         if (((!t_is_integer(vt)) && (vt->cat != TcChar)) && (!t_is_unknown(vt))) {
-                            ck_error(c, ((Expr**)(sc.values).data)[j]->line, ((Expr**)(sc.values).data)[j]->col, str_concat("switch case value must be an integer, char, or enum, got ", t_str(vt)));
+                            (({ __auto_type strata_t347_ = c; __auto_type strata_t348_ = ((Expr**)(sc.values).data)[j]->line; __auto_type strata_t349_ = ((Expr**)(sc.values).data)[j]->col; __auto_type strata_t350_ = str_concat("switch case value must be an integer, char, or enum, got ", t_str(vt)); ck_error(strata_t347_, strata_t348_, strata_t349_, strata_t350_); }));
                         }
                     }
                     ck_block(c, sc.body);
@@ -5222,7 +5229,7 @@ const char* ck_c_ident(const char* s) {
     for (int64_t i = 0; i < str_len(s); i++) {
         char ch = s[i];
         if (((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9'))) || (ch == '_')) {
-            r = str_concat(r, str_sub(s, i, 1));
+            r = (({ __auto_type strata_t351_ = r; __auto_type strata_t352_ = str_sub(s, i, 1); str_concat(strata_t351_, strata_t352_); }));
         } else {
             r = str_concat(r, "_");
         }
@@ -5392,7 +5399,7 @@ bool ck_check(Checker* c, Program prog) {
             c->cur = d->module;
             int64_t si = ck_own_struct(c, d->name, d->module);
             for (int64_t fld = 0; fld < d->fields.len; fld++) {
-                ({ FieldInfo _e = (FieldInfo){((FieldDef*)(d->fields).data)[fld].name, ck_type(c, ((FieldDef*)(d->fields).data)[fld].type)}; arr_push(&(((StructInfo*)(c->structs).data)[si].fields), &_e); });
+                ({ FieldInfo _e = (({ __auto_type strata_t353_ = ((FieldDef*)(d->fields).data)[fld].name; __auto_type strata_t354_ = ck_type(c, ((FieldDef*)(d->fields).data)[fld].type); (FieldInfo){strata_t353_, strata_t354_}; })); arr_push(&(((StructInfo*)(c->structs).data)[si].fields), &_e); });
             }
         }
     }
@@ -5429,7 +5436,7 @@ bool ck_check(Checker* c, Program prog) {
                     d->ret = type_to_node(vt);
                 } else 
                 if (!ck_assignable(declared, vt)) {
-                    ck_error(c, d->line, d->col, str_concat(str_concat(str_concat(str_concat(str_concat("cannot initialize global '", d->name), "' of type "), t_str(declared)), " with a value of type "), t_str(vt)));
+                    (({ __auto_type strata_t355_ = c; __auto_type strata_t356_ = d->line; __auto_type strata_t357_ = d->col; __auto_type strata_t358_ = (({ __auto_type strata_t361_ = str_concat((({ __auto_type strata_t359_ = str_concat(str_concat("cannot initialize global '", d->name), "' of type "); __auto_type strata_t360_ = t_str(declared); str_concat(strata_t359_, strata_t360_); })), " with a value of type "); __auto_type strata_t362_ = t_str(vt); str_concat(strata_t361_, strata_t362_); })); ck_error(strata_t355_, strata_t356_, strata_t357_, strata_t358_); }));
                 }
             } else 
             if (d->ret == 0) {
@@ -5442,7 +5449,7 @@ bool ck_check(Checker* c, Program prog) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcFunc) && (!d->is_foreign)) {
             c->cur = d->module;
-            ck_func(c, d, ck_own_func(c, d->name, d->module));
+            (({ __auto_type strata_t363_ = c; __auto_type strata_t364_ = d; __auto_type strata_t365_ = ck_own_func(c, d->name, d->module); ck_func(strata_t363_, strata_t364_, strata_t365_); }));
         }
     }
     c->cur = 0;
@@ -5482,7 +5489,7 @@ Checker* new_checker(const char* file) {
     Array mods = ({ Array _a = arr_make(sizeof(Module)); _a; });
     Array names = ({ Array _a = arr_make(sizeof(NameEntry)); _a; });
     Array nodes = ({ Array _a = arr_make(sizeof(TypeNode*)); _a; });
-    return ({ Checker _v = (Checker){file, false, false, ss, fs, es, ems, gls, new_idx(0), 0, ty(TcVoid, "void"), mods, 0, names, new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), new_idx(0), nodes, new_idx(0), 0, ty(TcInt, "int"), ty(TcBool, "bool"), ty(TcFloat, "float"), ty(TcStr, "string"), ty(TcVoid, "void"), ty(TcUnknown, "?"), ty(TcChar, "char")}; Checker* _p = (Checker*)arena_alloc(strata_heap(), sizeof(Checker)); *_p = _v; _p; });
+    return ({ Checker _v = (({ __auto_type strata_t366_ = file; __auto_type strata_t367_ = ss; __auto_type strata_t368_ = fs; __auto_type strata_t369_ = es; __auto_type strata_t370_ = ems; __auto_type strata_t371_ = gls; __auto_type strata_t372_ = new_idx(0); __auto_type strata_t373_ = ty(TcVoid, "void"); __auto_type strata_t374_ = mods; __auto_type strata_t375_ = names; __auto_type strata_t376_ = new_idx(0); __auto_type strata_t377_ = new_idx(0); __auto_type strata_t378_ = new_idx(0); __auto_type strata_t379_ = new_idx(0); __auto_type strata_t380_ = new_idx(0); __auto_type strata_t381_ = new_idx(0); __auto_type strata_t382_ = nodes; __auto_type strata_t383_ = new_idx(0); __auto_type strata_t384_ = ty(TcInt, "int"); __auto_type strata_t385_ = ty(TcBool, "bool"); __auto_type strata_t386_ = ty(TcFloat, "float"); __auto_type strata_t387_ = ty(TcStr, "string"); __auto_type strata_t388_ = ty(TcVoid, "void"); __auto_type strata_t389_ = ty(TcUnknown, "?"); __auto_type strata_t390_ = ty(TcChar, "char"); (Checker){strata_t366_, false, false, strata_t367_, strata_t368_, strata_t369_, strata_t370_, strata_t371_, strata_t372_, 0, strata_t373_, strata_t374_, 0, strata_t375_, strata_t376_, strata_t377_, strata_t378_, strata_t379_, strata_t380_, strata_t381_, strata_t382_, strata_t383_, 0, strata_t384_, strata_t385_, strata_t386_, strata_t387_, strata_t388_, strata_t389_, strata_t390_}; })); Checker* _p = (Checker*)arena_alloc(strata_heap(), sizeof(Checker)); *_p = _v; _p; });
 }
 
 Codegen new_codegen(void) {
@@ -5492,14 +5499,14 @@ Codegen new_codegen(void) {
     Array ls = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array ll = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array lu = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return (Codegen){parts, false, false, regions, lr, ls, ll, lu, 0, 0, "void"};
+    return (Codegen){parts, false, false, regions, lr, ls, ll, lu, 0, 0, "void", 0};
 }
 
 const char* region_frees(Codegen* cg, int64_t from, int64_t ind) {
     const char* r = "";
     int64_t k = (cg->regions.len - 1);
     while (k >= from) {
-        r = str_concat(str_concat(str_concat(str_concat(r, cg_indent(ind)), "arena_free(&"), ((const char**)(cg->regions).data)[k]), ");\n");
+        r = str_concat(str_concat(str_concat((({ __auto_type strata_t391_ = r; __auto_type strata_t392_ = cg_indent(ind); str_concat(strata_t391_, strata_t392_); })), "arena_free(&"), ((const char**)(cg->regions).data)[k]), ");\n");
         k -= 1;
     }
     return r;
@@ -5517,7 +5524,7 @@ const char* loop_leave(Codegen* cg, int64_t ind) {
     int64_t top = (cg->loop_labels.len - 1);
     const char* label = "";
     if (((int64_t*)(cg->loop_label_used).data)[top] == 1) {
-        label = str_concat(str_concat(str_concat(cg_indent(ind), "strata_break_"), str_from_int(((int64_t*)(cg->loop_labels).data)[top])), ": ;\n");
+        label = str_concat((({ __auto_type strata_t393_ = str_concat(cg_indent(ind), "strata_break_"); __auto_type strata_t394_ = str_from_int(((int64_t*)(cg->loop_labels).data)[top]); str_concat(strata_t393_, strata_t394_); })), ": ;\n");
     }
     cg->loop_regions.len = top;
     cg->loop_switches.len = top;
@@ -5802,7 +5809,109 @@ const char* cg_dynarr_elem(TypeNode* t) {
     return "char";
 }
 
+bool cg_pure_call(Expr* e) {
+    if (e->a->kind != ExName) {
+        return false;
+    }
+    const char* n = e->a->text;
+    return (((((((((cg_is_vec_name(n) || str_eq(n, "dot")) || str_eq(n, "cross")) || str_eq(n, "length")) || str_eq(n, "normalize")) || str_eq(n, "min")) || str_eq(n, "max")) || str_eq(n, "clamp")) || str_eq(n, "lerp")) || str_eq(n, "cstr"));
+}
+
+bool cg_calls(Expr* e) {
+    while ((e != 0) && (e->kind == ExBinary)) {
+        if (cg_calls(e->b)) {
+            return true;
+        }
+        e = e->a;
+    }
+    if ((e == 0) || (e->kind == ExName)) {
+        return false;
+    }
+    if ((e->kind == ExCall) && (!cg_pure_call(e))) {
+        return true;
+    }
+    if ((e->kind != ExCall) && cg_calls(e->a)) {
+        return true;
+    }
+    if (cg_calls(e->b)) {
+        return true;
+    }
+    for (int64_t i = 0; i < e->items.len; i++) {
+        if (cg_calls(((Expr**)(e->items).data)[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool cg_constant(Expr* e) {
+    if (((((e->kind == ExIntLit) || (e->kind == ExFloatLit)) || (e->kind == ExStringLit)) || (e->kind == ExCharLit)) || (e->kind == ExBoolLit)) {
+        return true;
+    }
+    if ((e->kind == ExName) && ((str_eq(e->text, "null") || str_eq(e->text, "PI")) || (e->b != 0))) {
+        return true;
+    }
+    if ((e->kind == ExUnary) && str_eq(e->text, "-")) {
+        return cg_constant(e->a);
+    }
+    return false;
+}
+
+int64_t cg_hoist_count(Array items) {
+    int64_t last = (0 - 1);
+    for (int64_t i = 0; i < items.len; i++) {
+        if (cg_calls(((Expr**)(items).data)[i])) {
+            last = i;
+        }
+    }
+    bool varying = false;
+    for (int64_t i = 0; i < last; i++) {
+        if (!cg_constant(((Expr**)(items).data)[i])) {
+            varying = true;
+        }
+    }
+    if (varying) {
+        return (last + 1);
+    }
+    return 0;
+}
+
+const char* cg_temp(Codegen* cg) {
+    cg->temps += 1;
+    return str_concat(str_concat("strata_t", str_from_int(cg->temps)), "_");
+}
+
+const char* cg_ordered(Codegen* cg, Expr* e, int64_t n) {
+    Array out = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = "(({ "; arr_push(&(out), &_e); });
+    Expr* c = new_expr(e->kind, e->line, e->col);
+    c->a = e->a;
+    c->text = e->text;
+    c->type_name = e->type_name;
+    c->rtype = e->rtype;
+    for (int64_t i = 0; i < e->items.len; i++) {
+        Expr* it = ((Expr**)(e->items).data)[i];
+        if ((i < n) && (!cg_constant(it))) {
+            const char* t = cg_temp(cg);
+            ({ const char* _e = str_concat((({ __auto_type strata_t395_ = str_concat(str_concat("__auto_type ", t), " = "); __auto_type strata_t396_ = gen_expr(cg, it); str_concat(strata_t395_, strata_t396_); })), "; "); arr_push(&(out), &_e); });
+            Expr* r = new_expr(ExName, it->line, it->col);
+            r->text = t;
+            r->rtype = it->rtype;
+            ({ Expr* _e = r; arr_push(&(c->items), &_e); });
+        } else {
+            ({ Expr* _e = it; arr_push(&(c->items), &_e); });
+        }
+    }
+    ({ const char* _e = gen_expr(cg, c); arr_push(&(out), &_e); });
+    ({ const char* _e = "; }))"; arr_push(&(out), &_e); });
+    return strata_join((&out));
+}
+
 const char* gen_call(Codegen* cg, Expr* e) {
+    int64_t hoist = cg_hoist_count(e->items);
+    if (hoist > 0) {
+        return cg_ordered(cg, e, hoist);
+    }
     if (((e->a->kind == ExName) && str_eq(e->a->text, "arena")) && (e->items.len == 0)) {
         return "arena_make()";
     }
@@ -5826,7 +5935,7 @@ const char* gen_call(Codegen* cg, Expr* e) {
             return str_concat(str_concat("printf(\"%s\\n\", ", gen_expr(cg, arg)), ")");
         }
         if (((arg->rtype != 0) && (arg->rtype->kind == TyNamed)) && ((str_eq(arg->rtype->name, "float") || str_eq(arg->rtype->name, "f32")) || str_eq(arg->rtype->name, "f64"))) {
-            return str_concat(str_concat("printf(\"%g\\n\", (double)(", gen_expr(cg, arg)), "))");
+            return str_concat(str_concat("strata_print_f64((double)(", gen_expr(cg, arg)), "))");
         }
         return str_concat(str_concat("printf(\"%lld\\n\", (long long)(", gen_expr(cg, arg)), "))");
     }
@@ -5848,7 +5957,7 @@ const char* gen_call(Codegen* cg, Expr* e) {
                 for (int64_t i = 0; i < e->items.len; i++) {
                     ({ const char* _e = gen_expr(cg, ((Expr**)(e->items).data)[i]); arr_push(&(a), &_e); });
                 }
-                s = str_concat(s, join_with(a, ", "));
+                s = (({ __auto_type strata_t397_ = s; __auto_type strata_t398_ = join_with(a, ", "); str_concat(strata_t397_, strata_t398_); }));
             }
             return str_concat(s, "}");
         }
@@ -5857,26 +5966,26 @@ const char* gen_call(Codegen* cg, Expr* e) {
             if (str_len(vn) == 0) {
                 vn = cg_vec_name_rt(((Expr**)(e->items).data)[1]->rtype);
             }
-            return str_concat(str_concat(str_concat(str_concat(str_concat(vn, "_dot("), gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
+            return str_concat((({ __auto_type strata_t401_ = str_concat((({ __auto_type strata_t399_ = str_concat(vn, "_dot("); __auto_type strata_t400_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t399_, strata_t400_); })), ", "); __auto_type strata_t402_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t401_, strata_t402_); })), ")");
         }
         if (str_eq(nm, "cross") && (e->items.len == 2)) {
-            return str_concat(str_concat(str_concat(str_concat("vec3_cross(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
+            return str_concat((({ __auto_type strata_t403_ = str_concat(str_concat("vec3_cross(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t404_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t403_, strata_t404_); })), ")");
         }
         if (str_eq(nm, "length") && (e->items.len == 1)) {
-            return str_concat(str_concat(str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_length("), gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
+            return str_concat((({ __auto_type strata_t405_ = str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_length("); __auto_type strata_t406_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t405_, strata_t406_); })), ")");
         }
         if (str_eq(nm, "normalize") && (e->items.len == 1)) {
-            return str_concat(str_concat(str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_normalize("), gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
+            return str_concat((({ __auto_type strata_t407_ = str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_normalize("); __auto_type strata_t408_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t407_, strata_t408_); })), ")");
         }
         if (str_eq(nm, "alloc") && (e->items.len == 1)) {
             const char* ct = "int64_t";
             if (((Expr**)(e->items).data)[0]->rtype != 0) {
                 ct = ty_to_c(((Expr**)(e->items).data)[0]->rtype);
             }
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("({ ", ct), " _v = "), gen_expr(cg, ((Expr**)(e->items).data)[0])), "; "), ct), "* _p = ("), ct), "*)arena_alloc(strata_heap(), sizeof("), ct), ")); *_p = _v; _p; })");
+            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t409_ = str_concat(str_concat("({ ", ct), " _v = "); __auto_type strata_t410_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t409_, strata_t410_); })), "; "), ct), "* _p = ("), ct), "*)arena_alloc(strata_heap(), sizeof("), ct), ")); *_p = _v; _p; })");
         }
         if (str_eq(nm, "substr") && (e->items.len == 3)) {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("str_sub(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[2])), ")");
+            return str_concat((({ __auto_type strata_t413_ = str_concat((({ __auto_type strata_t411_ = str_concat(str_concat("str_sub(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t412_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t411_, strata_t412_); })), ", "); __auto_type strata_t414_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t413_, strata_t414_); })), ")");
         }
         if (str_eq(nm, "int_to_str") && (e->items.len == 1)) {
             return str_concat(str_concat("str_from_int(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
@@ -5885,7 +5994,7 @@ const char* gen_call(Codegen* cg, Expr* e) {
             return str_concat(str_concat("strata_read_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
         if (str_eq(nm, "write_file") && (e->items.len == 2)) {
-            return str_concat(str_concat(str_concat(str_concat("strata_write_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
+            return str_concat((({ __auto_type strata_t415_ = str_concat(str_concat("strata_write_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t416_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t415_, strata_t416_); })), ")");
         }
         if (str_eq(nm, "args") && (e->items.len == 0)) {
             return "strata_args()";
@@ -5894,16 +6003,16 @@ const char* gen_call(Codegen* cg, Expr* e) {
             return str_concat(str_concat("(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
         if (str_eq(nm, "min") && (e->items.len == 2)) {
-            return str_concat(str_concat(str_concat(str_concat("sp_min(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
+            return str_concat((({ __auto_type strata_t417_ = str_concat(str_concat("sp_min(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t418_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t417_, strata_t418_); })), ")");
         }
         if (str_eq(nm, "max") && (e->items.len == 2)) {
-            return str_concat(str_concat(str_concat(str_concat("sp_max(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ")");
+            return str_concat((({ __auto_type strata_t419_ = str_concat(str_concat("sp_max(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t420_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t419_, strata_t420_); })), ")");
         }
         if (str_eq(nm, "clamp") && (e->items.len == 3)) {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("sp_clamp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[2])), ")");
+            return str_concat((({ __auto_type strata_t423_ = str_concat((({ __auto_type strata_t421_ = str_concat(str_concat("sp_clamp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t422_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t421_, strata_t422_); })), ", "); __auto_type strata_t424_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t423_, strata_t424_); })), ")");
         }
         if (str_eq(nm, "lerp") && (e->items.len == 3)) {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("sp_lerp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[1])), ", "), gen_expr(cg, ((Expr**)(e->items).data)[2])), ")");
+            return str_concat((({ __auto_type strata_t427_ = str_concat((({ __auto_type strata_t425_ = str_concat(str_concat("sp_lerp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t426_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t425_, strata_t426_); })), ", "); __auto_type strata_t428_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t427_, strata_t428_); })), ")");
         }
     }
     const char* s = str_concat(gen_expr(cg, e->a), "(");
@@ -5911,7 +6020,7 @@ const char* gen_call(Codegen* cg, Expr* e) {
     for (int64_t i = 0; i < e->items.len; i++) {
         ({ const char* _e = gen_expr(cg, ((Expr**)(e->items).data)[i]); arr_push(&(a), &_e); });
     }
-    return str_concat(str_concat(s, join_with(a, ", ")), ")");
+    return str_concat((({ __auto_type strata_t429_ = s; __auto_type strata_t430_ = join_with(a, ", "); str_concat(strata_t429_, strata_t430_); })), ")");
 }
 
 BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
@@ -6023,7 +6132,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
         }
         case ExUnary:
         {
-            return str_concat(str_concat(str_concat("(", e->text), gen_expr(cg, e->a)), ")");
+            return str_concat((({ __auto_type strata_t431_ = str_concat("(", e->text); __auto_type strata_t432_ = gen_expr(cg, e->a); str_concat(strata_t431_, strata_t432_); })), ")");
             break;
         }
         case ExBinary:
@@ -6042,11 +6151,33 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                 const char* inner = gen_expr(cg, x);
                 Array pre = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                 Array post = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+                bool left_const = cg_constant(x);
                 int64_t k = (spine.len - 1);
                 while (k >= 0) {
-                    BinParts bp = gen_binary(cg, ((Expr**)(spine).data)[k], gen_expr(cg, ((Expr**)(spine).data)[k]->b));
-                    ({ const char* _e = bp.pre; arr_push(&(pre), &_e); });
-                    ({ const char* _e = bp.post; arr_push(&(post), &_e); });
+                    Expr* right = ((Expr**)(spine).data)[k]->b;
+                    if ((((!left_const) && cg_calls(right)) && (!str_eq(((Expr**)(spine).data)[k]->text, "&&"))) && (!str_eq(((Expr**)(spine).data)[k]->text, "||"))) {
+                        Array whole = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+                        int64_t q = (pre.len - 1);
+                        while (q >= 0) {
+                            ({ const char* _e = ((const char**)(pre).data)[q]; arr_push(&(whole), &_e); });
+                            q -= 1;
+                        }
+                        ({ const char* _e = inner; arr_push(&(whole), &_e); });
+                        for (int64_t i = 0; i < post.len; i++) {
+                            ({ const char* _e = ((const char**)(post).data)[i]; arr_push(&(whole), &_e); });
+                        }
+                        const char* lt = cg_temp(cg);
+                        const char* rt = cg_temp(cg);
+                        BinParts op = gen_binary(cg, ((Expr**)(spine).data)[k], rt);
+                        inner = str_concat(str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t435_ = str_concat(str_concat(str_concat((({ __auto_type strata_t433_ = str_concat(str_concat("(({ __auto_type ", lt), " = "); __auto_type strata_t434_ = strata_join((&whole)); str_concat(strata_t433_, strata_t434_); })), "; __auto_type "), rt), " = "); __auto_type strata_t436_ = gen_expr(cg, right); str_concat(strata_t435_, strata_t436_); })), "; "), op.pre), lt), op.post), "; }))");
+                        pre = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+                        post = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+                    } else {
+                        BinParts bp = (({ __auto_type strata_t437_ = cg; __auto_type strata_t438_ = ((Expr**)(spine).data)[k]; __auto_type strata_t439_ = gen_expr(cg, right); gen_binary(strata_t437_, strata_t438_, strata_t439_); }));
+                        ({ const char* _e = bp.pre; arr_push(&(pre), &_e); });
+                        ({ const char* _e = bp.post; arr_push(&(post), &_e); });
+                    }
+                    left_const = (left_const && cg_constant(right));
                     k -= 1;
                 }
                 Array out = ({ Array _a = arr_make(sizeof(const char*)); _a; });
@@ -6088,7 +6219,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                         if (i > 0) {
                             s = str_concat(s, ", ");
                         }
-                        s = str_concat(str_concat(str_concat(str_concat(s, "("), base), ")."), str_sub(e->field, i, 1));
+                        s = (({ __auto_type strata_t440_ = str_concat(str_concat(str_concat(s, "("), base), ")."); __auto_type strata_t441_ = str_sub(e->field, i, 1); str_concat(strata_t440_, strata_t441_); }));
                     }
                     return str_concat(s, "}");
                 }
@@ -6105,9 +6236,9 @@ const char* gen_expr(Codegen* cg, Expr* e) {
             {
                 if (cg_is_dynarr_rt(e->a->rtype)) {
                     const char* elemc = cg_dynarr_elem(e->a->rtype);
-                    return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("((", elemc), "*)("), gen_expr(cg, e->a)), ").data)["), gen_expr(cg, e->b)), "]");
+                    return str_concat((({ __auto_type strata_t444_ = str_concat((({ __auto_type strata_t442_ = str_concat(str_concat("((", elemc), "*)("); __auto_type strata_t443_ = gen_expr(cg, e->a); str_concat(strata_t442_, strata_t443_); })), ").data)["); __auto_type strata_t445_ = gen_expr(cg, e->b); str_concat(strata_t444_, strata_t445_); })), "]");
                 }
-                return str_concat(str_concat(str_concat(gen_expr(cg, e->a), "["), gen_expr(cg, e->b)), "]");
+                return str_concat((({ __auto_type strata_t446_ = str_concat(gen_expr(cg, e->a), "["); __auto_type strata_t447_ = gen_expr(cg, e->b); str_concat(strata_t446_, strata_t447_); })), "]");
             }
             break;
         }
@@ -6122,7 +6253,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                 Array a = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                 ({ const char* _e = s; arr_push(&(a), &_e); });
                 for (int64_t i = 0; i < e->items.len; i++) {
-                    ({ const char* _e = str_concat(str_concat(str_concat(str_concat(" { ", elemc), " _e = "), gen_expr(cg, ((Expr**)(e->items).data)[i])), "; arr_push(&_a, &_e); }"); arr_push(&(a), &_e); });
+                    ({ const char* _e = str_concat((({ __auto_type strata_t448_ = str_concat(str_concat(" { ", elemc), " _e = "); __auto_type strata_t449_ = gen_expr(cg, ((Expr**)(e->items).data)[i]); str_concat(strata_t448_, strata_t449_); })), "; arr_push(&_a, &_e); }"); arr_push(&(a), &_e); });
                 }
                 s = strata_join((&a));
                 return str_concat(s, " _a; })");
@@ -6132,18 +6263,22 @@ const char* gen_expr(Codegen* cg, Expr* e) {
         case ExStructLit:
         {
             {
+                int64_t hoist = cg_hoist_count(e->items);
+                if (hoist > 0) {
+                    return cg_ordered(cg, e, hoist);
+                }
                 const char* s = str_concat(str_concat("(", cname(e->type_name)), "){");
                 Array a = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                 for (int64_t i = 0; i < e->items.len; i++) {
                     ({ const char* _e = gen_expr(cg, ((Expr**)(e->items).data)[i]); arr_push(&(a), &_e); });
                 }
-                return str_concat(str_concat(s, join_with(a, ", ")), "}");
+                return str_concat((({ __auto_type strata_t450_ = s; __auto_type strata_t451_ = join_with(a, ", "); str_concat(strata_t450_, strata_t451_); })), "}");
             }
             break;
         }
         case ExCast:
         {
-            return str_concat(str_concat(str_concat(str_concat("((", ty_to_c(e->type)), ")("), gen_expr(cg, e->a)), "))");
+            return str_concat((({ __auto_type strata_t452_ = str_concat(str_concat("((", ty_to_c(e->type)), ")("); __auto_type strata_t453_ = gen_expr(cg, e->a); str_concat(strata_t452_, strata_t453_); })), "))");
             break;
         }
         case ExSizeof:
@@ -6167,7 +6302,7 @@ void gen_braced(Codegen* cg, int64_t ind, Stmt* blk) {
             gen_stmt(cg, (ind + 1), ((Stmt**)(blk->stmts).data)[i]);
         }
     }
-    cg_out(cg, str_concat(cg_indent(ind), "}"));
+    (({ __auto_type strata_t454_ = cg; __auto_type strata_t455_ = str_concat(cg_indent(ind), "}"); cg_out(strata_t454_, strata_t455_); }));
 }
 
 void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
@@ -6177,7 +6312,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
     switch (s->kind) {
         case StBlock:
         {
-            cg_out(cg, cg_indent(ind));
+            (({ __auto_type strata_t456_ = cg; __auto_type strata_t457_ = cg_indent(ind); cg_out(strata_t456_, strata_t457_); }));
             gen_braced(cg, ind, s);
             cg_out(cg, "\n");
             break;
@@ -6194,12 +6329,12 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     head = "const ";
                 }
                 if (s->init != 0) {
-                    cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), " = "), gen_expr(cg, s->init)), ";\n"));
+                    (({ __auto_type strata_t458_ = cg; __auto_type strata_t459_ = str_concat((({ __auto_type strata_t460_ = str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), " = "); __auto_type strata_t461_ = gen_expr(cg, s->init); str_concat(strata_t460_, strata_t461_); })), ";\n"); cg_out(strata_t458_, strata_t459_); }));
                 } else 
                 if ((s->type != 0) && (s->type->kind == TyDynArray)) {
-                    cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "Array "), s->name), " = arr_make(sizeof("), ty_to_c(s->type->elem)), "));\n"));
+                    (({ __auto_type strata_t462_ = cg; __auto_type strata_t463_ = str_concat((({ __auto_type strata_t464_ = str_concat(str_concat(str_concat(cg_indent(ind), "Array "), s->name), " = arr_make(sizeof("); __auto_type strata_t465_ = ty_to_c(s->type->elem); str_concat(strata_t464_, strata_t465_); })), "));\n"); cg_out(strata_t462_, strata_t463_); }));
                 } else {
-                    cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), ";\n"));
+                    (({ __auto_type strata_t466_ = cg; __auto_type strata_t467_ = str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), ";\n"); cg_out(strata_t466_, strata_t467_); }));
                 }
             }
             break;
@@ -6208,17 +6343,17 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         {
             if (cg->regions.len == 0) {
                 if (s->expr != 0) {
-                    cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "return "), gen_expr(cg, s->expr)), ";\n"));
+                    (({ __auto_type strata_t468_ = cg; __auto_type strata_t469_ = str_concat((({ __auto_type strata_t470_ = str_concat(cg_indent(ind), "return "); __auto_type strata_t471_ = gen_expr(cg, s->expr); str_concat(strata_t470_, strata_t471_); })), ";\n"); cg_out(strata_t468_, strata_t469_); }));
                 } else {
-                    cg_out(cg, str_concat(cg_indent(ind), "return;\n"));
+                    (({ __auto_type strata_t472_ = cg; __auto_type strata_t473_ = str_concat(cg_indent(ind), "return;\n"); cg_out(strata_t472_, strata_t473_); }));
                 }
             } else 
             if (s->expr != 0) {
-                cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "{ "), cg->ret_c), " _ret = "), gen_expr(cg, s->expr)), ";\n"));
-                cg_out(cg, region_frees(cg, 0, (ind + 1)));
-                cg_out(cg, str_concat(cg_indent((ind + 1)), "return _ret; }\n"));
+                (({ __auto_type strata_t474_ = cg; __auto_type strata_t475_ = str_concat((({ __auto_type strata_t476_ = str_concat(str_concat(str_concat(cg_indent(ind), "{ "), cg->ret_c), " _ret = "); __auto_type strata_t477_ = gen_expr(cg, s->expr); str_concat(strata_t476_, strata_t477_); })), ";\n"); cg_out(strata_t474_, strata_t475_); }));
+                (({ __auto_type strata_t478_ = cg; __auto_type strata_t479_ = region_frees(cg, 0, (ind + 1)); cg_out(strata_t478_, strata_t479_); }));
+                (({ __auto_type strata_t480_ = cg; __auto_type strata_t481_ = str_concat(cg_indent((ind + 1)), "return _ret; }\n"); cg_out(strata_t480_, strata_t481_); }));
             } else {
-                cg_out(cg, str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "{\n"), region_frees(cg, 0, (ind + 1))), cg_indent((ind + 1))), "return; }\n"));
+                (({ __auto_type strata_t482_ = cg; __auto_type strata_t483_ = str_concat((({ __auto_type strata_t486_ = (({ __auto_type strata_t484_ = str_concat(cg_indent(ind), "{\n"); __auto_type strata_t485_ = region_frees(cg, 0, (ind + 1)); str_concat(strata_t484_, strata_t485_); })); __auto_type strata_t487_ = cg_indent((ind + 1)); str_concat(strata_t486_, strata_t487_); })), "return; }\n"); cg_out(strata_t482_, strata_t483_); }));
             }
             break;
         }
@@ -6227,22 +6362,22 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         {
             {
                 int64_t top = (cg->loop_labels.len - 1);
-                cg_out(cg, region_frees(cg, ((int64_t*)(cg->loop_regions).data)[top], ind));
+                (({ __auto_type strata_t488_ = cg; __auto_type strata_t489_ = region_frees(cg, ((int64_t*)(cg->loop_regions).data)[top], ind); cg_out(strata_t488_, strata_t489_); }));
                 if (s->kind == StContinue) {
-                    cg_out(cg, str_concat(cg_indent(ind), "continue;\n"));
+                    (({ __auto_type strata_t490_ = cg; __auto_type strata_t491_ = str_concat(cg_indent(ind), "continue;\n"); cg_out(strata_t490_, strata_t491_); }));
                 } else 
                 if (cg->switch_depth > ((int64_t*)(cg->loop_switches).data)[top]) {
                     ((int64_t*)(cg->loop_label_used).data)[top] = 1;
-                    cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "goto strata_break_"), str_from_int(((int64_t*)(cg->loop_labels).data)[top])), ";\n"));
+                    (({ __auto_type strata_t492_ = cg; __auto_type strata_t493_ = str_concat((({ __auto_type strata_t494_ = str_concat(cg_indent(ind), "goto strata_break_"); __auto_type strata_t495_ = str_from_int(((int64_t*)(cg->loop_labels).data)[top]); str_concat(strata_t494_, strata_t495_); })), ";\n"); cg_out(strata_t492_, strata_t493_); }));
                 } else {
-                    cg_out(cg, str_concat(cg_indent(ind), "break;\n"));
+                    (({ __auto_type strata_t496_ = cg; __auto_type strata_t497_ = str_concat(cg_indent(ind), "break;\n"); cg_out(strata_t496_, strata_t497_); }));
                 }
             }
             break;
         }
         case StExprStmt:
         {
-            cg_out(cg, str_concat(str_concat(cg_indent(ind), gen_expr(cg, s->expr)), ";\n"));
+            (({ __auto_type strata_t498_ = cg; __auto_type strata_t499_ = str_concat((({ __auto_type strata_t500_ = cg_indent(ind); __auto_type strata_t501_ = gen_expr(cg, s->expr); str_concat(strata_t500_, strata_t501_); })), ";\n"); cg_out(strata_t498_, strata_t499_); }));
             break;
         }
         case StAssign:
@@ -6268,16 +6403,16 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     } else {
                         cg->had_error = true;
                     }
-                    cg_out(cg, str_concat(str_concat(str_concat(str_concat(cg_indent(ind), tgt), " = "), rhs), ";\n"));
+                    (({ __auto_type strata_t502_ = cg; __auto_type strata_t503_ = str_concat(str_concat(str_concat(str_concat(cg_indent(ind), tgt), " = "), rhs), ";\n"); cg_out(strata_t502_, strata_t503_); }));
                 } else {
-                    cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), gen_expr(cg, s->target)), " "), s->op), " "), gen_expr(cg, s->value)), ";\n"));
+                    (({ __auto_type strata_t504_ = cg; __auto_type strata_t505_ = str_concat((({ __auto_type strata_t508_ = str_concat(str_concat(str_concat((({ __auto_type strata_t506_ = cg_indent(ind); __auto_type strata_t507_ = gen_expr(cg, s->target); str_concat(strata_t506_, strata_t507_); })), " "), s->op), " "); __auto_type strata_t509_ = gen_expr(cg, s->value); str_concat(strata_t508_, strata_t509_); })), ";\n"); cg_out(strata_t504_, strata_t505_); }));
                 }
             }
             break;
         }
         case StIf:
         {
-            cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "if "), paren_cond(gen_expr(cg, s->cond))), " "));
+            (({ __auto_type strata_t510_ = cg; __auto_type strata_t511_ = str_concat((({ __auto_type strata_t512_ = str_concat(cg_indent(ind), "if "); __auto_type strata_t513_ = paren_cond(gen_expr(cg, s->cond)); str_concat(strata_t512_, strata_t513_); })), " "); cg_out(strata_t510_, strata_t511_); }));
             gen_braced(cg, ind, s->then_block);
             if (s->else_branch != 0) {
                 cg_out(cg, " else ");
@@ -6295,11 +6430,11 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         }
         case StWhile:
         {
-            cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "while "), paren_cond(gen_expr(cg, s->cond))), " "));
+            (({ __auto_type strata_t514_ = cg; __auto_type strata_t515_ = str_concat((({ __auto_type strata_t516_ = str_concat(cg_indent(ind), "while "); __auto_type strata_t517_ = paren_cond(gen_expr(cg, s->cond)); str_concat(strata_t516_, strata_t517_); })), " "); cg_out(strata_t514_, strata_t515_); }));
             loop_enter(cg);
             gen_braced(cg, ind, s->body);
             cg_out(cg, "\n");
-            cg_out(cg, loop_leave(cg, ind));
+            (({ __auto_type strata_t518_ = cg; __auto_type strata_t519_ = loop_leave(cg, ind); cg_out(strata_t518_, strata_t519_); }));
             break;
         }
         case StForIn:
@@ -6307,18 +6442,18 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
             if (((s->iter != 0) && (s->iter->kind == ExBinary)) && str_eq(s->iter->text, "..")) {
                 const char* lo = gen_expr(cg, s->iter->a);
                 const char* hi = gen_expr(cg, s->iter->b);
-                cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "for (int64_t "), s->name), " = "), lo), "; "), s->name), " < "), hi), "; "), s->name), "++) "));
+                (({ __auto_type strata_t520_ = cg; __auto_type strata_t521_ = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "for (int64_t "), s->name), " = "), lo), "; "), s->name), " < "), hi), "; "), s->name), "++) "); cg_out(strata_t520_, strata_t521_); }));
                 loop_enter(cg);
                 gen_braced(cg, ind, s->body);
                 cg_out(cg, "\n");
-                cg_out(cg, loop_leave(cg, ind));
+                (({ __auto_type strata_t522_ = cg; __auto_type strata_t523_ = loop_leave(cg, ind); cg_out(strata_t522_, strata_t523_); }));
             } else 
             if (cg_is_dynarr_rt(s->iter->rtype)) {
                 const char* elemc = cg_dynarr_elem(s->iter->rtype);
                 const char* arrx = gen_expr(cg, s->iter);
-                cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "{ Array _arr = "), arrx), ";\n"));
-                cg_out(cg, str_concat(cg_indent((ind + 1)), "for (int64_t _i = 0; _i < _arr.len; _i++) {\n"));
-                cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent((ind + 2)), elemc), " "), s->name), " = (("), elemc), "*)_arr.data)[_i];\n"));
+                (({ __auto_type strata_t524_ = cg; __auto_type strata_t525_ = str_concat(str_concat(str_concat(cg_indent(ind), "{ Array _arr = "), arrx), ";\n"); cg_out(strata_t524_, strata_t525_); }));
+                (({ __auto_type strata_t526_ = cg; __auto_type strata_t527_ = str_concat(cg_indent((ind + 1)), "for (int64_t _i = 0; _i < _arr.len; _i++) {\n"); cg_out(strata_t526_, strata_t527_); }));
+                (({ __auto_type strata_t528_ = cg; __auto_type strata_t529_ = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent((ind + 2)), elemc), " "), s->name), " = (("), elemc), "*)_arr.data)[_i];\n"); cg_out(strata_t528_, strata_t529_); }));
                 loop_enter(cg);
                 if ((s->body != 0) && (s->body->kind == StBlock)) {
                     for (int64_t i = 0; i < s->body->stmts.len; i++) {
@@ -6326,39 +6461,39 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     }
                 }
                 const char* label = loop_leave(cg, (ind + 1));
-                cg_out(cg, str_concat(cg_indent((ind + 1)), "}\n"));
+                (({ __auto_type strata_t530_ = cg; __auto_type strata_t531_ = str_concat(cg_indent((ind + 1)), "}\n"); cg_out(strata_t530_, strata_t531_); }));
                 cg_out(cg, label);
-                cg_out(cg, str_concat(cg_indent(ind), "}\n"));
+                (({ __auto_type strata_t532_ = cg; __auto_type strata_t533_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t532_, strata_t533_); }));
             } else {
                 cg->had_error = true;
-                cg_out(cg, str_concat(cg_indent(ind), "/* unsupported for-in iterable */\n"));
+                (({ __auto_type strata_t534_ = cg; __auto_type strata_t535_ = str_concat(cg_indent(ind), "/* unsupported for-in iterable */\n"); cg_out(strata_t534_, strata_t535_); }));
             }
             break;
         }
         case StSwitch:
         {
-            cg_out(cg, str_concat(str_concat(str_concat(cg_indent(ind), "switch ("), gen_expr(cg, s->subject)), ") {\n"));
+            (({ __auto_type strata_t536_ = cg; __auto_type strata_t537_ = str_concat((({ __auto_type strata_t538_ = str_concat(cg_indent(ind), "switch ("); __auto_type strata_t539_ = gen_expr(cg, s->subject); str_concat(strata_t538_, strata_t539_); })), ") {\n"); cg_out(strata_t536_, strata_t537_); }));
             cg->switch_depth += 1;
             for (int64_t i = 0; i < s->cases.len; i++) {
                 SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
                 if (sc.is_default) {
-                    cg_out(cg, str_concat(cg_indent((ind + 1)), "default: {\n"));
+                    (({ __auto_type strata_t540_ = cg; __auto_type strata_t541_ = str_concat(cg_indent((ind + 1)), "default: {\n"); cg_out(strata_t540_, strata_t541_); }));
                 } else {
                     for (int64_t j = 0; j < sc.values.len; j++) {
-                        cg_out(cg, str_concat(str_concat(str_concat(cg_indent((ind + 1)), "case "), gen_expr(cg, ((Expr**)(sc.values).data)[j])), ":\n"));
+                        (({ __auto_type strata_t542_ = cg; __auto_type strata_t543_ = str_concat((({ __auto_type strata_t544_ = str_concat(cg_indent((ind + 1)), "case "); __auto_type strata_t545_ = gen_expr(cg, ((Expr**)(sc.values).data)[j]); str_concat(strata_t544_, strata_t545_); })), ":\n"); cg_out(strata_t542_, strata_t543_); }));
                     }
-                    cg_out(cg, str_concat(cg_indent((ind + 1)), "{\n"));
+                    (({ __auto_type strata_t546_ = cg; __auto_type strata_t547_ = str_concat(cg_indent((ind + 1)), "{\n"); cg_out(strata_t546_, strata_t547_); }));
                 }
                 if ((sc.body != 0) && (sc.body->kind == StBlock)) {
                     for (int64_t j = 0; j < sc.body->stmts.len; j++) {
                         gen_stmt(cg, (ind + 2), ((Stmt**)(sc.body->stmts).data)[j]);
                     }
                 }
-                cg_out(cg, str_concat(cg_indent((ind + 2)), "break;\n"));
-                cg_out(cg, str_concat(cg_indent((ind + 1)), "}\n"));
+                (({ __auto_type strata_t548_ = cg; __auto_type strata_t549_ = str_concat(cg_indent((ind + 2)), "break;\n"); cg_out(strata_t548_, strata_t549_); }));
+                (({ __auto_type strata_t550_ = cg; __auto_type strata_t551_ = str_concat(cg_indent((ind + 1)), "}\n"); cg_out(strata_t550_, strata_t551_); }));
             }
             cg->switch_depth -= 1;
-            cg_out(cg, str_concat(cg_indent(ind), "}\n"));
+            (({ __auto_type strata_t552_ = cg; __auto_type strata_t553_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t552_, strata_t553_); }));
             break;
         }
         case StRegion:
@@ -6371,8 +6506,8 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                         rname = str_concat("_region", str_from_int((cg->regions.len + 1)));
                     }
                 }
-                cg_out(cg, str_concat(cg_indent(ind), "{\n"));
-                cg_out(cg, str_concat(str_concat(str_concat(cg_indent((ind + 1)), "Arena "), rname), " = arena_make();\n"));
+                (({ __auto_type strata_t554_ = cg; __auto_type strata_t555_ = str_concat(cg_indent(ind), "{\n"); cg_out(strata_t554_, strata_t555_); }));
+                (({ __auto_type strata_t556_ = cg; __auto_type strata_t557_ = str_concat(str_concat(str_concat(cg_indent((ind + 1)), "Arena "), rname), " = arena_make();\n"); cg_out(strata_t556_, strata_t557_); }));
                 ({ const char* _e = rname; arr_push(&(cg->regions), &_e); });
                 if ((s->body != 0) && (s->body->kind == StBlock)) {
                     for (int64_t i = 0; i < s->body->stmts.len; i++) {
@@ -6380,8 +6515,8 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     }
                 }
                 cg->regions.len = (cg->regions.len - 1);
-                cg_out(cg, str_concat(str_concat(str_concat(cg_indent((ind + 1)), "arena_free(&"), rname), ");\n"));
-                cg_out(cg, str_concat(cg_indent(ind), "}\n"));
+                (({ __auto_type strata_t558_ = cg; __auto_type strata_t559_ = str_concat(str_concat(str_concat(cg_indent((ind + 1)), "arena_free(&"), rname), ");\n"); cg_out(strata_t558_, strata_t559_); }));
+                (({ __auto_type strata_t560_ = cg; __auto_type strata_t561_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t560_, strata_t561_); }));
             }
             break;
         }
@@ -6401,7 +6536,7 @@ const char* func_sig(Decl* d) {
         for (int64_t i = 0; i < d->params.len; i++) {
             ({ const char* _e = str_concat(str_concat(ty_to_c(((Param*)(d->params).data)[i].type), " "), ((Param*)(d->params).data)[i].name); arr_push(&(ps), &_e); });
         }
-        s = str_concat(s, join_with(ps, ", "));
+        s = (({ __auto_type strata_t562_ = s; __auto_type strata_t563_ = join_with(ps, ", "); str_concat(strata_t562_, strata_t563_); }));
     }
     return str_concat(s, ")");
 }
@@ -6478,7 +6613,7 @@ void gen_types(Codegen* cg, Program prog) {
         if ((d->kind == DcStruct) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
             cg_out(cg, str_concat(str_concat("struct ", d->name), " {\n"));
             for (int64_t f = 0; f < d->fields.len; f++) {
-                cg_out(cg, str_concat(str_concat(str_concat(str_concat("    ", ty_to_c(((FieldDef*)(d->fields).data)[f].type)), " "), ((FieldDef*)(d->fields).data)[f].name), ";\n"));
+                (({ __auto_type strata_t564_ = cg; __auto_type strata_t565_ = str_concat(str_concat(str_concat(str_concat("    ", ty_to_c(((FieldDef*)(d->fields).data)[f].type)), " "), ((FieldDef*)(d->fields).data)[f].name), ";\n"); cg_out(strata_t564_, strata_t565_); }));
             }
             cg_out(cg, "};\n");
         }
@@ -6488,7 +6623,7 @@ void gen_types(Codegen* cg, Program prog) {
 
 void gen_function(Codegen* cg, Decl* d, const char* prefix) {
     cg->ret_c = ty_to_c(d->ret);
-    cg_out(cg, str_concat(str_concat(prefix, func_sig(d)), " "));
+    (({ __auto_type strata_t566_ = cg; __auto_type strata_t567_ = str_concat((({ __auto_type strata_t568_ = prefix; __auto_type strata_t569_ = func_sig(d); str_concat(strata_t568_, strata_t569_); })), " "); cg_out(strata_t566_, strata_t567_); }));
     gen_braced(cg, 0, d->body);
     cg_out(cg, "\n\n");
 }
@@ -6509,7 +6644,7 @@ void gen_globals(Codegen* cg, Program prog, int64_t module) {
             if ((d->ret != 0) && (d->ret->kind == TyDynArray)) {
                 init = str_concat(str_concat(" = { 0, 0, 0, sizeof(", ty_to_c(d->ret->elem)), ") }");
             }
-            cg_out(cg, str_concat(str_concat(str_concat(str_concat(str_concat(head, ty_to_c(d->ret)), " "), d->name), init), ";\n"));
+            (({ __auto_type strata_t570_ = cg; __auto_type strata_t571_ = str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t572_ = head; __auto_type strata_t573_ = ty_to_c(d->ret); str_concat(strata_t572_, strata_t573_); })), " "), d->name), init), ";\n"); cg_out(strata_t570_, strata_t571_); }));
             any = true;
         }
     }
@@ -6538,7 +6673,7 @@ const char* generate(Codegen* cg, Program prog) {
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcFunc) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
-            cg_out(cg, str_concat(str_concat(export_prefix(cg, d), func_sig(d)), ";\n"));
+            (({ __auto_type strata_t574_ = cg; __auto_type strata_t575_ = str_concat((({ __auto_type strata_t576_ = export_prefix(cg, d); __auto_type strata_t577_ = func_sig(d); str_concat(strata_t576_, strata_t577_); })), ";\n"); cg_out(strata_t574_, strata_t575_); }));
         }
     }
     cg_out(cg, "\n");
@@ -6546,7 +6681,7 @@ const char* generate(Codegen* cg, Program prog) {
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcFunc) && (!d->is_foreign)) {
-            gen_function(cg, d, export_prefix(cg, d));
+            (({ __auto_type strata_t578_ = cg; __auto_type strata_t579_ = d; __auto_type strata_t580_ = export_prefix(cg, d); gen_function(strata_t578_, strata_t579_, strata_t580_); }));
         }
     }
     gen_main(cg, prog);
@@ -6559,7 +6694,7 @@ const char* unit_name(int64_t m, const char* name) {
     for (int64_t i = 0; i < n; i++) {
         char ch = name[i];
         if ((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9'))) {
-            r = str_concat(r, str_sub(name, i, 1));
+            r = (({ __auto_type strata_t581_ = r; __auto_type strata_t582_ = str_sub(name, i, 1); str_concat(strata_t581_, strata_t582_); }));
         } else {
             r = str_concat(r, "_");
         }
@@ -6577,7 +6712,7 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcGlobal) && d->is_exported) {
-            cg_out(cg, str_concat(str_concat(str_concat(str_concat("extern ", ty_to_c(d->ret)), " "), d->name), ";\n"));
+            (({ __auto_type strata_t583_ = cg; __auto_type strata_t584_ = str_concat(str_concat(str_concat(str_concat("extern ", ty_to_c(d->ret)), " "), d->name), ";\n"); cg_out(strata_t583_, strata_t584_); }));
         }
     }
     cg_out(cg, "#endif\n");
@@ -6601,16 +6736,16 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
                 if ((((d->kind == DcFunc) && d->is_exported) && ((d->module == m) || module_sees(prog, m, d->module))) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
-                    cg_out(cg, str_concat(str_concat(export_prefix(cg, d), func_sig(d)), ";\n"));
+                    (({ __auto_type strata_t585_ = cg; __auto_type strata_t586_ = str_concat((({ __auto_type strata_t587_ = export_prefix(cg, d); __auto_type strata_t588_ = func_sig(d); str_concat(strata_t587_, strata_t588_); })), ";\n"); cg_out(strata_t585_, strata_t586_); }));
                 }
             }
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
                 if ((((d->module == m) && (d->kind == DcFunc)) && (!d->is_exported)) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
                     if (d->is_foreign) {
-                        cg_out(cg, str_concat(func_sig(d), ";\n"));
+                        (({ __auto_type strata_t589_ = cg; __auto_type strata_t590_ = str_concat(func_sig(d), ";\n"); cg_out(strata_t589_, strata_t590_); }));
                     } else {
-                        cg_out(cg, str_concat(str_concat("static ", func_sig(d)), ";\n"));
+                        (({ __auto_type strata_t591_ = cg; __auto_type strata_t592_ = str_concat(str_concat("static ", func_sig(d)), ";\n"); cg_out(strata_t591_, strata_t592_); }));
                     }
                 }
             }
@@ -6620,7 +6755,7 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
                 Decl* d = ((Decl**)(prog.decls).data)[i];
                 if (((d->module == m) && (d->kind == DcFunc)) && (!d->is_foreign)) {
                     if (d->is_exported) {
-                        gen_function(cg, d, export_prefix(cg, d));
+                        (({ __auto_type strata_t593_ = cg; __auto_type strata_t594_ = d; __auto_type strata_t595_ = export_prefix(cg, d); gen_function(strata_t593_, strata_t594_, strata_t595_); }));
                     } else {
                         gen_function(cg, d, "static ");
                     }
@@ -7097,7 +7232,7 @@ const char* ir_ins_text(Ins i) {
     switch (i.op) {
         case OConst:
         {
-            return str_concat(str_concat(str_concat(str_concat(d, "const."), t), " "), str_from_int(i.imm));
+            return (({ __auto_type strata_t596_ = str_concat(str_concat(str_concat(d, "const."), t), " "); __auto_type strata_t597_ = str_from_int(i.imm); str_concat(strata_t596_, strata_t597_); }));
             break;
         }
         case OFConst:
@@ -7107,39 +7242,39 @@ const char* ir_ins_text(Ins i) {
         }
         case OCopy:
         {
-            return str_concat(str_concat(str_concat(str_concat(d, "copy."), t), " "), v(i.a));
+            return (({ __auto_type strata_t598_ = str_concat(str_concat(str_concat(d, "copy."), t), " "); __auto_type strata_t599_ = v(i.a); str_concat(strata_t598_, strata_t599_); }));
             break;
         }
         case OCmp:
         {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, "cmp."), ir_cond_name(i.ty2)), "."), t), " "), v(i.a)), ", "), v(i.b));
+            return (({ __auto_type strata_t604_ = str_concat((({ __auto_type strata_t602_ = str_concat(str_concat(str_concat((({ __auto_type strata_t600_ = str_concat(d, "cmp."); __auto_type strata_t601_ = ir_cond_name(i.ty2); str_concat(strata_t600_, strata_t601_); })), "."), t), " "); __auto_type strata_t603_ = v(i.a); str_concat(strata_t602_, strata_t603_); })), ", "); __auto_type strata_t605_ = v(i.b); str_concat(strata_t604_, strata_t605_); }));
             break;
         }
         case OConv:
         {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, "conv."), ir_ty_name(i.ty2)), "."), t), " "), v(i.a));
+            return (({ __auto_type strata_t608_ = str_concat(str_concat(str_concat((({ __auto_type strata_t606_ = str_concat(d, "conv."); __auto_type strata_t607_ = ir_ty_name(i.ty2); str_concat(strata_t606_, strata_t607_); })), "."), t), " "); __auto_type strata_t609_ = v(i.a); str_concat(strata_t608_, strata_t609_); }));
             break;
         }
         case ONeg:
         case ONot:
         case OSqrt:
         {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(d, ir_op_name(i.op)), "."), t), " "), v(i.a));
+            return (({ __auto_type strata_t612_ = str_concat(str_concat(str_concat((({ __auto_type strata_t610_ = d; __auto_type strata_t611_ = ir_op_name(i.op); str_concat(strata_t610_, strata_t611_); })), "."), t), " "); __auto_type strata_t613_ = v(i.a); str_concat(strata_t612_, strata_t613_); }));
             break;
         }
         case OLoad:
         {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, "load."), t), " ["), v(i.a)), " + "), str_from_int(i.imm)), "]");
+            return str_concat((({ __auto_type strata_t616_ = str_concat((({ __auto_type strata_t614_ = str_concat(str_concat(str_concat(d, "load."), t), " ["); __auto_type strata_t615_ = v(i.a); str_concat(strata_t614_, strata_t615_); })), " + "); __auto_type strata_t617_ = str_from_int(i.imm); str_concat(strata_t616_, strata_t617_); })), "]");
             break;
         }
         case OStore:
         {
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("store.", t), " ["), v(i.a)), " + "), str_from_int(i.imm)), "], "), v(i.b));
+            return (({ __auto_type strata_t622_ = str_concat((({ __auto_type strata_t620_ = str_concat((({ __auto_type strata_t618_ = str_concat(str_concat("store.", t), " ["); __auto_type strata_t619_ = v(i.a); str_concat(strata_t618_, strata_t619_); })), " + "); __auto_type strata_t621_ = str_from_int(i.imm); str_concat(strata_t620_, strata_t621_); })), "], "); __auto_type strata_t623_ = v(i.b); str_concat(strata_t622_, strata_t623_); }));
             break;
         }
         case OSlotAddr:
         {
-            return str_concat(str_concat(d, "slotaddr s"), str_from_int(i.imm));
+            return (({ __auto_type strata_t624_ = str_concat(d, "slotaddr s"); __auto_type strata_t625_ = str_from_int(i.imm); str_concat(strata_t624_, strata_t625_); }));
             break;
         }
         case OSymAddr:
@@ -7149,17 +7284,17 @@ const char* ir_ins_text(Ins i) {
         }
         case OCopyMem:
         {
-            return str_concat(str_concat(str_concat(str_concat(str_concat("copymem ", v(i.a)), ", "), v(i.b)), ", "), str_from_int(i.imm));
+            return (({ __auto_type strata_t628_ = str_concat((({ __auto_type strata_t626_ = str_concat(str_concat("copymem ", v(i.a)), ", "); __auto_type strata_t627_ = v(i.b); str_concat(strata_t626_, strata_t627_); })), ", "); __auto_type strata_t629_ = str_from_int(i.imm); str_concat(strata_t628_, strata_t629_); }));
             break;
         }
         case OZeroMem:
         {
-            return str_concat(str_concat(str_concat("zeromem ", v(i.a)), ", "), str_from_int(i.imm));
+            return (({ __auto_type strata_t630_ = str_concat(str_concat("zeromem ", v(i.a)), ", "); __auto_type strata_t631_ = str_from_int(i.imm); str_concat(strata_t630_, strata_t631_); }));
             break;
         }
         case OParam:
         {
-            return str_concat(str_concat(str_concat(str_concat(d, "param."), t), " "), str_from_int(i.imm));
+            return (({ __auto_type strata_t632_ = str_concat(str_concat(str_concat(d, "param."), t), " "); __auto_type strata_t633_ = str_from_int(i.imm); str_concat(strata_t632_, strata_t633_); }));
             break;
         }
         case OCall:
@@ -7198,7 +7333,7 @@ const char* ir_ins_text(Ins i) {
         }
         case OBr:
         {
-            return str_concat(str_concat(str_concat(str_concat(str_concat("br ", v(i.a)), ", L"), str_from_int(i.imm)), ", L"), str_from_int(i.imm2));
+            return (({ __auto_type strata_t636_ = str_concat((({ __auto_type strata_t634_ = str_concat(str_concat("br ", v(i.a)), ", L"); __auto_type strata_t635_ = str_from_int(i.imm); str_concat(strata_t634_, strata_t635_); })), ", L"); __auto_type strata_t637_ = str_from_int(i.imm2); str_concat(strata_t636_, strata_t637_); }));
             break;
         }
         case ONop:
@@ -7207,7 +7342,7 @@ const char* ir_ins_text(Ins i) {
             break;
         }
     }
-    return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(d, ir_op_name(i.op)), "."), t), " "), v(i.a)), ", "), v(i.b));
+    return (({ __auto_type strata_t642_ = str_concat((({ __auto_type strata_t640_ = str_concat(str_concat(str_concat((({ __auto_type strata_t638_ = d; __auto_type strata_t639_ = ir_op_name(i.op); str_concat(strata_t638_, strata_t639_); })), "."), t), " "); __auto_type strata_t641_ = v(i.a); str_concat(strata_t640_, strata_t641_); })), ", "); __auto_type strata_t643_ = v(i.b); str_concat(strata_t642_, strata_t643_); }));
 }
 
 const char* ir_func_text(IrFunc* f) {
@@ -7221,7 +7356,7 @@ const char* ir_func_text(IrFunc* f) {
     }
     ({ const char* _e = str_concat(str_concat(") ", ir_ty_name(f->ret_ty)), "\n"); arr_push(&(p), &_e); });
     for (int64_t k = 0; k < f->slots.len; k++) {
-        ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("  s", str_from_int(k)), ": "), str_from_int(((IrSlot*)(f->slots).data)[k].size)), " bytes, align "), str_from_int(((IrSlot*)(f->slots).data)[k].align)), "\n"); arr_push(&(p), &_e); });
+        ({ const char* _e = str_concat((({ __auto_type strata_t646_ = str_concat((({ __auto_type strata_t644_ = str_concat(str_concat("  s", str_from_int(k)), ": "); __auto_type strata_t645_ = str_from_int(((IrSlot*)(f->slots).data)[k].size); str_concat(strata_t644_, strata_t645_); })), " bytes, align "); __auto_type strata_t647_ = str_from_int(((IrSlot*)(f->slots).data)[k].align); str_concat(strata_t646_, strata_t647_); })), "\n"); arr_push(&(p), &_e); });
     }
     for (int64_t k = 0; k < f->code.len; k++) {
         Ins i = ((Ins*)(f->code).data)[k];
@@ -7243,7 +7378,7 @@ const char* ir_program_text(IrProgram* prog) {
     }
     for (int64_t k = 0; k < prog->globals.len; k++) {
         IrGlobal g = ((IrGlobal*)(prog->globals).data)[k];
-        ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("global ", g.sym), ": "), str_from_int(g.size)), " bytes, kind "), str_from_int(g.kind)), "\n"); arr_push(&(p), &_e); });
+        ({ const char* _e = str_concat((({ __auto_type strata_t650_ = str_concat((({ __auto_type strata_t648_ = str_concat(str_concat("global ", g.sym), ": "); __auto_type strata_t649_ = str_from_int(g.size); str_concat(strata_t648_, strata_t649_); })), " bytes, kind "); __auto_type strata_t651_ = str_from_int(g.kind); str_concat(strata_t650_, strata_t651_); })), "\n"); arr_push(&(p), &_e); });
     }
     for (int64_t k = 0; k < prog->funcs.len; k++) {
         ({ const char* _e = "\n"; arr_push(&(p), &_e); });
@@ -7318,7 +7453,7 @@ int64_t prim_ty(const char* n) {
 }
 
 TInfo scalar_info(int64_t ty) {
-    return (TInfo){TK_SCALAR(), ty, ir_size(ty), ir_size(ty)};
+    return (({ __auto_type strata_t652_ = TK_SCALAR(); __auto_type strata_t653_ = ty; __auto_type strata_t654_ = ir_size(ty); __auto_type strata_t655_ = ir_size(ty); (TInfo){strata_t652_, strata_t653_, strata_t654_, strata_t655_}; }));
 }
 
 TInfo agg_info(int64_t size, int64_t align) {
@@ -7437,7 +7572,7 @@ int64_t abi_int_of(int64_t size) {
 }
 
 int64_t abi_pass_ty(TInfo ti) {
-    if (ti.kind == TK_SCALAR()) {
+    if (({ __auto_type strata_t656_ = ti.kind; __auto_type strata_t657_ = TK_SCALAR(); (strata_t656_ == strata_t657_); })) {
         return ti.ty;
     }
     if (abi_small(ti.size)) {
@@ -7447,7 +7582,7 @@ int64_t abi_pass_ty(TInfo ti) {
 }
 
 bool abi_sret(TInfo ti) {
-    return ((ti.kind == TK_AGG()) && (!abi_small(ti.size)));
+    return ((({ __auto_type strata_t658_ = ti.kind; __auto_type strata_t659_ = TK_AGG(); (strata_t658_ == strata_t659_); })) && (!abi_small(ti.size)));
 }
 
 int64_t vreg(Lower* l, int64_t ty) {
@@ -7476,13 +7611,13 @@ int64_t fconst(Lower* l, int64_t ty, const char* text) {
 
 int64_t binop(Lower* l, int64_t op, int64_t ty, int64_t a, int64_t b) {
     int64_t r = vreg(l, ty);
-    emit(l, new_ins(op, ty, r, a, b));
+    (({ __auto_type strata_t660_ = l; __auto_type strata_t661_ = new_ins(op, ty, r, a, b); emit(strata_t660_, strata_t661_); }));
     return r;
 }
 
 int64_t unop(Lower* l, int64_t op, int64_t ty, int64_t a) {
     int64_t r = vreg(l, ty);
-    emit(l, new_ins(op, ty, r, a, (0 - 1)));
+    (({ __auto_type strata_t662_ = l; __auto_type strata_t663_ = new_ins(op, ty, r, a, (0 - 1)); emit(strata_t662_, strata_t663_); }));
     return r;
 }
 
@@ -7495,7 +7630,7 @@ int64_t cmp(Lower* l, int64_t cond, int64_t ty, int64_t a, int64_t b) {
 }
 
 void copy_to(Lower* l, int64_t ty, int64_t dst, int64_t src) {
-    emit(l, new_ins(OCopy, ty, dst, src, (0 - 1)));
+    (({ __auto_type strata_t664_ = l; __auto_type strata_t665_ = new_ins(OCopy, ty, dst, src, (0 - 1)); emit(strata_t664_, strata_t665_); }));
 }
 
 int64_t load(Lower* l, int64_t ty, int64_t addr, int64_t off) {
@@ -7537,7 +7672,7 @@ int64_t addr_plus(Lower* l, int64_t addr, int64_t off) {
     if (off == 0) {
         return addr;
     }
-    return binop(l, OAdd, KU64, addr, iconst(l, KU64, off));
+    return (({ __auto_type strata_t666_ = l; __auto_type strata_t667_ = OAdd; __auto_type strata_t668_ = KU64; __auto_type strata_t669_ = addr; __auto_type strata_t670_ = iconst(l, KU64, off); binop(strata_t666_, strata_t667_, strata_t668_, strata_t669_, strata_t670_); }));
 }
 
 void label(Lower* l, int64_t n) {
@@ -7617,14 +7752,14 @@ int64_t conv(Lower* l, int64_t reg, int64_t from, int64_t to) {
 
 int64_t to_bool(Lower* l, LVal v) {
     if (ir_is_float(v.ty)) {
-        return cmp(l, CNe, v.ty, v.reg, fconst(l, v.ty, "0.0"));
+        return (({ __auto_type strata_t671_ = l; __auto_type strata_t672_ = CNe; __auto_type strata_t673_ = v.ty; __auto_type strata_t674_ = v.reg; __auto_type strata_t675_ = fconst(l, v.ty, "0.0"); cmp(strata_t671_, strata_t672_, strata_t673_, strata_t674_, strata_t675_); }));
     }
-    return cmp(l, CNe, v.ty, v.reg, iconst(l, v.ty, 0));
+    return (({ __auto_type strata_t676_ = l; __auto_type strata_t677_ = CNe; __auto_type strata_t678_ = v.ty; __auto_type strata_t679_ = v.reg; __auto_type strata_t680_ = iconst(l, v.ty, 0); cmp(strata_t676_, strata_t677_, strata_t678_, strata_t679_, strata_t680_); }));
 }
 
 int64_t as_ty(Lower* l, LVal v, int64_t ty, int64_t line) {
     if (v.agg) {
-        lw_fail(l, line, str_concat("expected a value, got a ", type_text(v.t)));
+        (({ __auto_type strata_t681_ = l; __auto_type strata_t682_ = line; __auto_type strata_t683_ = str_concat("expected a value, got a ", type_text(v.t)); lw_fail(strata_t681_, strata_t682_, strata_t683_); }));
         return iconst(l, ty, 0);
     }
     return conv(l, v.reg, v.ty, ty);
@@ -7708,7 +7843,7 @@ int64_t parse_int(const char* s) {
     }
     while (i < n) {
         if (s[i] != '_') {
-            v = ((v * base) + ((uint64_t)(digit_val(s[i]))));
+            v = (({ __auto_type strata_t684_ = (v * base); __auto_type strata_t685_ = ((uint64_t)(digit_val(s[i]))); (strata_t684_ + strata_t685_); }));
         }
         i += 1;
     }
@@ -7815,11 +7950,11 @@ bool is_addr_taken(Lower* l, const char* name) {
 LVar declare(Lower* l, const char* name, TypeNode* t, int64_t line) {
     TInfo ti = tinfo(l, t);
     LVar v = (LVar){name, false, (0 - 1), ti.ty, t};
-    if ((ti.kind == TK_AGG()) || ((ti.kind == TK_SCALAR()) && is_addr_taken(l, name))) {
+    if ((({ __auto_type strata_t686_ = ti.kind; __auto_type strata_t687_ = TK_AGG(); (strata_t686_ == strata_t687_); })) || ((({ __auto_type strata_t688_ = ti.kind; __auto_type strata_t689_ = TK_SCALAR(); (strata_t688_ == strata_t689_); })) && is_addr_taken(l, name))) {
         v.mem = true;
         v.reg = temp(l, ti.size, ti.align);
     } else 
-    if (ti.kind == TK_SCALAR()) {
+    if (({ __auto_type strata_t690_ = ti.kind; __auto_type strata_t691_ = TK_SCALAR(); (strata_t690_ == strata_t691_); })) {
         v.reg = vreg(l, ti.ty);
     } else {
         lw_fail(l, line, "a variable can't be void");
@@ -7836,7 +7971,7 @@ void copy_agg(Lower* l, TypeNode* t, int64_t dst, int64_t src, int64_t size) {
     }
     if ((d > 0) && (size == (4 * d))) {
         for (int64_t i = 0; i < d; i++) {
-            store(l, KF32, dst, (4 * i), load(l, KF32, src, (4 * i)));
+            (({ __auto_type strata_t692_ = l; __auto_type strata_t693_ = KF32; __auto_type strata_t694_ = dst; __auto_type strata_t695_ = (4 * i); __auto_type strata_t696_ = load(l, KF32, src, (4 * i)); store(strata_t692_, strata_t693_, strata_t694_, strata_t695_, strata_t696_); }));
         }
     } else {
         copy_mem(l, dst, src, size);
@@ -7847,35 +7982,35 @@ void assign_var(Lower* l, LVar v, LVal val, int64_t line) {
     if (v.mem && (v.ty == KVoid)) {
         TInfo ti = tinfo(l, v.type);
         if (!val.agg) {
-            lw_fail(l, line, str_concat("expected a ", type_text(v.type)));
+            (({ __auto_type strata_t697_ = l; __auto_type strata_t698_ = line; __auto_type strata_t699_ = str_concat("expected a ", type_text(v.type)); lw_fail(strata_t697_, strata_t698_, strata_t699_); }));
             return;
         }
         copy_agg(l, v.type, v.reg, val.reg, ti.size);
     } else 
     if (v.mem) {
-        store(l, v.ty, v.reg, 0, as_ty(l, val, v.ty, line));
+        (({ __auto_type strata_t700_ = l; __auto_type strata_t701_ = v.ty; __auto_type strata_t702_ = v.reg; __auto_type strata_t703_ = as_ty(l, val, v.ty, line); store(strata_t700_, strata_t701_, strata_t702_, 0, strata_t703_); }));
     } else {
-        copy_to(l, v.ty, v.reg, as_ty(l, val, v.ty, line));
+        (({ __auto_type strata_t704_ = l; __auto_type strata_t705_ = v.ty; __auto_type strata_t706_ = v.reg; __auto_type strata_t707_ = as_ty(l, val, v.ty, line); copy_to(strata_t704_, strata_t705_, strata_t706_, strata_t707_); }));
     }
 }
 
 void store_val(Lower* l, TypeNode* t, int64_t addr, int64_t off, LVal val, int64_t line) {
     TInfo ti = tinfo(l, t);
-    if (ti.kind == TK_AGG()) {
+    if (({ __auto_type strata_t708_ = ti.kind; __auto_type strata_t709_ = TK_AGG(); (strata_t708_ == strata_t709_); })) {
         if (!val.agg) {
-            lw_fail(l, line, str_concat("expected a ", type_text(t)));
+            (({ __auto_type strata_t710_ = l; __auto_type strata_t711_ = line; __auto_type strata_t712_ = str_concat("expected a ", type_text(t)); lw_fail(strata_t710_, strata_t711_, strata_t712_); }));
             return;
         }
-        copy_agg(l, t, addr_plus(l, addr, off), val.reg, ti.size);
+        (({ __auto_type strata_t713_ = l; __auto_type strata_t714_ = t; __auto_type strata_t715_ = addr_plus(l, addr, off); copy_agg(strata_t713_, strata_t714_, strata_t715_, val.reg, ti.size); }));
     } else 
-    if (ti.kind == TK_SCALAR()) {
-        store(l, ti.ty, addr, off, as_ty(l, val, ti.ty, line));
+    if (({ __auto_type strata_t716_ = ti.kind; __auto_type strata_t717_ = TK_SCALAR(); (strata_t716_ == strata_t717_); })) {
+        (({ __auto_type strata_t718_ = l; __auto_type strata_t719_ = ti.ty; __auto_type strata_t720_ = addr; __auto_type strata_t721_ = off; __auto_type strata_t722_ = as_ty(l, val, ti.ty, line); store(strata_t718_, strata_t719_, strata_t720_, strata_t721_, strata_t722_); }));
     }
 }
 
 LVal load_val(Lower* l, TypeNode* t, int64_t addr, int64_t off) {
     TInfo ti = tinfo(l, t);
-    if (ti.kind == TK_AGG()) {
+    if (({ __auto_type strata_t723_ = ti.kind; __auto_type strata_t724_ = TK_AGG(); (strata_t723_ == strata_t724_); })) {
         return aggregate(addr_plus(l, addr, off), t);
     }
     return scalar(load(l, ti.ty, addr, off), ti.ty);
@@ -7955,17 +8090,17 @@ LVal lower_expr(Lower* l, Expr* e) {
     switch (e->kind) {
         case ExIntLit:
         {
-            return scalar(iconst(l, KI64, parse_int(e->text)), KI64);
+            return scalar((({ __auto_type strata_t725_ = l; __auto_type strata_t726_ = KI64; __auto_type strata_t727_ = parse_int(e->text); iconst(strata_t725_, strata_t726_, strata_t727_); })), KI64);
             break;
         }
         case ExFloatLit:
         {
-            return scalar(fconst(l, KF64, strip_us(e->text)), KF64);
+            return scalar((({ __auto_type strata_t728_ = l; __auto_type strata_t729_ = KF64; __auto_type strata_t730_ = strip_us(e->text); fconst(strata_t728_, strata_t729_, strata_t730_); })), KF64);
             break;
         }
         case ExCharLit:
         {
-            return scalar(iconst(l, KI8, char_val(e->text)), KI8);
+            return scalar((({ __auto_type strata_t731_ = l; __auto_type strata_t732_ = KI8; __auto_type strata_t733_ = char_val(e->text); iconst(strata_t731_, strata_t732_, strata_t733_); })), KI8);
             break;
         }
         case ExBoolLit:
@@ -8031,7 +8166,7 @@ LVal lower_expr(Lower* l, Expr* e) {
         }
         case ExSizeof:
         {
-            return scalar(iconst(l, KI64, tinfo(l, e->type).size), KI64);
+            return scalar((({ __auto_type strata_t734_ = l; __auto_type strata_t735_ = KI64; __auto_type strata_t736_ = tinfo(l, e->type).size; iconst(strata_t734_, strata_t735_, strata_t736_); })), KI64);
             break;
         }
     }
@@ -8056,7 +8191,7 @@ LVal lower_name(Lower* l, Expr* e) {
     }
     int64_t g = lower__find_global(l, e->text);
     if (g >= 0) {
-        return load_val(l, ((LGlobal*)(l->globals).data)[g].type, sym_addr(l, e->text), 0);
+        return (({ __auto_type strata_t737_ = l; __auto_type strata_t738_ = ((LGlobal*)(l->globals).data)[g].type; __auto_type strata_t739_ = sym_addr(l, e->text); load_val(strata_t737_, strata_t738_, strata_t739_, 0); }));
     }
     for (int64_t i = 0; i < l->members.len; i++) {
         if (str_eq(((const char**)(l->members).data)[i], e->text)) {
@@ -8083,12 +8218,12 @@ LVal lower_unary(Lower* l, Expr* e) {
         return scalar(a, KU64);
     }
     if (str_eq(e->text, "*")) {
-        int64_t p = as_ty(l, lower_expr(l, e->a), KU64, e->line);
+        int64_t p = (({ __auto_type strata_t740_ = l; __auto_type strata_t741_ = lower_expr(l, e->a); as_ty(strata_t740_, strata_t741_, KU64, e->line); }));
         return load_val(l, e->rtype, p, 0);
     }
     LVal v = lower_expr(l, e->a);
     if (str_eq(e->text, "!")) {
-        return scalar(cmp(l, CEq, KU8, to_bool(l, v), iconst(l, KU8, 0)), KU8);
+        return scalar((({ __auto_type strata_t742_ = l; __auto_type strata_t743_ = CEq; __auto_type strata_t744_ = KU8; __auto_type strata_t745_ = to_bool(l, v); __auto_type strata_t746_ = iconst(l, KU8, 0); cmp(strata_t742_, strata_t743_, strata_t744_, strata_t745_, strata_t746_); })), KU8);
     }
     int64_t t = promote(v.ty);
     int64_t x = as_ty(l, v, t, e->line);
@@ -8175,7 +8310,7 @@ LVal combine(Lower* l, Expr* e, LVal left) {
     const char* op = e->text;
     if (str_eq(op, "&&") || str_eq(op, "||")) {
         int64_t r = vreg(l, KU8);
-        copy_to(l, KU8, r, to_bool(l, left));
+        (({ __auto_type strata_t747_ = l; __auto_type strata_t748_ = KU8; __auto_type strata_t749_ = r; __auto_type strata_t750_ = to_bool(l, left); copy_to(strata_t747_, strata_t748_, strata_t749_, strata_t750_); }));
         int64_t rhs = new_label(l);
         int64_t done = new_label(l);
         if (str_eq(op, "&&")) {
@@ -8184,7 +8319,7 @@ LVal combine(Lower* l, Expr* e, LVal left) {
             branch(l, r, done, rhs);
         }
         label(l, rhs);
-        copy_to(l, KU8, r, to_bool(l, lower_expr(l, e->b)));
+        (({ __auto_type strata_t751_ = l; __auto_type strata_t752_ = KU8; __auto_type strata_t753_ = r; __auto_type strata_t754_ = (({ __auto_type strata_t755_ = l; __auto_type strata_t756_ = lower_expr(l, e->b); to_bool(strata_t755_, strata_t756_); })); copy_to(strata_t751_, strata_t752_, strata_t753_, strata_t754_); }));
         jump(l, done);
         label(l, done);
         return scalar(r, KU8);
@@ -8194,7 +8329,7 @@ LVal combine(Lower* l, Expr* e, LVal left) {
     TypeNode* rt = e->b->rtype;
     if (is_mat(lt) || is_quat(lt)) {
         TypeNode* res = e->rtype;
-        int64_t out = temp(l, tinfo(l, res).size, 4);
+        int64_t out = (({ __auto_type strata_t757_ = l; __auto_type strata_t758_ = tinfo(l, res).size; temp(strata_t757_, strata_t758_, 4); }));
         if (is_mat(lt) && is_mat(rt)) {
             call3(l, "srt_mat4_mul", KVoid, out, left.reg, right.reg);
         } else 
@@ -8217,23 +8352,23 @@ LVal combine(Lower* l, Expr* e, LVal left) {
         if (str_eq(op, "!=")) {
             c = CEq;
         }
-        return scalar(cmp(l, c, KI32, eq, iconst(l, KI32, 0)), KU8);
+        return scalar((({ __auto_type strata_t759_ = l; __auto_type strata_t760_ = c; __auto_type strata_t761_ = KI32; __auto_type strata_t762_ = eq; __auto_type strata_t763_ = iconst(l, KI32, 0); cmp(strata_t759_, strata_t760_, strata_t761_, strata_t762_, strata_t763_); })), KU8);
     }
     if (((((str_eq(op, "==") || str_eq(op, "!=")) || str_eq(op, "<")) || str_eq(op, "<=")) || str_eq(op, ">")) || str_eq(op, ">=")) {
-        int64_t t = arith_ty(promote(left.ty), promote(right.ty));
-        return scalar(cmp(l, cond_of(op), t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), KU8);
+        int64_t t = (({ __auto_type strata_t764_ = promote(left.ty); __auto_type strata_t765_ = promote(right.ty); arith_ty(strata_t764_, strata_t765_); }));
+        return scalar((({ __auto_type strata_t766_ = l; __auto_type strata_t767_ = cond_of(op); __auto_type strata_t768_ = t; __auto_type strata_t769_ = as_ty(l, left, t, e->line); __auto_type strata_t770_ = as_ty(l, right, t, e->line); cmp(strata_t766_, strata_t767_, strata_t768_, strata_t769_, strata_t770_); })), KU8);
     }
     int64_t aop = arith_op(op);
     if (aop < 0) {
         lw_fail(l, e->line, str_concat("unsupported operator ", op));
         return left;
     }
-    int64_t t = arith_ty(promote(left.ty), promote(right.ty));
+    int64_t t = (({ __auto_type strata_t771_ = promote(left.ty); __auto_type strata_t772_ = promote(right.ty); arith_ty(strata_t771_, strata_t772_); }));
     if ((aop == OShl) || (aop == OShr)) {
         t = promote(left.ty);
-        return scalar(binop(l, aop, t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), t);
+        return scalar((({ __auto_type strata_t773_ = l; __auto_type strata_t774_ = aop; __auto_type strata_t775_ = t; __auto_type strata_t776_ = as_ty(l, left, t, e->line); __auto_type strata_t777_ = as_ty(l, right, t, e->line); binop(strata_t773_, strata_t774_, strata_t775_, strata_t776_, strata_t777_); })), t);
     }
-    return scalar(binop(l, aop, t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), t);
+    return scalar((({ __auto_type strata_t778_ = l; __auto_type strata_t779_ = aop; __auto_type strata_t780_ = t; __auto_type strata_t781_ = as_ty(l, left, t, e->line); __auto_type strata_t782_ = as_ty(l, right, t, e->line); binop(strata_t778_, strata_t779_, strata_t780_, strata_t781_, strata_t782_); })), t);
 }
 
 LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
@@ -8245,7 +8380,7 @@ LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
         for (int64_t i = 0; i < n; i++) {
             int64_t x = load(l, KF32, a.reg, (4 * i));
             int64_t y = load(l, KF32, b.reg, (4 * i));
-            store(l, KF32, out, (4 * i), binop(l, op, KF32, x, y));
+            (({ __auto_type strata_t783_ = l; __auto_type strata_t784_ = KF32; __auto_type strata_t785_ = out; __auto_type strata_t786_ = (4 * i); __auto_type strata_t787_ = binop(l, op, KF32, x, y); store(strata_t783_, strata_t784_, strata_t785_, strata_t786_, strata_t787_); }));
         }
     } else {
         LVal vv = a;
@@ -8256,7 +8391,7 @@ LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
         }
         int64_t s = as_ty(l, sv, KF32, e->line);
         for (int64_t i = 0; i < n; i++) {
-            store(l, KF32, out, (4 * i), binop(l, OMul, KF32, load(l, KF32, vv.reg, (4 * i)), s));
+            (({ __auto_type strata_t788_ = l; __auto_type strata_t789_ = KF32; __auto_type strata_t790_ = out; __auto_type strata_t791_ = (4 * i); __auto_type strata_t792_ = (({ __auto_type strata_t793_ = l; __auto_type strata_t794_ = OMul; __auto_type strata_t795_ = KF32; __auto_type strata_t796_ = load(l, KF32, vv.reg, (4 * i)); binop(strata_t793_, strata_t794_, strata_t795_, strata_t796_, s); })); store(strata_t788_, strata_t789_, strata_t790_, strata_t791_, strata_t792_); }));
         }
     }
     return aggregate(out, res);
@@ -8285,7 +8420,7 @@ FieldRef field_of(Lower* l, TypeNode* t, const char* name) {
                 k = 3;
             }
             if (k >= 0) {
-                return (FieldRef){true, (4 * k), named("float")};
+                return (({ __auto_type strata_t797_ = (4 * k); __auto_type strata_t798_ = named("float"); (FieldRef){true, strata_t797_, strata_t798_}; }));
             }
         }
         int64_t si = struct_index(l, t->name);
@@ -8303,7 +8438,7 @@ FieldRef field_of(Lower* l, TypeNode* t, const char* name) {
 
 Base field_base(Lower* l, Expr* obj) {
     if (is_ptr(obj->rtype)) {
-        int64_t p = as_ty(l, lower_expr(l, obj), KU64, obj->line);
+        int64_t p = (({ __auto_type strata_t799_ = l; __auto_type strata_t800_ = lower_expr(l, obj); as_ty(strata_t799_, strata_t800_, KU64, obj->line); }));
         return (Base){p, obj->rtype->elem};
     }
     int64_t a = lvalue_addr(l, obj);
@@ -8321,15 +8456,15 @@ Base field_base(Lower* l, Expr* obj) {
 LVal lower_field(Lower* l, Expr* e) {
     TypeNode* ot = e->a->rtype;
     if (is_str(ot) && str_eq(e->field, "len")) {
-        return scalar(call1(l, "srt_str_len", KI64, as_ty(l, lower_expr(l, e->a), KU64, e->line)), KI64);
+        return scalar((({ __auto_type strata_t801_ = l; __auto_type strata_t802_ = KI64; __auto_type strata_t803_ = (({ __auto_type strata_t804_ = l; __auto_type strata_t805_ = lower_expr(l, e->a); as_ty(strata_t804_, strata_t805_, KU64, e->line); })); call1(strata_t801_, "srt_str_len", strata_t802_, strata_t803_); })), KI64);
     }
     if (is_vec(ot) && (str_len(e->field) > 1)) {
         Base b = field_base(l, e->a);
         int64_t n = str_len(e->field);
         int64_t out = temp(l, (4 * n), 4);
         for (int64_t i = 0; i < n; i++) {
-            FieldRef fr = field_of(l, ot, str_sub(e->field, i, 1));
-            store(l, KF32, out, (4 * i), load(l, KF32, b.addr, fr.off));
+            FieldRef fr = (({ __auto_type strata_t806_ = l; __auto_type strata_t807_ = ot; __auto_type strata_t808_ = str_sub(e->field, i, 1); field_of(strata_t806_, strata_t807_, strata_t808_); }));
+            (({ __auto_type strata_t809_ = l; __auto_type strata_t810_ = KF32; __auto_type strata_t811_ = out; __auto_type strata_t812_ = (4 * i); __auto_type strata_t813_ = load(l, KF32, b.addr, fr.off); store(strata_t809_, strata_t810_, strata_t811_, strata_t812_, strata_t813_); }));
         }
         return aggregate(out, e->rtype);
     }
@@ -8349,7 +8484,7 @@ int64_t field_addr(Lower* l, Expr* e) {
 
 int64_t index_addr(Lower* l, Expr* e) {
     TypeNode* ot = e->a->rtype;
-    int64_t idx = as_ty(l, lower_expr(l, e->b), KI64, e->line);
+    int64_t idx = (({ __auto_type strata_t814_ = l; __auto_type strata_t815_ = lower_expr(l, e->b); as_ty(strata_t814_, strata_t815_, KI64, e->line); }));
     int64_t base = (0 - 1);
     int64_t size = 1;
     if (is_dynarr(ot)) {
@@ -8358,10 +8493,10 @@ int64_t index_addr(Lower* l, Expr* e) {
         size = tinfo(l, ot->elem).size;
     } else 
     if (is_str(ot)) {
-        base = as_ty(l, lower_expr(l, e->a), KU64, e->line);
+        base = (({ __auto_type strata_t816_ = l; __auto_type strata_t817_ = lower_expr(l, e->a); as_ty(strata_t816_, strata_t817_, KU64, e->line); }));
     } else 
     if (is_ptr(ot) || ((ot != 0) && ((ot->kind == TyArray) || (ot->kind == TyFixedArray)))) {
-        base = as_ty(l, lower_expr(l, e->a), KU64, e->line);
+        base = (({ __auto_type strata_t818_ = l; __auto_type strata_t819_ = lower_expr(l, e->a); as_ty(strata_t818_, strata_t819_, KU64, e->line); }));
         size = tinfo(l, ot->elem).size;
     } else {
         lw_fail(l, e->line, "can't index this");
@@ -8369,7 +8504,7 @@ int64_t index_addr(Lower* l, Expr* e) {
     }
     int64_t off = idx;
     if (size != 1) {
-        off = binop(l, OMul, KI64, idx, iconst(l, KI64, size));
+        off = (({ __auto_type strata_t820_ = l; __auto_type strata_t821_ = OMul; __auto_type strata_t822_ = KI64; __auto_type strata_t823_ = idx; __auto_type strata_t824_ = iconst(l, KI64, size); binop(strata_t820_, strata_t821_, strata_t822_, strata_t823_, strata_t824_); }));
     }
     return binop(l, OAdd, KU64, base, off);
 }
@@ -8398,7 +8533,7 @@ int64_t lvalue_addr(Lower* l, Expr* e) {
         return index_addr(l, e);
     }
     if ((e->kind == ExUnary) && str_eq(e->text, "*")) {
-        return as_ty(l, lower_expr(l, e->a), KU64, e->line);
+        return (({ __auto_type strata_t825_ = l; __auto_type strata_t826_ = lower_expr(l, e->a); as_ty(strata_t825_, strata_t826_, KU64, e->line); }));
     }
     return (0 - 1);
 }
@@ -8412,7 +8547,7 @@ LVal lower_struct_lit(Lower* l, Expr* e) {
     for (int64_t i = 0; i < e->items.len; i++) {
         if ((si >= 0) && (i < ((StructLay*)(l->structs).data)[si].fields.len)) {
             FieldLay fl = ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[i];
-            store_val(l, fl.type, out, fl.off, lower_expr(l, ((Expr**)(e->items).data)[i]), e->line);
+            (({ __auto_type strata_t827_ = l; __auto_type strata_t828_ = fl.type; __auto_type strata_t829_ = out; __auto_type strata_t830_ = fl.off; __auto_type strata_t831_ = lower_expr(l, ((Expr**)(e->items).data)[i]); store_val(strata_t827_, strata_t828_, strata_t829_, strata_t830_, strata_t831_, e->line); }));
         }
     }
     return aggregate(out, t);
@@ -8427,7 +8562,7 @@ TypeNode* elem_of(TypeNode* t) {
 
 void init_array(Lower* l, int64_t addr, TypeNode* elem) {
     zero_mem(l, addr, 32);
-    store(l, KI64, addr, 24, iconst(l, KI64, tinfo(l, elem).size));
+    (({ __auto_type strata_t832_ = l; __auto_type strata_t833_ = KI64; __auto_type strata_t834_ = addr; __auto_type strata_t835_ = (({ __auto_type strata_t836_ = l; __auto_type strata_t837_ = KI64; __auto_type strata_t838_ = tinfo(l, elem).size; iconst(strata_t836_, strata_t837_, strata_t838_); })); store(strata_t832_, strata_t833_, strata_t834_, 24, strata_t835_); }));
 }
 
 LVal lower_array_lit(Lower* l, Expr* e) {
@@ -8438,7 +8573,7 @@ LVal lower_array_lit(Lower* l, Expr* e) {
     if (e->items.len > 0) {
         int64_t tmp = temp(l, ei.size, ei.align);
         for (int64_t i = 0; i < e->items.len; i++) {
-            store_val(l, elem, tmp, 0, lower_expr(l, ((Expr**)(e->items).data)[i]), e->line);
+            (({ __auto_type strata_t839_ = l; __auto_type strata_t840_ = elem; __auto_type strata_t841_ = tmp; __auto_type strata_t842_ = lower_expr(l, ((Expr**)(e->items).data)[i]); store_val(strata_t839_, strata_t840_, strata_t841_, 0, strata_t842_, e->line); }));
             call2(l, "srt_arr_push", KVoid, out, tmp);
         }
     }
@@ -8450,7 +8585,7 @@ LVal lower_array_lit(Lower* l, Expr* e) {
 LVal lower_cast(Lower* l, Expr* e) {
     LVal v = lower_expr(l, e->a);
     TInfo ti = tinfo(l, e->type);
-    if ((ti.kind != TK_SCALAR()) || v.agg) {
+    if ((({ __auto_type strata_t843_ = ti.kind; __auto_type strata_t844_ = TK_SCALAR(); (strata_t843_ != strata_t844_); })) || v.agg) {
         lw_fail(l, e->line, "unsupported cast");
         return v;
     }
@@ -8471,7 +8606,7 @@ Decl* find_func(Lower* l, const char* name) {
 }
 
 LVal lower_args_f32(Lower* l, Expr* e, int64_t i) {
-    return scalar(as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[i]), KF32, e->line), KF32);
+    return scalar((({ __auto_type strata_t845_ = l; __auto_type strata_t846_ = lower_expr(l, ((Expr**)(e->items).data)[i]); as_ty(strata_t845_, strata_t846_, KF32, e->line); })), KF32);
 }
 
 int64_t vec_addr(Lower* l, Expr* e, int64_t line) {
@@ -8484,9 +8619,9 @@ int64_t vec_addr(Lower* l, Expr* e, int64_t line) {
 }
 
 int64_t vec_dot(Lower* l, int64_t a, int64_t b, int64_t n) {
-    int64_t s = binop(l, OMul, KF32, load(l, KF32, a, 0), load(l, KF32, b, 0));
+    int64_t s = (({ __auto_type strata_t847_ = l; __auto_type strata_t848_ = OMul; __auto_type strata_t849_ = KF32; __auto_type strata_t850_ = load(l, KF32, a, 0); __auto_type strata_t851_ = load(l, KF32, b, 0); binop(strata_t847_, strata_t848_, strata_t849_, strata_t850_, strata_t851_); }));
     for (int64_t i = 1; i < n; i++) {
-        s = binop(l, OAdd, KF32, s, binop(l, OMul, KF32, load(l, KF32, a, (4 * i)), load(l, KF32, b, (4 * i))));
+        s = (({ __auto_type strata_t852_ = l; __auto_type strata_t853_ = OAdd; __auto_type strata_t854_ = KF32; __auto_type strata_t855_ = s; __auto_type strata_t856_ = (({ __auto_type strata_t857_ = l; __auto_type strata_t858_ = OMul; __auto_type strata_t859_ = KF32; __auto_type strata_t860_ = load(l, KF32, a, (4 * i)); __auto_type strata_t861_ = load(l, KF32, b, (4 * i)); binop(strata_t857_, strata_t858_, strata_t859_, strata_t860_, strata_t861_); })); binop(strata_t852_, strata_t853_, strata_t854_, strata_t855_, strata_t856_); }));
     }
     return s;
 }
@@ -8504,7 +8639,7 @@ LVal lower_call(Lower* l, Expr* e) {
                 t = named(((Expr**)(e->items).data)[0]->text);
             }
             int64_t size = tinfo(l, t).size;
-            return scalar(call2(l, "srt_arena_alloc", KU64, arena, iconst(l, KI64, size)), KU64);
+            return scalar((({ __auto_type strata_t862_ = l; __auto_type strata_t863_ = KU64; __auto_type strata_t864_ = arena; __auto_type strata_t865_ = iconst(l, KI64, size); call2(strata_t862_, "srt_arena_alloc", strata_t863_, strata_t864_, strata_t865_); })), KU64);
         }
         if ((str_eq(callee->field, "push") && (e->items.len == 1)) && is_dynarr(callee->a->rtype)) {
             int64_t hdr = lvalue_addr(l, callee->a);
@@ -8514,7 +8649,7 @@ LVal lower_call(Lower* l, Expr* e) {
             TypeNode* elem = elem_of(callee->a->rtype);
             TInfo ei = tinfo(l, elem);
             int64_t tmp = temp(l, ei.size, ei.align);
-            store_val(l, elem, tmp, 0, lower_expr(l, ((Expr**)(e->items).data)[0]), e->line);
+            (({ __auto_type strata_t866_ = l; __auto_type strata_t867_ = elem; __auto_type strata_t868_ = tmp; __auto_type strata_t869_ = lower_expr(l, ((Expr**)(e->items).data)[0]); store_val(strata_t866_, strata_t867_, strata_t868_, 0, strata_t869_, e->line); }));
             call2(l, "srt_arr_push", KVoid, hdr, tmp);
             return scalar(iconst(l, KI64, 0), KI64);
         }
@@ -8534,19 +8669,19 @@ LVal lower_call(Lower* l, Expr* e) {
             call1(l, "srt_print_str", KVoid, v.reg);
         } else 
         if (v.agg) {
-            lw_fail(l, e->line, str_concat("can't print a ", type_text(v.t)));
+            (({ __auto_type strata_t870_ = l; __auto_type strata_t871_ = e->line; __auto_type strata_t872_ = str_concat("can't print a ", type_text(v.t)); lw_fail(strata_t870_, strata_t871_, strata_t872_); }));
         } else 
         if (ir_is_float(v.ty)) {
-            call1(l, "srt_print_f64", KVoid, conv(l, v.reg, v.ty, KF64));
+            (({ __auto_type strata_t873_ = l; __auto_type strata_t874_ = KVoid; __auto_type strata_t875_ = conv(l, v.reg, v.ty, KF64); call1(strata_t873_, "srt_print_f64", strata_t874_, strata_t875_); }));
         } else {
-            call1(l, "srt_print_i64", KVoid, conv(l, v.reg, v.ty, KI64));
+            (({ __auto_type strata_t876_ = l; __auto_type strata_t877_ = KVoid; __auto_type strata_t878_ = conv(l, v.reg, v.ty, KI64); call1(strata_t876_, "srt_print_i64", strata_t877_, strata_t878_); }));
         }
         return scalar(iconst(l, KI64, 0), KI64);
     }
     if (str_eq(nm, "arena") && (n == 0)) {
         int64_t out = temp(l, 8, 8);
         zero_mem(l, out, 8);
-        return aggregate(out, named("Arena"));
+        return (({ __auto_type strata_t879_ = out; __auto_type strata_t880_ = named("Arena"); aggregate(strata_t879_, strata_t880_); }));
     }
     int64_t dim = vec_dim_of(nm);
     if ((dim > 0) && (!str_eq(nm, "quat"))) {
@@ -8558,10 +8693,10 @@ LVal lower_call(Lower* l, Expr* e) {
             }
         } else {
             for (int64_t i = 0; i < n; i++) {
-                store(l, KF32, out, (4 * i), lower_args_f32(l, e, i).reg);
+                (({ __auto_type strata_t881_ = l; __auto_type strata_t882_ = KF32; __auto_type strata_t883_ = out; __auto_type strata_t884_ = (4 * i); __auto_type strata_t885_ = lower_args_f32(l, e, i).reg; store(strata_t881_, strata_t882_, strata_t883_, strata_t884_, strata_t885_); }));
             }
         }
-        return aggregate(out, named(nm));
+        return (({ __auto_type strata_t886_ = out; __auto_type strata_t887_ = named(nm); aggregate(strata_t886_, strata_t887_); }));
     }
     if (str_eq(nm, "dot") && (n == 2)) {
         int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
@@ -8572,21 +8707,21 @@ LVal lower_call(Lower* l, Expr* e) {
     if (str_eq(nm, "length") && (n == 1)) {
         int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
         int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
-        return scalar(unop(l, OSqrt, KF32, vec_dot(l, a, a, d)), KF32);
+        return scalar((({ __auto_type strata_t888_ = l; __auto_type strata_t889_ = OSqrt; __auto_type strata_t890_ = KF32; __auto_type strata_t891_ = vec_dot(l, a, a, d); unop(strata_t888_, strata_t889_, strata_t890_, strata_t891_); })), KF32);
     }
     if (str_eq(nm, "normalize") && (n == 1)) {
         int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
         int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
         int64_t out = temp(l, (4 * d), 4);
         copy_agg(l, ((Expr**)(e->items).data)[0]->rtype, out, a, (4 * d));
-        int64_t len = unop(l, OSqrt, KF32, vec_dot(l, a, a, d));
+        int64_t len = (({ __auto_type strata_t892_ = l; __auto_type strata_t893_ = OSqrt; __auto_type strata_t894_ = KF32; __auto_type strata_t895_ = vec_dot(l, a, a, d); unop(strata_t892_, strata_t893_, strata_t894_, strata_t895_); }));
         int64_t scale = new_label(l);
         int64_t done = new_label(l);
-        branch(l, cmp(l, CEq, KF32, len, fconst(l, KF32, "0.0")), done, scale);
+        (({ __auto_type strata_t896_ = l; __auto_type strata_t897_ = (({ __auto_type strata_t898_ = l; __auto_type strata_t899_ = CEq; __auto_type strata_t900_ = KF32; __auto_type strata_t901_ = len; __auto_type strata_t902_ = fconst(l, KF32, "0.0"); cmp(strata_t898_, strata_t899_, strata_t900_, strata_t901_, strata_t902_); })); branch(strata_t896_, strata_t897_, done, scale); }));
         label(l, scale);
-        int64_t inv = binop(l, ODiv, KF32, fconst(l, KF32, "1.0"), len);
+        int64_t inv = (({ __auto_type strata_t903_ = l; __auto_type strata_t904_ = ODiv; __auto_type strata_t905_ = KF32; __auto_type strata_t906_ = fconst(l, KF32, "1.0"); binop(strata_t903_, strata_t904_, strata_t905_, strata_t906_, len); }));
         for (int64_t i = 0; i < d; i++) {
-            store(l, KF32, out, (4 * i), binop(l, OMul, KF32, load(l, KF32, out, (4 * i)), inv));
+            (({ __auto_type strata_t907_ = l; __auto_type strata_t908_ = KF32; __auto_type strata_t909_ = out; __auto_type strata_t910_ = (4 * i); __auto_type strata_t911_ = (({ __auto_type strata_t912_ = l; __auto_type strata_t913_ = OMul; __auto_type strata_t914_ = KF32; __auto_type strata_t915_ = load(l, KF32, out, (4 * i)); binop(strata_t912_, strata_t913_, strata_t914_, strata_t915_, inv); })); store(strata_t907_, strata_t908_, strata_t909_, strata_t910_, strata_t911_); }));
         }
         jump(l, done);
         label(l, done);
@@ -8599,11 +8734,11 @@ LVal lower_call(Lower* l, Expr* e) {
         for (int64_t i = 0; i < 3; i++) {
             int64_t j = ((i + 1) % 3);
             int64_t k = ((i + 2) % 3);
-            int64_t p = binop(l, OMul, KF32, load(l, KF32, a, (4 * j)), load(l, KF32, b, (4 * k)));
-            int64_t q = binop(l, OMul, KF32, load(l, KF32, a, (4 * k)), load(l, KF32, b, (4 * j)));
-            store(l, KF32, out, (4 * i), binop(l, OSub, KF32, p, q));
+            int64_t p = (({ __auto_type strata_t916_ = l; __auto_type strata_t917_ = OMul; __auto_type strata_t918_ = KF32; __auto_type strata_t919_ = load(l, KF32, a, (4 * j)); __auto_type strata_t920_ = load(l, KF32, b, (4 * k)); binop(strata_t916_, strata_t917_, strata_t918_, strata_t919_, strata_t920_); }));
+            int64_t q = (({ __auto_type strata_t921_ = l; __auto_type strata_t922_ = OMul; __auto_type strata_t923_ = KF32; __auto_type strata_t924_ = load(l, KF32, a, (4 * k)); __auto_type strata_t925_ = load(l, KF32, b, (4 * j)); binop(strata_t921_, strata_t922_, strata_t923_, strata_t924_, strata_t925_); }));
+            (({ __auto_type strata_t926_ = l; __auto_type strata_t927_ = KF32; __auto_type strata_t928_ = out; __auto_type strata_t929_ = (4 * i); __auto_type strata_t930_ = binop(l, OSub, KF32, p, q); store(strata_t926_, strata_t927_, strata_t928_, strata_t929_, strata_t930_); }));
         }
-        return aggregate(out, named("vec3"));
+        return (({ __auto_type strata_t931_ = out; __auto_type strata_t932_ = named("vec3"); aggregate(strata_t931_, strata_t932_); }));
     }
     if ((str_eq(nm, "min") || str_eq(nm, "max")) && (n == 2)) {
         int64_t a = lower_args_f32(l, e, 0).reg;
@@ -8616,7 +8751,7 @@ LVal lower_call(Lower* l, Expr* e) {
         if (str_eq(nm, "max")) {
             c = CGt;
         }
-        branch(l, cmp(l, c, KF32, a, b), take, done);
+        (({ __auto_type strata_t933_ = l; __auto_type strata_t934_ = cmp(l, c, KF32, a, b); branch(strata_t933_, strata_t934_, take, done); }));
         label(l, take);
         copy_to(l, KF32, r, a);
         jump(l, done);
@@ -8633,12 +8768,12 @@ LVal lower_call(Lower* l, Expr* e) {
         int64_t high = new_label(l);
         int64_t done = new_label(l);
         copy_to(l, KF32, r, x);
-        branch(l, cmp(l, CLt, KF32, x, lo), low, notlow);
+        (({ __auto_type strata_t935_ = l; __auto_type strata_t936_ = cmp(l, CLt, KF32, x, lo); branch(strata_t935_, strata_t936_, low, notlow); }));
         label(l, low);
         copy_to(l, KF32, r, lo);
         jump(l, done);
         label(l, notlow);
-        branch(l, cmp(l, CGt, KF32, x, hi), high, done);
+        (({ __auto_type strata_t937_ = l; __auto_type strata_t938_ = cmp(l, CGt, KF32, x, hi); branch(strata_t937_, strata_t938_, high, done); }));
         label(l, high);
         copy_to(l, KF32, r, hi);
         jump(l, done);
@@ -8649,31 +8784,31 @@ LVal lower_call(Lower* l, Expr* e) {
         int64_t a = lower_args_f32(l, e, 0).reg;
         int64_t b = lower_args_f32(l, e, 1).reg;
         int64_t t = lower_args_f32(l, e, 2).reg;
-        return scalar(binop(l, OAdd, KF32, a, binop(l, OMul, KF32, binop(l, OSub, KF32, b, a), t)), KF32);
+        return scalar((({ __auto_type strata_t939_ = l; __auto_type strata_t940_ = OAdd; __auto_type strata_t941_ = KF32; __auto_type strata_t942_ = a; __auto_type strata_t943_ = (({ __auto_type strata_t944_ = l; __auto_type strata_t945_ = OMul; __auto_type strata_t946_ = KF32; __auto_type strata_t947_ = binop(l, OSub, KF32, b, a); binop(strata_t944_, strata_t945_, strata_t946_, strata_t947_, t); })); binop(strata_t939_, strata_t940_, strata_t941_, strata_t942_, strata_t943_); })), KF32);
     }
     if (str_eq(nm, "alloc") && (n == 1)) {
         LVal v = lower_expr(l, ((Expr**)(e->items).data)[0]);
         TypeNode* t = ((Expr**)(e->items).data)[0]->rtype;
         TInfo ti = tinfo(l, t);
-        int64_t p = call1(l, "srt_heap_alloc", KU64, iconst(l, KI64, ti.size));
+        int64_t p = (({ __auto_type strata_t948_ = l; __auto_type strata_t949_ = KU64; __auto_type strata_t950_ = iconst(l, KI64, ti.size); call1(strata_t948_, "srt_heap_alloc", strata_t949_, strata_t950_); }));
         store_val(l, t, p, 0, v, e->line);
         return scalar(p, KU64);
     }
     if (str_eq(nm, "substr") && (n == 3)) {
-        int64_t s = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KU64, e->line);
-        int64_t a = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[1]), KI64, e->line);
-        int64_t c = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[2]), KI64, e->line);
+        int64_t s = (({ __auto_type strata_t951_ = l; __auto_type strata_t952_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t951_, strata_t952_, KU64, e->line); }));
+        int64_t a = (({ __auto_type strata_t953_ = l; __auto_type strata_t954_ = lower_expr(l, ((Expr**)(e->items).data)[1]); as_ty(strata_t953_, strata_t954_, KI64, e->line); }));
+        int64_t c = (({ __auto_type strata_t955_ = l; __auto_type strata_t956_ = lower_expr(l, ((Expr**)(e->items).data)[2]); as_ty(strata_t955_, strata_t956_, KI64, e->line); }));
         return scalar(call3(l, "srt_str_sub", KU64, s, a, c), KU64);
     }
     if (str_eq(nm, "int_to_str") && (n == 1)) {
-        return scalar(call1(l, "srt_str_from_int", KU64, as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KI64, e->line)), KU64);
+        return scalar((({ __auto_type strata_t957_ = l; __auto_type strata_t958_ = KU64; __auto_type strata_t959_ = (({ __auto_type strata_t960_ = l; __auto_type strata_t961_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t960_, strata_t961_, KI64, e->line); })); call1(strata_t957_, "srt_str_from_int", strata_t958_, strata_t959_); })), KU64);
     }
     if (str_eq(nm, "read_file") && (n == 1)) {
-        return scalar(call1(l, "srt_read_file", KU64, as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KU64, e->line)), KU64);
+        return scalar((({ __auto_type strata_t962_ = l; __auto_type strata_t963_ = KU64; __auto_type strata_t964_ = (({ __auto_type strata_t965_ = l; __auto_type strata_t966_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t965_, strata_t966_, KU64, e->line); })); call1(strata_t962_, "srt_read_file", strata_t963_, strata_t964_); })), KU64);
     }
     if (str_eq(nm, "write_file") && (n == 2)) {
-        int64_t p = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[0]), KU64, e->line);
-        int64_t d = as_ty(l, lower_expr(l, ((Expr**)(e->items).data)[1]), KU64, e->line);
+        int64_t p = (({ __auto_type strata_t967_ = l; __auto_type strata_t968_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t967_, strata_t968_, KU64, e->line); }));
+        int64_t d = (({ __auto_type strata_t969_ = l; __auto_type strata_t970_ = lower_expr(l, ((Expr**)(e->items).data)[1]); as_ty(strata_t969_, strata_t970_, KU64, e->line); }));
         return scalar(call2(l, "srt_write_file", KU8, p, d), KU8);
     }
     if (str_eq(nm, "cstr") && (n == 1)) {
@@ -8703,7 +8838,7 @@ bool is_math_builtin(const char* nm) {
 
 LVal lower_math_builtin(Lower* l, Expr* e, const char* nm) {
     TypeNode* res = e->rtype;
-    int64_t out = temp(l, tinfo(l, res).size, 4);
+    int64_t out = (({ __auto_type strata_t971_ = l; __auto_type strata_t972_ = tinfo(l, res).size; temp(strata_t971_, strata_t972_, 4); }));
     Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     ({ int64_t _e = out; arr_push(&(args), &_e); });
     for (int64_t i = 0; i < e->items.len; i++) {
@@ -8711,7 +8846,7 @@ LVal lower_math_builtin(Lower* l, Expr* e, const char* nm) {
         if ((is_vec(a->rtype) || is_quat(a->rtype)) || is_mat(a->rtype)) {
             ({ int64_t _e = vec_addr(l, a, e->line); arr_push(&(args), &_e); });
         } else {
-            ({ int64_t _e = as_ty(l, lower_expr(l, a), KF32, e->line); arr_push(&(args), &_e); });
+            ({ int64_t _e = (({ __auto_type strata_t973_ = l; __auto_type strata_t974_ = lower_expr(l, a); as_ty(strata_t973_, strata_t974_, KF32, e->line); })); arr_push(&(args), &_e); });
         }
     }
     call(l, str_concat("srt_", nm), KVoid, args);
@@ -8731,14 +8866,14 @@ LVal call_strata(Lower* l, Decl* d, Expr* e) {
             TypeNode* pt = ((Param*)(d->params).data)[i].type;
             TInfo pi = tinfo(l, pt);
             LVal v = lower_expr(l, ((Expr**)(e->items).data)[i]);
-            if (pi.kind == TK_SCALAR()) {
+            if (({ __auto_type strata_t975_ = pi.kind; __auto_type strata_t976_ = TK_SCALAR(); (strata_t975_ == strata_t976_); })) {
                 ({ int64_t _e = as_ty(l, v, pi.ty, e->line); arr_push(&(args), &_e); });
             } else 
             if (!v.agg) {
-                lw_fail(l, e->line, str_concat("expected a ", type_text(pt)));
+                (({ __auto_type strata_t977_ = l; __auto_type strata_t978_ = e->line; __auto_type strata_t979_ = str_concat("expected a ", type_text(pt)); lw_fail(strata_t977_, strata_t978_, strata_t979_); }));
             } else 
             if (abi_small(pi.size)) {
-                ({ int64_t _e = load(l, abi_int_of(pi.size), v.reg, 0); arr_push(&(args), &_e); });
+                ({ int64_t _e = (({ __auto_type strata_t980_ = l; __auto_type strata_t981_ = abi_int_of(pi.size); load(strata_t980_, strata_t981_, v.reg, 0); })); arr_push(&(args), &_e); });
             } else {
                 int64_t copy = temp(l, pi.size, pi.align);
                 copy_mem(l, copy, v.reg, pi.size);
@@ -8746,20 +8881,20 @@ LVal call_strata(Lower* l, Decl* d, Expr* e) {
             }
         }
     }
-    if (ri.kind == TK_VOID()) {
+    if (({ __auto_type strata_t982_ = ri.kind; __auto_type strata_t983_ = TK_VOID(); (strata_t982_ == strata_t983_); })) {
         call(l, d->name, KVoid, args);
         return scalar(iconst(l, KI64, 0), KI64);
     }
-    if (ri.kind == TK_SCALAR()) {
+    if (({ __auto_type strata_t984_ = ri.kind; __auto_type strata_t985_ = TK_SCALAR(); (strata_t984_ == strata_t985_); })) {
         return scalar(call(l, d->name, ri.ty, args), ri.ty);
     }
     if (out >= 0) {
         call(l, d->name, KVoid, args);
         return aggregate(out, d->ret);
     }
-    int64_t bits = call(l, d->name, abi_int_of(ri.size), args);
+    int64_t bits = (({ __auto_type strata_t986_ = l; __auto_type strata_t987_ = d->name; __auto_type strata_t988_ = abi_int_of(ri.size); call(strata_t986_, strata_t987_, strata_t988_, args); }));
     int64_t box = temp(l, ri.size, ri.align);
-    store(l, abi_int_of(ri.size), box, 0, bits);
+    (({ __auto_type strata_t989_ = l; __auto_type strata_t990_ = abi_int_of(ri.size); store(strata_t989_, strata_t990_, box, 0, bits); }));
     return aggregate(box, d->ret);
 }
 
@@ -8815,9 +8950,9 @@ void lower_stmt(Lower* l, Stmt* s) {
                         zero_mem(l, lv.reg, ti.size);
                     } else 
                     if (ir_is_float(lv.ty)) {
-                        copy_to(l, lv.ty, lv.reg, fconst(l, lv.ty, "0.0"));
+                        (({ __auto_type strata_t991_ = l; __auto_type strata_t992_ = lv.ty; __auto_type strata_t993_ = lv.reg; __auto_type strata_t994_ = fconst(l, lv.ty, "0.0"); copy_to(strata_t991_, strata_t992_, strata_t993_, strata_t994_); }));
                     } else {
-                        copy_to(l, lv.ty, lv.reg, iconst(l, lv.ty, 0));
+                        (({ __auto_type strata_t995_ = l; __auto_type strata_t996_ = lv.ty; __auto_type strata_t997_ = lv.reg; __auto_type strata_t998_ = iconst(l, lv.ty, 0); copy_to(strata_t995_, strata_t996_, strata_t997_, strata_t998_); }));
                     }
                 }
             }
@@ -8836,7 +8971,7 @@ void lower_stmt(Lower* l, Stmt* s) {
         case StIf:
         {
             {
-                int64_t c = to_bool(l, lower_expr(l, s->cond));
+                int64_t c = (({ __auto_type strata_t999_ = l; __auto_type strata_t1000_ = lower_expr(l, s->cond); to_bool(strata_t999_, strata_t1000_); }));
                 int64_t then_l = new_label(l);
                 int64_t else_l = new_label(l);
                 int64_t done = new_label(l);
@@ -8860,7 +8995,7 @@ void lower_stmt(Lower* l, Stmt* s) {
                 int64_t body = new_label(l);
                 int64_t done = new_label(l);
                 label(l, head);
-                branch(l, to_bool(l, lower_expr(l, s->cond)), body, done);
+                (({ __auto_type strata_t1001_ = l; __auto_type strata_t1002_ = (({ __auto_type strata_t1003_ = l; __auto_type strata_t1004_ = lower_expr(l, s->cond); to_bool(strata_t1003_, strata_t1004_); })); branch(strata_t1001_, strata_t1002_, body, done); }));
                 label(l, body);
                 loop_body(l, s->body, done, head);
                 jump(l, head);
@@ -8885,7 +9020,7 @@ void lower_stmt(Lower* l, Stmt* s) {
                 int64_t arena = temp(l, 8, 8);
                 zero_mem(l, arena, 8);
                 if (str_len(s->name) > 0) {
-                    ({ LVar _e = (LVar){s->name, true, arena, KVoid, named("Arena")}; arr_push(&(l->vars), &_e); });
+                    ({ LVar _e = (({ __auto_type strata_t1005_ = s->name; __auto_type strata_t1006_ = arena; __auto_type strata_t1007_ = KVoid; __auto_type strata_t1008_ = named("Arena"); (LVar){strata_t1005_, true, strata_t1006_, strata_t1007_, strata_t1008_}; })); arr_push(&(l->vars), &_e); });
                 }
                 ({ int64_t _e = arena; arr_push(&(l->regions), &_e); });
                 if (s->body != 0) {
@@ -8913,7 +9048,7 @@ void lower_stmt(Lower* l, Stmt* s) {
                     } else {
                         jump(l, ((int64_t*)(l->cont_labels).data)[top]);
                     }
-                    label(l, new_label(l));
+                    (({ __auto_type strata_t1009_ = l; __auto_type strata_t1010_ = new_label(l); label(strata_t1009_, strata_t1010_); }));
                 }
             }
             break;
@@ -8941,20 +9076,20 @@ void lower_for(Lower* l, Stmt* s) {
     Expr* it = s->iter;
     push_scope(l);
     if (((it != 0) && (it->kind == ExBinary)) && str_eq(it->text, "..")) {
-        LVar i = declare(l, s->name, named("int"), s->line);
-        assign_var(l, i, lower_expr(l, it->a), s->line);
+        LVar i = (({ __auto_type strata_t1011_ = l; __auto_type strata_t1012_ = s->name; __auto_type strata_t1013_ = named("int"); declare(strata_t1011_, strata_t1012_, strata_t1013_, s->line); }));
+        (({ __auto_type strata_t1014_ = l; __auto_type strata_t1015_ = i; __auto_type strata_t1016_ = lower_expr(l, it->a); assign_var(strata_t1014_, strata_t1015_, strata_t1016_, s->line); }));
         int64_t head = new_label(l);
         int64_t body = new_label(l);
         int64_t step = new_label(l);
         int64_t done = new_label(l);
         label(l, head);
         int64_t cur = var_value(l, i);
-        int64_t hi = as_ty(l, lower_expr(l, it->b), KI64, s->line);
-        branch(l, cmp(l, CLt, KI64, cur, hi), body, done);
+        int64_t hi = (({ __auto_type strata_t1017_ = l; __auto_type strata_t1018_ = lower_expr(l, it->b); as_ty(strata_t1017_, strata_t1018_, KI64, s->line); }));
+        (({ __auto_type strata_t1019_ = l; __auto_type strata_t1020_ = cmp(l, CLt, KI64, cur, hi); branch(strata_t1019_, strata_t1020_, body, done); }));
         label(l, body);
         loop_body(l, s->body, done, step);
         label(l, step);
-        assign_var(l, i, scalar(binop(l, OAdd, KI64, var_value(l, i), iconst(l, KI64, 1)), KI64), s->line);
+        (({ __auto_type strata_t1021_ = l; __auto_type strata_t1022_ = i; __auto_type strata_t1023_ = scalar((({ __auto_type strata_t1024_ = l; __auto_type strata_t1025_ = OAdd; __auto_type strata_t1026_ = KI64; __auto_type strata_t1027_ = var_value(l, i); __auto_type strata_t1028_ = iconst(l, KI64, 1); binop(strata_t1024_, strata_t1025_, strata_t1026_, strata_t1027_, strata_t1028_); })), KI64); assign_var(strata_t1021_, strata_t1022_, strata_t1023_, s->line); }));
         jump(l, head);
         label(l, done);
     } else 
@@ -8965,20 +9100,20 @@ void lower_for(Lower* l, Stmt* s) {
         TypeNode* elem = elem_of(it->rtype);
         int64_t size = tinfo(l, elem).size;
         int64_t idx = vreg(l, KI64);
-        copy_to(l, KI64, idx, iconst(l, KI64, 0));
+        (({ __auto_type strata_t1029_ = l; __auto_type strata_t1030_ = KI64; __auto_type strata_t1031_ = idx; __auto_type strata_t1032_ = iconst(l, KI64, 0); copy_to(strata_t1029_, strata_t1030_, strata_t1031_, strata_t1032_); }));
         LVar x = declare(l, s->name, elem, s->line);
         int64_t head = new_label(l);
         int64_t body = new_label(l);
         int64_t step = new_label(l);
         int64_t done = new_label(l);
         label(l, head);
-        branch(l, cmp(l, CLt, KI64, idx, load(l, KI64, hdr, 8)), body, done);
+        (({ __auto_type strata_t1033_ = l; __auto_type strata_t1034_ = (({ __auto_type strata_t1035_ = l; __auto_type strata_t1036_ = CLt; __auto_type strata_t1037_ = KI64; __auto_type strata_t1038_ = idx; __auto_type strata_t1039_ = load(l, KI64, hdr, 8); cmp(strata_t1035_, strata_t1036_, strata_t1037_, strata_t1038_, strata_t1039_); })); branch(strata_t1033_, strata_t1034_, body, done); }));
         label(l, body);
-        int64_t addr = binop(l, OAdd, KU64, load(l, KU64, hdr, 0), binop(l, OMul, KI64, idx, iconst(l, KI64, size)));
-        assign_var(l, x, load_val(l, elem, addr, 0), s->line);
+        int64_t addr = (({ __auto_type strata_t1040_ = l; __auto_type strata_t1041_ = OAdd; __auto_type strata_t1042_ = KU64; __auto_type strata_t1043_ = load(l, KU64, hdr, 0); __auto_type strata_t1044_ = (({ __auto_type strata_t1045_ = l; __auto_type strata_t1046_ = OMul; __auto_type strata_t1047_ = KI64; __auto_type strata_t1048_ = idx; __auto_type strata_t1049_ = iconst(l, KI64, size); binop(strata_t1045_, strata_t1046_, strata_t1047_, strata_t1048_, strata_t1049_); })); binop(strata_t1040_, strata_t1041_, strata_t1042_, strata_t1043_, strata_t1044_); }));
+        (({ __auto_type strata_t1050_ = l; __auto_type strata_t1051_ = x; __auto_type strata_t1052_ = load_val(l, elem, addr, 0); assign_var(strata_t1050_, strata_t1051_, strata_t1052_, s->line); }));
         loop_body(l, s->body, done, step);
         label(l, step);
-        copy_to(l, KI64, idx, binop(l, OAdd, KI64, idx, iconst(l, KI64, 1)));
+        (({ __auto_type strata_t1053_ = l; __auto_type strata_t1054_ = KI64; __auto_type strata_t1055_ = idx; __auto_type strata_t1056_ = (({ __auto_type strata_t1057_ = l; __auto_type strata_t1058_ = OAdd; __auto_type strata_t1059_ = KI64; __auto_type strata_t1060_ = idx; __auto_type strata_t1061_ = iconst(l, KI64, 1); binop(strata_t1057_, strata_t1058_, strata_t1059_, strata_t1060_, strata_t1061_); })); copy_to(strata_t1053_, strata_t1054_, strata_t1055_, strata_t1056_); }));
         jump(l, head);
         label(l, done);
     } else {
@@ -9012,8 +9147,8 @@ void lower_switch(Lower* l, Stmt* s) {
         SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
         for (int64_t j = 0; j < sc.values.len; j++) {
             int64_t next = new_label(l);
-            int64_t v = as_ty(l, lower_expr(l, ((Expr**)(sc.values).data)[j]), t, s->line);
-            branch(l, cmp(l, CEq, t, x, v), ((int64_t*)(bodies).data)[i], next);
+            int64_t v = (({ __auto_type strata_t1062_ = l; __auto_type strata_t1063_ = lower_expr(l, ((Expr**)(sc.values).data)[j]); as_ty(strata_t1062_, strata_t1063_, t, s->line); }));
+            (({ __auto_type strata_t1064_ = l; __auto_type strata_t1065_ = cmp(l, CEq, t, x, v); branch(strata_t1064_, strata_t1065_, ((int64_t*)(bodies).data)[i], next); }));
             label(l, next);
         }
     }
@@ -9047,7 +9182,7 @@ void lower_assign(Lower* l, Stmt* s) {
     LVal val = lower_expr(l, s->value);
     if (!str_eq(op, "=")) {
         LVal cur = scalar((0 - 1), ti.ty);
-        if (ti.kind == TK_AGG()) {
+        if (({ __auto_type strata_t1066_ = ti.kind; __auto_type strata_t1067_ = TK_AGG(); (strata_t1066_ == strata_t1067_); })) {
             cur = aggregate(addr, tt);
         } else 
         if (in_reg) {
@@ -9080,44 +9215,44 @@ LVal combine_values(Lower* l, Expr* e, LVal left, LVal right) {
         lw_fail(l, e->line, str_concat(str_concat("unsupported operator ", e->text), "="));
         return left;
     }
-    int64_t t = arith_ty(promote(left.ty), promote(right.ty));
+    int64_t t = (({ __auto_type strata_t1068_ = promote(left.ty); __auto_type strata_t1069_ = promote(right.ty); arith_ty(strata_t1068_, strata_t1069_); }));
     if ((aop == OShl) || (aop == OShr)) {
         t = promote(left.ty);
     }
-    return scalar(binop(l, aop, t, as_ty(l, left, t, e->line), as_ty(l, right, t, e->line)), t);
+    return scalar((({ __auto_type strata_t1070_ = l; __auto_type strata_t1071_ = aop; __auto_type strata_t1072_ = t; __auto_type strata_t1073_ = as_ty(l, left, t, e->line); __auto_type strata_t1074_ = as_ty(l, right, t, e->line); binop(strata_t1070_, strata_t1071_, strata_t1072_, strata_t1073_, strata_t1074_); })), t);
 }
 
 void lower_return(Lower* l, Stmt* s) {
     TInfo ri = tinfo(l, l->ret_type);
-    if ((s->expr == 0) || (ri.kind == TK_VOID())) {
+    if ((s->expr == 0) || (({ __auto_type strata_t1075_ = ri.kind; __auto_type strata_t1076_ = TK_VOID(); (strata_t1075_ == strata_t1076_); }))) {
         if (s->expr != 0) {
             lower_expr(l, s->expr);
         }
         free_regions(l, 0);
         int64_t r = (0 - 1);
-        if (ri.kind == TK_SCALAR()) {
+        if (({ __auto_type strata_t1077_ = ri.kind; __auto_type strata_t1078_ = TK_SCALAR(); (strata_t1077_ == strata_t1078_); })) {
             r = iconst(l, ri.ty, 0);
         }
-        emit(l, new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)));
+        (({ __auto_type strata_t1079_ = l; __auto_type strata_t1080_ = new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)); emit(strata_t1079_, strata_t1080_); }));
     } else {
         LVal v = lower_expr(l, s->expr);
         int64_t r = (0 - 1);
-        if (ri.kind == TK_SCALAR()) {
+        if (({ __auto_type strata_t1081_ = ri.kind; __auto_type strata_t1082_ = TK_SCALAR(); (strata_t1081_ == strata_t1082_); })) {
             r = as_ty(l, v, ri.ty, s->line);
         } else 
         if (!v.agg) {
-            lw_fail(l, s->line, str_concat("expected a ", type_text(l->ret_type)));
+            (({ __auto_type strata_t1083_ = l; __auto_type strata_t1084_ = s->line; __auto_type strata_t1085_ = str_concat("expected a ", type_text(l->ret_type)); lw_fail(strata_t1083_, strata_t1084_, strata_t1085_); }));
         } else 
         if (l->sret >= 0) {
             copy_mem(l, l->sret, v.reg, ri.size);
             r = l->sret;
         } else {
-            r = load(l, abi_int_of(ri.size), v.reg, 0);
+            r = (({ __auto_type strata_t1086_ = l; __auto_type strata_t1087_ = abi_int_of(ri.size); load(strata_t1086_, strata_t1087_, v.reg, 0); }));
         }
         free_regions(l, 0);
-        emit(l, new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)));
+        (({ __auto_type strata_t1088_ = l; __auto_type strata_t1089_ = new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)); emit(strata_t1088_, strata_t1089_); }));
     }
-    label(l, new_label(l));
+    (({ __auto_type strata_t1090_ = l; __auto_type strata_t1091_ = new_label(l); label(strata_t1090_, strata_t1091_); }));
 }
 
 void begin_function(Lower* l, const char* name, bool global) {
@@ -9153,10 +9288,10 @@ void lower_function(Lower* l, Decl* d) {
         l->sret = param(l, KU64, 0);
         np = 1;
     } else 
-    if (ri.kind == TK_AGG()) {
+    if (({ __auto_type strata_t1092_ = ri.kind; __auto_type strata_t1093_ = TK_AGG(); (strata_t1092_ == strata_t1093_); })) {
         l->f.ret_ty = abi_int_of(ri.size);
     } else 
-    if (ri.kind == TK_SCALAR()) {
+    if (({ __auto_type strata_t1094_ = ri.kind; __auto_type strata_t1095_ = TK_SCALAR(); (strata_t1094_ == strata_t1095_); })) {
         l->f.ret_ty = ri.ty;
     }
     Array incoming = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
@@ -9170,24 +9305,24 @@ void lower_function(Lower* l, Decl* d) {
         TypeNode* pt = ((Param*)(d->params).data)[i].type;
         TInfo pi = tinfo(l, pt);
         LVar v = declare(l, ((Param*)(d->params).data)[i].name, pt, d->line);
-        if (pi.kind == TK_SCALAR()) {
-            assign_var(l, v, scalar(((int64_t*)(incoming).data)[i], pi.ty), d->line);
+        if (({ __auto_type strata_t1096_ = pi.kind; __auto_type strata_t1097_ = TK_SCALAR(); (strata_t1096_ == strata_t1097_); })) {
+            (({ __auto_type strata_t1098_ = l; __auto_type strata_t1099_ = v; __auto_type strata_t1100_ = scalar(((int64_t*)(incoming).data)[i], pi.ty); assign_var(strata_t1098_, strata_t1099_, strata_t1100_, d->line); }));
         } else 
         if (abi_small(pi.size)) {
-            store(l, abi_int_of(pi.size), v.reg, 0, ((int64_t*)(incoming).data)[i]);
+            (({ __auto_type strata_t1101_ = l; __auto_type strata_t1102_ = abi_int_of(pi.size); store(strata_t1101_, strata_t1102_, v.reg, 0, ((int64_t*)(incoming).data)[i]); }));
         } else {
             copy_mem(l, v.reg, ((int64_t*)(incoming).data)[i], pi.size);
         }
     }
     lower_block(l, d->body);
     pop_scope(l);
-    if (ri.kind == TK_VOID()) {
-        emit(l, new_ins(ORet, KVoid, (0 - 1), (0 - 1), (0 - 1)));
+    if (({ __auto_type strata_t1103_ = ri.kind; __auto_type strata_t1104_ = TK_VOID(); (strata_t1103_ == strata_t1104_); })) {
+        (({ __auto_type strata_t1105_ = l; __auto_type strata_t1106_ = new_ins(ORet, KVoid, (0 - 1), (0 - 1), (0 - 1)); emit(strata_t1105_, strata_t1106_); }));
     } else 
     if (l->sret >= 0) {
-        emit(l, new_ins(ORet, KVoid, (0 - 1), l->sret, (0 - 1)));
+        (({ __auto_type strata_t1107_ = l; __auto_type strata_t1108_ = new_ins(ORet, KVoid, (0 - 1), l->sret, (0 - 1)); emit(strata_t1107_, strata_t1108_); }));
     } else {
-        emit(l, new_ins(ORet, KVoid, (0 - 1), iconst(l, l->f.ret_ty, 0), (0 - 1)));
+        (({ __auto_type strata_t1109_ = l; __auto_type strata_t1110_ = (({ __auto_type strata_t1111_ = ORet; __auto_type strata_t1112_ = KVoid; __auto_type strata_t1113_ = (0 - 1); __auto_type strata_t1114_ = iconst(l, l->f.ret_ty, 0); new_ins(strata_t1111_, strata_t1112_, strata_t1113_, strata_t1114_, (0 - 1)); })); emit(strata_t1109_, strata_t1110_); }));
     }
     ({ IrFunc _e = l->f; arr_push(&(l->prog.funcs), &_e); });
 }
@@ -9209,7 +9344,7 @@ void lower_main(Lower* l, Program prog) {
         lower_stmt(l, ((Stmt**)(prog.main).data)[i]);
     }
     pop_scope(l);
-    emit(l, new_ins(ORet, KVoid, (0 - 1), iconst(l, KI32, 0), (0 - 1)));
+    (({ __auto_type strata_t1115_ = l; __auto_type strata_t1116_ = (({ __auto_type strata_t1117_ = ORet; __auto_type strata_t1118_ = KVoid; __auto_type strata_t1119_ = (0 - 1); __auto_type strata_t1120_ = iconst(l, KI32, 0); new_ins(strata_t1117_, strata_t1118_, strata_t1119_, strata_t1120_, (0 - 1)); })); emit(strata_t1115_, strata_t1116_); }));
     ({ IrFunc _e = l->f; arr_push(&(l->prog.funcs), &_e); });
 }
 
@@ -9227,7 +9362,7 @@ Lower* new_lower(void) {
     Array cl = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array lr = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array rg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return ({ Lower _v = (Lower){true, "", new_ir_program(), fs, ss, es, ms, mv, gl, new_ir_func("", false), vs, sc, at, bl, cl, lr, rg, 0, (0 - 1), 0}; Lower* _p = (Lower*)arena_alloc(strata_heap(), sizeof(Lower)); *_p = _v; _p; });
+    return ({ Lower _v = (({ __auto_type strata_t1121_ = new_ir_program(); __auto_type strata_t1122_ = fs; __auto_type strata_t1123_ = ss; __auto_type strata_t1124_ = es; __auto_type strata_t1125_ = ms; __auto_type strata_t1126_ = mv; __auto_type strata_t1127_ = gl; __auto_type strata_t1128_ = new_ir_func("", false); (Lower){true, "", strata_t1121_, strata_t1122_, strata_t1123_, strata_t1124_, strata_t1125_, strata_t1126_, strata_t1127_, strata_t1128_, vs, sc, at, bl, cl, lr, rg, 0, (0 - 1), 0}; })); Lower* _p = (Lower*)arena_alloc(strata_heap(), sizeof(Lower)); *_p = _v; _p; });
 }
 
 bool lower_program(Lower* l, Program prog, bool with_main) {
@@ -9281,7 +9416,7 @@ void lower_global(Lower* l, Decl* d) {
     IrGlobal g = (IrGlobal){d->name, d->is_exported, ti.size, ti.align, 0, 0, "", ti.ty};
     if ((d->ret != 0) && (d->ret->kind == TyDynArray)) {
         g.kind = 4;
-        g.ival = tinfo(l, elem_of(d->ret)).size;
+        g.ival = (({ __auto_type strata_t1129_ = l; __auto_type strata_t1130_ = elem_of(d->ret); tinfo(strata_t1129_, strata_t1130_); })).size;
     }
     Expr* e = d->init;
     bool neg = false;
@@ -9289,7 +9424,7 @@ void lower_global(Lower* l, Decl* d) {
         neg = true;
         e = e->a;
     }
-    if ((e != 0) && (ti.kind == TK_SCALAR())) {
+    if ((e != 0) && (({ __auto_type strata_t1131_ = ti.kind; __auto_type strata_t1132_ = TK_SCALAR(); (strata_t1131_ == strata_t1132_); }))) {
         if (e->kind == ExStringLit) {
             g.kind = 3;
             g.text = string_data(l, e->text);
@@ -9463,7 +9598,7 @@ bool fold(IrFunc* f, Facts* fa, int64_t k) {
                     r = (a << b);
                 } else 
                 if (ir_is_unsigned(t)) {
-                    r = ((int64_t)((uval(a) >> uval(b))));
+                    r = ((int64_t)((({ __auto_type strata_t1133_ = uval(a); __auto_type strata_t1134_ = uval(b); (strata_t1133_ >> strata_t1134_); }))));
                 } else {
                     r = (a >> b);
                 }
@@ -9498,7 +9633,7 @@ bool fold(IrFunc* f, Facts* fa, int64_t k) {
     }
     if ((op == OCmp) && (!ir_is_float(t))) {
         if (ca && cb) {
-            bool h = cmp_holds(i.ty2, const_of(f, fa, i.a), const_of(f, fa, i.b), ir_is_unsigned(t));
+            bool h = (({ __auto_type strata_t1135_ = i.ty2; __auto_type strata_t1136_ = const_of(f, fa, i.a); __auto_type strata_t1137_ = const_of(f, fa, i.b); __auto_type strata_t1138_ = ir_is_unsigned(t); cmp_holds(strata_t1135_, strata_t1136_, strata_t1137_, strata_t1138_); }));
             if (h) {
                 make_const(f, k, KU8, 1);
             } else {
@@ -9522,7 +9657,7 @@ bool fold(IrFunc* f, Facts* fa, int64_t k) {
         return true;
     }
     if ((((op == OConv) && ca) && (!ir_is_float(t))) && (!ir_is_float(i.ty2))) {
-        make_const(f, k, t, const_of(f, fa, i.a));
+        (({ __auto_type strata_t1139_ = f; __auto_type strata_t1140_ = k; __auto_type strata_t1141_ = t; __auto_type strata_t1142_ = const_of(f, fa, i.a); make_const(strata_t1139_, strata_t1140_, strata_t1141_, strata_t1142_); }));
         return true;
     }
     if ((((op == OConv) && ca) && ir_is_float(t)) && (!ir_is_float(i.ty2))) {
@@ -9666,7 +9801,7 @@ bool forward_slots(IrFunc* f, Facts* fa) {
             } else {
                 Array ks = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
                 for (int64_t e = 0; e < es.len; e++) {
-                    if (!(((((int64_t*)(es).data)[e] == s) && (((int64_t*)(eo).data)[e] < (off + size))) && (off < (((int64_t*)(eo).data)[e] + ir_size(((int64_t*)(et).data)[e]))))) {
+                    if (!(((((int64_t*)(es).data)[e] == s) && (((int64_t*)(eo).data)[e] < (off + size))) && (({ __auto_type strata_t1143_ = off; __auto_type strata_t1144_ = (({ __auto_type strata_t1145_ = ((int64_t*)(eo).data)[e]; __auto_type strata_t1146_ = ir_size(((int64_t*)(et).data)[e]); (strata_t1145_ + strata_t1146_); })); (strata_t1143_ < strata_t1144_); })))) {
                         ({ int64_t _e = e; arr_push(&(ks), &_e); });
                     }
                 }
@@ -10070,7 +10205,7 @@ void optimize(IrFunc* f) {
 
 int64_t bit(int64_t k) {
     uint64_t one = 1;
-    return ((int64_t)((one << uval(k))));
+    return ((int64_t)((({ __auto_type strata_t1147_ = one; __auto_type strata_t1148_ = uval(k); (strata_t1147_ << strata_t1148_); }))));
 }
 
 bool has(Array* set, int64_t base, int64_t v) {
@@ -10078,7 +10213,7 @@ bool has(Array* set, int64_t base, int64_t v) {
 }
 
 void add(Array* set, int64_t base, int64_t v) {
-    ((int64_t*)(set[0]).data)[(base + (v / 64))] = (((int64_t*)(set[0]).data)[(base + (v / 64))] | bit((v % 64)));
+    ((int64_t*)(set[0]).data)[(base + (v / 64))] = (({ __auto_type strata_t1149_ = ((int64_t*)(set[0]).data)[(base + (v / 64))]; __auto_type strata_t1150_ = bit((v % 64)); (strata_t1149_ | strata_t1150_); }));
 }
 
 Array reads(Ins i) {
@@ -10489,7 +10624,7 @@ const char* src(X64* x, int64_t v) {
         return str_concat("$", str_from_int(((int64_t*)(x->lval).data)[v]));
     }
     if (lz == 2) {
-        out(x, str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", %r11"));
+        (({ __auto_type strata_t1151_ = x; __auto_type strata_t1152_ = str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", %r11"); out(strata_t1151_, strata_t1152_); }));
         return "%r11";
     }
     if (lz == 3) {
@@ -10503,19 +10638,19 @@ void get(X64* x, int64_t v, const char* r) {
     int64_t lz = ((int64_t*)(x->lazy).data)[v];
     if (lz == 1) {
         if (((int64_t*)(x->lval).data)[v] == 0) {
-            out(x, str_concat(str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "), sub_reg(r, 4)));
+            (({ __auto_type strata_t1153_ = x; __auto_type strata_t1154_ = (({ __auto_type strata_t1155_ = str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "); __auto_type strata_t1156_ = sub_reg(r, 4); str_concat(strata_t1155_, strata_t1156_); })); out(strata_t1153_, strata_t1154_); }));
         } else {
-            out(x, str_concat(str_concat(str_concat("movq $", str_from_int(((int64_t*)(x->lval).data)[v])), ", "), r));
+            (({ __auto_type strata_t1157_ = x; __auto_type strata_t1158_ = str_concat(str_concat(str_concat("movq $", str_from_int(((int64_t*)(x->lval).data)[v])), ", "), r); out(strata_t1157_, strata_t1158_); }));
         }
     } else 
     if (lz == 2) {
-        out(x, str_concat(str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", "), r));
+        (({ __auto_type strata_t1159_ = x; __auto_type strata_t1160_ = str_concat(str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", "), r); out(strata_t1159_, strata_t1160_); }));
     } else 
     if (lz == 3) {
         out(x, str_concat(str_concat(str_concat("leaq ", ((const char**)(x->lsym).data)[v]), "(%rip), "), r));
     } else 
     if (!str_eq(opnd(x, v), r)) {
-        out(x, str_concat(str_concat(str_concat("movq ", opnd(x, v)), ", "), r));
+        (({ __auto_type strata_t1161_ = x; __auto_type strata_t1162_ = str_concat(str_concat(str_concat("movq ", opnd(x, v)), ", "), r); out(strata_t1161_, strata_t1162_); }));
     }
 }
 
@@ -10529,20 +10664,20 @@ void put(X64* x, const char* r, int64_t v) {
 void fget(X64* x, int64_t ty, int64_t v, const char* r) {
     if (in_reg(x, v)) {
         if (!str_eq(opnd(x, v), r)) {
-            out(x, str_concat(str_concat(str_concat("movaps ", opnd(x, v)), ", "), r));
+            (({ __auto_type strata_t1163_ = x; __auto_type strata_t1164_ = str_concat(str_concat(str_concat("movaps ", opnd(x, v)), ", "), r); out(strata_t1163_, strata_t1164_); }));
         }
     } else {
-        out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(ty)), " "), opnd(x, v)), ", "), r));
+        (({ __auto_type strata_t1165_ = x; __auto_type strata_t1166_ = str_concat(str_concat((({ __auto_type strata_t1167_ = str_concat(str_concat("mov", fsuf(ty)), " "); __auto_type strata_t1168_ = opnd(x, v); str_concat(strata_t1167_, strata_t1168_); })), ", "), r); out(strata_t1165_, strata_t1166_); }));
     }
 }
 
 void fput(X64* x, int64_t ty, const char* r, int64_t v) {
     if (in_reg(x, v)) {
         if (!str_eq(opnd(x, v), r)) {
-            out(x, str_concat(str_concat(str_concat("movaps ", r), ", "), opnd(x, v)));
+            (({ __auto_type strata_t1169_ = x; __auto_type strata_t1170_ = (({ __auto_type strata_t1171_ = str_concat(str_concat("movaps ", r), ", "); __auto_type strata_t1172_ = opnd(x, v); str_concat(strata_t1171_, strata_t1172_); })); out(strata_t1169_, strata_t1170_); }));
         }
     } else {
-        out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(ty)), " "), r), ", "), opnd(x, v)));
+        (({ __auto_type strata_t1173_ = x; __auto_type strata_t1174_ = (({ __auto_type strata_t1175_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(ty)), " "), r), ", "); __auto_type strata_t1176_ = opnd(x, v); str_concat(strata_t1175_, strata_t1176_); })); out(strata_t1173_, strata_t1174_); }));
     }
 }
 
@@ -10552,17 +10687,17 @@ const char* mem_at(X64* x, int64_t a, int64_t off) {
         return slot_mem(x, ((int64_t*)(x->lval).data)[a], off);
     }
     if (lz == 3) {
-        return str_concat(str_concat(str_concat(((const char**)(x->lsym).data)[a], "+"), str_from_int(off)), "(%rip)");
+        return str_concat((({ __auto_type strata_t1177_ = str_concat(((const char**)(x->lsym).data)[a], "+"); __auto_type strata_t1178_ = str_from_int(off); str_concat(strata_t1177_, strata_t1178_); })), "(%rip)");
     }
     if (in_reg(x, a)) {
-        return str_concat(str_concat(str_concat(str_from_int(off), "("), reg_name(reg_of(x, a))), ")");
+        return str_concat((({ __auto_type strata_t1179_ = str_concat(str_from_int(off), "("); __auto_type strata_t1180_ = reg_name(reg_of(x, a)); str_concat(strata_t1179_, strata_t1180_); })), ")");
     }
     get(x, a, "%rax");
     return str_concat(str_from_int(off), "(%rax)");
 }
 
 const char* work(X64* x, Ins i) {
-    if (in_reg(x, i.dst) && (!(((i.b >= 0) && in_reg(x, i.b)) && (reg_of(x, i.b) == reg_of(x, i.dst))))) {
+    if (in_reg(x, i.dst) && (!(((i.b >= 0) && in_reg(x, i.b)) && (({ __auto_type strata_t1181_ = reg_of(x, i.b); __auto_type strata_t1182_ = reg_of(x, i.dst); (strata_t1181_ == strata_t1182_); }))))) {
         return reg_name(reg_of(x, i.dst));
     }
     return "%rax";
@@ -10570,22 +10705,22 @@ const char* work(X64* x, Ins i) {
 
 void norm(X64* x, int64_t ty, const char* r) {
     if (ty == KI8) {
-        out(x, str_concat(str_concat(str_concat("movsbq ", sub_reg(r, 1)), ", "), r));
+        (({ __auto_type strata_t1183_ = x; __auto_type strata_t1184_ = str_concat(str_concat(str_concat("movsbq ", sub_reg(r, 1)), ", "), r); out(strata_t1183_, strata_t1184_); }));
     } else 
     if (ty == KU8) {
-        out(x, str_concat(str_concat(str_concat("movzbl ", sub_reg(r, 1)), ", "), sub_reg(r, 4)));
+        (({ __auto_type strata_t1185_ = x; __auto_type strata_t1186_ = (({ __auto_type strata_t1187_ = str_concat(str_concat("movzbl ", sub_reg(r, 1)), ", "); __auto_type strata_t1188_ = sub_reg(r, 4); str_concat(strata_t1187_, strata_t1188_); })); out(strata_t1185_, strata_t1186_); }));
     } else 
     if (ty == KI16) {
-        out(x, str_concat(str_concat(str_concat("movswq ", sub_reg(r, 2)), ", "), r));
+        (({ __auto_type strata_t1189_ = x; __auto_type strata_t1190_ = str_concat(str_concat(str_concat("movswq ", sub_reg(r, 2)), ", "), r); out(strata_t1189_, strata_t1190_); }));
     } else 
     if (ty == KU16) {
-        out(x, str_concat(str_concat(str_concat("movzwl ", sub_reg(r, 2)), ", "), sub_reg(r, 4)));
+        (({ __auto_type strata_t1191_ = x; __auto_type strata_t1192_ = (({ __auto_type strata_t1193_ = str_concat(str_concat("movzwl ", sub_reg(r, 2)), ", "); __auto_type strata_t1194_ = sub_reg(r, 4); str_concat(strata_t1193_, strata_t1194_); })); out(strata_t1191_, strata_t1192_); }));
     } else 
     if (ty == KI32) {
-        out(x, str_concat(str_concat(str_concat("movslq ", sub_reg(r, 4)), ", "), r));
+        (({ __auto_type strata_t1195_ = x; __auto_type strata_t1196_ = str_concat(str_concat(str_concat("movslq ", sub_reg(r, 4)), ", "), r); out(strata_t1195_, strata_t1196_); }));
     } else 
     if (ty == KU32) {
-        out(x, str_concat(str_concat(str_concat("movl ", sub_reg(r, 4)), ", "), sub_reg(r, 4)));
+        (({ __auto_type strata_t1197_ = x; __auto_type strata_t1198_ = (({ __auto_type strata_t1199_ = str_concat(str_concat("movl ", sub_reg(r, 4)), ", "); __auto_type strata_t1200_ = sub_reg(r, 4); str_concat(strata_t1199_, strata_t1200_); })); out(strata_t1197_, strata_t1198_); }));
     }
 }
 
@@ -10628,7 +10763,7 @@ const char* as_text(const char* s) {
 }
 
 const char* lbl(X64* x, int64_t n) {
-    return str_concat(str_concat(str_concat(".L", str_from_int(x->fnum)), "_"), str_from_int(n));
+    return (({ __auto_type strata_t1201_ = str_concat(str_concat(".L", str_from_int(x->fnum)), "_"); __auto_type strata_t1202_ = str_from_int(n); str_concat(strata_t1201_, strata_t1202_); }));
 }
 
 const char* int_reg_arg(int64_t i) {
@@ -10701,9 +10836,9 @@ void copy_bytes(X64* x, int64_t size, bool zero) {
     }
     if (size > 128) {
         int64_t words = (size / 8);
-        const char* l = str_concat(str_concat(str_concat(".Lm", str_from_int(x->fnum)), "_"), str_from_int(x->loops));
+        const char* l = (({ __auto_type strata_t1203_ = str_concat(str_concat(".Lm", str_from_int(x->fnum)), "_"); __auto_type strata_t1204_ = str_from_int(x->loops); str_concat(strata_t1203_, strata_t1204_); }));
         x->loops += 1;
-        out(x, str_concat(str_concat("movq $", str_from_int(words)), ", %r8"));
+        (({ __auto_type strata_t1205_ = x; __auto_type strata_t1206_ = str_concat(str_concat("movq $", str_from_int(words)), ", %r8"); out(strata_t1205_, strata_t1206_); }));
         out_label(x, l);
         if (!zero) {
             out(x, "movq (%rcx), %rdx");
@@ -10717,30 +10852,30 @@ void copy_bytes(X64* x, int64_t size, bool zero) {
     }
     while ((off + 8) <= size) {
         if (!zero) {
-            out(x, str_concat(str_concat("movq ", str_from_int(off)), "(%rcx), %rdx"));
+            (({ __auto_type strata_t1207_ = x; __auto_type strata_t1208_ = str_concat(str_concat("movq ", str_from_int(off)), "(%rcx), %rdx"); out(strata_t1207_, strata_t1208_); }));
         }
-        out(x, str_concat(str_concat("movq %rdx, ", str_from_int(off)), "(%rax)"));
+        (({ __auto_type strata_t1209_ = x; __auto_type strata_t1210_ = str_concat(str_concat("movq %rdx, ", str_from_int(off)), "(%rax)"); out(strata_t1209_, strata_t1210_); }));
         off += 8;
     }
     if ((off + 4) <= size) {
         if (!zero) {
-            out(x, str_concat(str_concat("movl ", str_from_int(off)), "(%rcx), %edx"));
+            (({ __auto_type strata_t1211_ = x; __auto_type strata_t1212_ = str_concat(str_concat("movl ", str_from_int(off)), "(%rcx), %edx"); out(strata_t1211_, strata_t1212_); }));
         }
-        out(x, str_concat(str_concat("movl %edx, ", str_from_int(off)), "(%rax)"));
+        (({ __auto_type strata_t1213_ = x; __auto_type strata_t1214_ = str_concat(str_concat("movl %edx, ", str_from_int(off)), "(%rax)"); out(strata_t1213_, strata_t1214_); }));
         off += 4;
     }
     if ((off + 2) <= size) {
         if (!zero) {
-            out(x, str_concat(str_concat("movw ", str_from_int(off)), "(%rcx), %dx"));
+            (({ __auto_type strata_t1215_ = x; __auto_type strata_t1216_ = str_concat(str_concat("movw ", str_from_int(off)), "(%rcx), %dx"); out(strata_t1215_, strata_t1216_); }));
         }
-        out(x, str_concat(str_concat("movw %dx, ", str_from_int(off)), "(%rax)"));
+        (({ __auto_type strata_t1217_ = x; __auto_type strata_t1218_ = str_concat(str_concat("movw %dx, ", str_from_int(off)), "(%rax)"); out(strata_t1217_, strata_t1218_); }));
         off += 2;
     }
     if (off < size) {
         if (!zero) {
-            out(x, str_concat(str_concat("movb ", str_from_int(off)), "(%rcx), %dl"));
+            (({ __auto_type strata_t1219_ = x; __auto_type strata_t1220_ = str_concat(str_concat("movb ", str_from_int(off)), "(%rcx), %dl"); out(strata_t1219_, strata_t1220_); }));
         }
-        out(x, str_concat(str_concat("movb %dl, ", str_from_int(off)), "(%rax)"));
+        (({ __auto_type strata_t1221_ = x; __auto_type strata_t1222_ = str_concat(str_concat("movb %dl, ", str_from_int(off)), "(%rax)"); out(strata_t1221_, strata_t1222_); }));
     }
 }
 
@@ -10765,13 +10900,13 @@ const char* load_insn(int64_t ty) {
 
 void branch_cc(X64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next) {
     if (e == next) {
-        out(x, str_concat(str_concat(str_concat("j", cc), " "), lbl(x, t)));
+        (({ __auto_type strata_t1223_ = x; __auto_type strata_t1224_ = (({ __auto_type strata_t1225_ = str_concat(str_concat("j", cc), " "); __auto_type strata_t1226_ = lbl(x, t); str_concat(strata_t1225_, strata_t1226_); })); out(strata_t1223_, strata_t1224_); }));
     } else 
     if ((t == next) && (!str_eq(ncc, ""))) {
-        out(x, str_concat(str_concat(str_concat("j", ncc), " "), lbl(x, e)));
+        (({ __auto_type strata_t1227_ = x; __auto_type strata_t1228_ = (({ __auto_type strata_t1229_ = str_concat(str_concat("j", ncc), " "); __auto_type strata_t1230_ = lbl(x, e); str_concat(strata_t1229_, strata_t1230_); })); out(strata_t1227_, strata_t1228_); }));
     } else {
-        out(x, str_concat(str_concat(str_concat("j", cc), " "), lbl(x, t)));
-        out(x, str_concat("jmp ", lbl(x, e)));
+        (({ __auto_type strata_t1231_ = x; __auto_type strata_t1232_ = (({ __auto_type strata_t1233_ = str_concat(str_concat("j", cc), " "); __auto_type strata_t1234_ = lbl(x, t); str_concat(strata_t1233_, strata_t1234_); })); out(strata_t1231_, strata_t1232_); }));
+        (({ __auto_type strata_t1235_ = x; __auto_type strata_t1236_ = str_concat("jmp ", lbl(x, e)); out(strata_t1235_, strata_t1236_); }));
     }
 }
 
@@ -10795,10 +10930,10 @@ void cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next) {
             branch_cc(x, "ae", "", t, e, next);
         } else 
         if (c == CEq) {
-            out(x, str_concat("jp ", lbl(x, e)));
+            (({ __auto_type strata_t1237_ = x; __auto_type strata_t1238_ = str_concat("jp ", lbl(x, e)); out(strata_t1237_, strata_t1238_); }));
             branch_cc(x, "e", "ne", t, e, next);
         } else {
-            out(x, str_concat("jp ", lbl(x, t)));
+            (({ __auto_type strata_t1239_ = x; __auto_type strata_t1240_ = str_concat("jp ", lbl(x, t)); out(strata_t1239_, strata_t1240_); }));
             branch_cc(x, "ne", "e", t, e, next);
         }
         return;
@@ -10809,9 +10944,9 @@ void cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next) {
     } else {
         get(x, i.a, "%rax");
     }
-    out(x, str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a));
+    (({ __auto_type strata_t1241_ = x; __auto_type strata_t1242_ = str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a); out(strata_t1241_, strata_t1242_); }));
     bool u = ir_is_unsigned(ty);
-    branch_cc(x, cc_of(c, u), cc_of(invert(c), u), t, e, next);
+    (({ __auto_type strata_t1243_ = x; __auto_type strata_t1244_ = cc_of(c, u); __auto_type strata_t1245_ = cc_of(invert(c), u); branch_cc(strata_t1243_, strata_t1244_, strata_t1245_, t, e, next); }));
 }
 
 void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
@@ -10832,12 +10967,12 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                 if (fits32(v)) {
                     if (in_reg(x, i.dst) && (v == 0)) {
                         const char* r = opnd(x, i.dst);
-                        out(x, str_concat(str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "), sub_reg(r, 4)));
+                        (({ __auto_type strata_t1246_ = x; __auto_type strata_t1247_ = (({ __auto_type strata_t1248_ = str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "); __auto_type strata_t1249_ = sub_reg(r, 4); str_concat(strata_t1248_, strata_t1249_); })); out(strata_t1246_, strata_t1247_); }));
                     } else {
-                        out(x, str_concat(str_concat(str_concat("movq $", str_from_int(v)), ", "), opnd(x, i.dst)));
+                        (({ __auto_type strata_t1250_ = x; __auto_type strata_t1251_ = (({ __auto_type strata_t1252_ = str_concat(str_concat("movq $", str_from_int(v)), ", "); __auto_type strata_t1253_ = opnd(x, i.dst); str_concat(strata_t1252_, strata_t1253_); })); out(strata_t1250_, strata_t1251_); }));
                     }
                 } else {
-                    out(x, str_concat(str_concat("movabsq $", str_from_int(v)), ", %rax"));
+                    (({ __auto_type strata_t1254_ = x; __auto_type strata_t1255_ = str_concat(str_concat("movabsq $", str_from_int(v)), ", %rax"); out(strata_t1254_, strata_t1255_); }));
                     put(x, "%rax", i.dst);
                 }
             }
@@ -10848,9 +10983,9 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
             {
                 const char* c = float_const(x, t, i.sym);
                 if (in_reg(x, i.dst)) {
-                    out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), "), opnd(x, i.dst)));
+                    (({ __auto_type strata_t1256_ = x; __auto_type strata_t1257_ = (({ __auto_type strata_t1258_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), "); __auto_type strata_t1259_ = opnd(x, i.dst); str_concat(strata_t1258_, strata_t1259_); })); out(strata_t1256_, strata_t1257_); }));
                 } else {
-                    out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), %xmm0"));
+                    (({ __auto_type strata_t1260_ = x; __auto_type strata_t1261_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), %xmm0"); out(strata_t1260_, strata_t1261_); }));
                     fput(x, t, "%xmm0", i.dst);
                 }
             }
@@ -10863,10 +10998,10 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                 fput(x, t, "%xmm0", i.dst);
             } else 
             if (in_reg(x, i.dst)) {
-                get(x, i.a, opnd(x, i.dst));
+                (({ __auto_type strata_t1262_ = x; __auto_type strata_t1263_ = i.a; __auto_type strata_t1264_ = opnd(x, i.dst); get(strata_t1262_, strata_t1263_, strata_t1264_); }));
             } else 
             if (((int64_t*)(x->lazy).data)[i.a] == 1) {
-                out(x, str_concat(str_concat(str_concat("movq ", src(x, i.a)), ", "), opnd(x, i.dst)));
+                (({ __auto_type strata_t1265_ = x; __auto_type strata_t1266_ = (({ __auto_type strata_t1267_ = str_concat(str_concat("movq ", src(x, i.a)), ", "); __auto_type strata_t1268_ = opnd(x, i.dst); str_concat(strata_t1267_, strata_t1268_); })); out(strata_t1265_, strata_t1266_); }));
             } else {
                 get(x, i.a, "%rax");
                 put(x, "%rax", i.dst);
@@ -10908,7 +11043,7 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                 }
                 const char* w = work(x, i);
                 get(x, i.a, w);
-                out(x, str_concat(str_concat(str_concat(str_concat(op, " "), src(x, i.b)), ", "), w));
+                (({ __auto_type strata_t1269_ = x; __auto_type strata_t1270_ = str_concat(str_concat((({ __auto_type strata_t1271_ = str_concat(op, " "); __auto_type strata_t1272_ = src(x, i.b); str_concat(strata_t1271_, strata_t1272_); })), ", "), w); out(strata_t1269_, strata_t1270_); }));
                 norm(x, t, w);
                 put(x, w, i.dst);
             }
@@ -10953,7 +11088,7 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                     }
                 }
                 if (((int64_t*)(x->lazy).data)[i.b] == 1) {
-                    out(x, str_concat(str_concat(str_concat(str_concat(op, " "), src(x, i.b)), ", "), w));
+                    (({ __auto_type strata_t1273_ = x; __auto_type strata_t1274_ = str_concat(str_concat((({ __auto_type strata_t1275_ = str_concat(op, " "); __auto_type strata_t1276_ = src(x, i.b); str_concat(strata_t1275_, strata_t1276_); })), ", "), w); out(strata_t1273_, strata_t1274_); }));
                 } else {
                     get(x, i.b, "%rcx");
                     out(x, str_concat(str_concat(op, " %cl, "), w));
@@ -11001,7 +11136,7 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case OSqrt:
         {
             fget(x, t, i.a, "%xmm1");
-            out(x, str_concat(str_concat("sqrt", fsuf(t)), " %xmm1, %xmm0"));
+            (({ __auto_type strata_t1277_ = x; __auto_type strata_t1278_ = str_concat(str_concat("sqrt", fsuf(t)), " %xmm1, %xmm0"); out(strata_t1277_, strata_t1278_); }));
             fput(x, t, "%xmm0", i.dst);
             break;
         }
@@ -11030,9 +11165,9 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
             if (ir_is_float(t)) {
                 const char* m = mem_at(x, i.a, i.imm);
                 if (in_reg(x, i.dst)) {
-                    out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", "), opnd(x, i.dst)));
+                    (({ __auto_type strata_t1279_ = x; __auto_type strata_t1280_ = (({ __auto_type strata_t1281_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", "); __auto_type strata_t1282_ = opnd(x, i.dst); str_concat(strata_t1281_, strata_t1282_); })); out(strata_t1279_, strata_t1280_); }));
                 } else {
-                    out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"));
+                    (({ __auto_type strata_t1283_ = x; __auto_type strata_t1284_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"); out(strata_t1283_, strata_t1284_); }));
                     fput(x, t, "%xmm0", i.dst);
                 }
             } else {
@@ -11042,9 +11177,9 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                     w = opnd(x, i.dst);
                 }
                 if (t == KU32) {
-                    out(x, str_concat(str_concat(str_concat("movl ", m), ", "), sub_reg(w, 4)));
+                    (({ __auto_type strata_t1285_ = x; __auto_type strata_t1286_ = (({ __auto_type strata_t1287_ = str_concat(str_concat("movl ", m), ", "); __auto_type strata_t1288_ = sub_reg(w, 4); str_concat(strata_t1287_, strata_t1288_); })); out(strata_t1285_, strata_t1286_); }));
                 } else {
-                    out(x, str_concat(str_concat(str_concat(str_concat(load_insn(t), " "), m), ", "), w));
+                    (({ __auto_type strata_t1289_ = x; __auto_type strata_t1290_ = str_concat(str_concat(str_concat(str_concat(load_insn(t), " "), m), ", "), w); out(strata_t1289_, strata_t1290_); }));
                 }
                 put(x, w, i.dst);
             }
@@ -11056,10 +11191,10 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                 const char* m = mem_at(x, i.a, i.imm);
                 if (ir_is_float(t)) {
                     if (in_reg(x, i.b)) {
-                        out(x, str_concat(str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), opnd(x, i.b)), ", "), m));
+                        (({ __auto_type strata_t1291_ = x; __auto_type strata_t1292_ = str_concat(str_concat((({ __auto_type strata_t1293_ = str_concat(str_concat("mov", fsuf(t)), " "); __auto_type strata_t1294_ = opnd(x, i.b); str_concat(strata_t1293_, strata_t1294_); })), ", "), m); out(strata_t1291_, strata_t1292_); }));
                     } else {
                         fget(x, t, i.b, "%xmm0");
-                        out(x, str_concat(str_concat(str_concat("mov", fsuf(t)), " %xmm0, "), m));
+                        (({ __auto_type strata_t1295_ = x; __auto_type strata_t1296_ = str_concat(str_concat(str_concat("mov", fsuf(t)), " %xmm0, "), m); out(strata_t1295_, strata_t1296_); }));
                     }
                 } else {
                     int64_t sz = ir_size(t);
@@ -11074,13 +11209,13 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                         mv = "movl";
                     }
                     if (((int64_t*)(x->lazy).data)[i.b] == 1) {
-                        out(x, str_concat(str_concat(str_concat(str_concat(mv, " "), src(x, i.b)), ", "), m));
+                        (({ __auto_type strata_t1297_ = x; __auto_type strata_t1298_ = str_concat(str_concat((({ __auto_type strata_t1299_ = str_concat(mv, " "); __auto_type strata_t1300_ = src(x, i.b); str_concat(strata_t1299_, strata_t1300_); })), ", "), m); out(strata_t1297_, strata_t1298_); }));
                     } else 
                     if (in_reg(x, i.b) && (((int64_t*)(x->lazy).data)[i.b] == 0)) {
-                        out(x, str_concat(str_concat(str_concat(str_concat(mv, " "), sub_reg(opnd(x, i.b), sz)), ", "), m));
+                        (({ __auto_type strata_t1301_ = x; __auto_type strata_t1302_ = str_concat(str_concat((({ __auto_type strata_t1303_ = str_concat(mv, " "); __auto_type strata_t1304_ = sub_reg(opnd(x, i.b), sz); str_concat(strata_t1303_, strata_t1304_); })), ", "), m); out(strata_t1301_, strata_t1302_); }));
                     } else {
                         get(x, i.b, "%rcx");
-                        out(x, str_concat(str_concat(str_concat(str_concat(mv, " "), sub_reg("%rcx", sz)), ", "), m));
+                        (({ __auto_type strata_t1305_ = x; __auto_type strata_t1306_ = str_concat(str_concat((({ __auto_type strata_t1307_ = str_concat(mv, " "); __auto_type strata_t1308_ = sub_reg("%rcx", sz); str_concat(strata_t1307_, strata_t1308_); })), ", "), m); out(strata_t1305_, strata_t1306_); }));
                     }
                 }
             }
@@ -11088,7 +11223,7 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         }
         case OSlotAddr:
         {
-            out(x, str_concat(str_concat("leaq ", slot_mem(x, i.imm, 0)), ", %rax"));
+            (({ __auto_type strata_t1309_ = x; __auto_type strata_t1310_ = str_concat(str_concat("leaq ", slot_mem(x, i.imm, 0)), ", %rax"); out(strata_t1309_, strata_t1310_); }));
             put(x, "%rax", i.dst);
             break;
         }
@@ -11138,13 +11273,13 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         }
         case OLabel:
         {
-            out_label(x, lbl(x, i.imm));
+            (({ __auto_type strata_t1311_ = x; __auto_type strata_t1312_ = lbl(x, i.imm); out_label(strata_t1311_, strata_t1312_); }));
             break;
         }
         case OJmp:
         {
             if (i.imm != next) {
-                out(x, str_concat("jmp ", lbl(x, i.imm)));
+                (({ __auto_type strata_t1313_ = x; __auto_type strata_t1314_ = str_concat("jmp ", lbl(x, i.imm)); out(strata_t1313_, strata_t1314_); }));
             }
             break;
         }
@@ -11152,12 +11287,12 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         {
             if (((int64_t*)(x->lazy).data)[i.a] == 1) {
                 if (((int64_t*)(x->lval).data)[i.a] != 0) {
-                    out(x, str_concat("jmp ", lbl(x, i.imm)));
+                    (({ __auto_type strata_t1315_ = x; __auto_type strata_t1316_ = str_concat("jmp ", lbl(x, i.imm)); out(strata_t1315_, strata_t1316_); }));
                 } else {
-                    out(x, str_concat("jmp ", lbl(x, i.imm2)));
+                    (({ __auto_type strata_t1317_ = x; __auto_type strata_t1318_ = str_concat("jmp ", lbl(x, i.imm2)); out(strata_t1317_, strata_t1318_); }));
                 }
             } else {
-                out(x, str_concat("cmpq $0, ", opnd(x, i.a)));
+                (({ __auto_type strata_t1319_ = x; __auto_type strata_t1320_ = str_concat("cmpq $0, ", opnd(x, i.a)); out(strata_t1319_, strata_t1320_); }));
                 branch_cc(x, "ne", "e", i.imm, i.imm2, next);
             }
             break;
@@ -11174,11 +11309,11 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
 void float_op(X64* x, Ins i, const char* fop) {
     int64_t t = i.ty;
     const char* w = "%xmm0";
-    if (in_reg(x, i.dst) && (!(in_reg(x, i.b) && (reg_of(x, i.b) == reg_of(x, i.dst))))) {
+    if (in_reg(x, i.dst) && (!(in_reg(x, i.b) && (({ __auto_type strata_t1321_ = reg_of(x, i.b); __auto_type strata_t1322_ = reg_of(x, i.dst); (strata_t1321_ == strata_t1322_); }))))) {
         w = opnd(x, i.dst);
     }
     fget(x, t, i.a, w);
-    out(x, str_concat(str_concat(str_concat(str_concat(str_concat(fop, fsuf(t)), " "), opnd(x, i.b)), ", "), w));
+    (({ __auto_type strata_t1323_ = x; __auto_type strata_t1324_ = str_concat(str_concat((({ __auto_type strata_t1327_ = str_concat((({ __auto_type strata_t1325_ = fop; __auto_type strata_t1326_ = fsuf(t); str_concat(strata_t1325_, strata_t1326_); })), " "); __auto_type strata_t1328_ = opnd(x, i.b); str_concat(strata_t1327_, strata_t1328_); })), ", "), w); out(strata_t1323_, strata_t1324_); }));
     fput(x, t, w, i.dst);
 }
 
@@ -11223,8 +11358,8 @@ void emit_cmp(X64* x, Ins i) {
         } else {
             get(x, i.a, "%rax");
         }
-        out(x, str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a));
-        out(x, str_concat(str_concat("set", cc_of(i.ty2, ir_is_unsigned(t))), " %al"));
+        (({ __auto_type strata_t1329_ = x; __auto_type strata_t1330_ = str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a); out(strata_t1329_, strata_t1330_); }));
+        (({ __auto_type strata_t1331_ = x; __auto_type strata_t1332_ = str_concat(str_concat("set", (({ __auto_type strata_t1333_ = i.ty2; __auto_type strata_t1334_ = ir_is_unsigned(t); cc_of(strata_t1333_, strata_t1334_); }))), " %al"); out(strata_t1331_, strata_t1332_); }));
     }
     out(x, "movzbl %al, %eax");
     put(x, "%rax", i.dst);
@@ -11235,17 +11370,17 @@ void emit_conv(X64* x, Ins i) {
     int64_t from = i.ty2;
     if (ir_is_float(from) && ir_is_float(to)) {
         fget(x, from, i.a, "%xmm1");
-        out(x, str_concat(str_concat(str_concat(str_concat("cvt", fsuf(from)), "2"), fsuf(to)), " %xmm1, %xmm0"));
+        (({ __auto_type strata_t1335_ = x; __auto_type strata_t1336_ = str_concat((({ __auto_type strata_t1337_ = str_concat(str_concat("cvt", fsuf(from)), "2"); __auto_type strata_t1338_ = fsuf(to); str_concat(strata_t1337_, strata_t1338_); })), " %xmm1, %xmm0"); out(strata_t1335_, strata_t1336_); }));
         fput(x, to, "%xmm0", i.dst);
     } else 
     if (ir_is_float(to)) {
         get(x, i.a, "%rax");
-        out(x, str_concat(str_concat("cvtsi2", fsuf(to)), "q %rax, %xmm0"));
+        (({ __auto_type strata_t1339_ = x; __auto_type strata_t1340_ = str_concat(str_concat("cvtsi2", fsuf(to)), "q %rax, %xmm0"); out(strata_t1339_, strata_t1340_); }));
         fput(x, to, "%xmm0", i.dst);
     } else 
     if (ir_is_float(from)) {
         fget(x, from, i.a, "%xmm0");
-        out(x, str_concat(str_concat("cvtt", fsuf(from)), "2siq %xmm0, %rax"));
+        (({ __auto_type strata_t1341_ = x; __auto_type strata_t1342_ = str_concat(str_concat("cvtt", fsuf(from)), "2siq %xmm0, %rax"); out(strata_t1341_, strata_t1342_); }));
         norm(x, to, "%rax");
         put(x, "%rax", i.dst);
     } else {
@@ -11264,7 +11399,7 @@ void emit_param(X64* x, Ins i) {
     int64_t k = i.imm;
     if (k < 4) {
         if (ir_is_float(t)) {
-            fput(x, t, str_concat("%xmm", str_from_int(k)), i.dst);
+            (({ __auto_type strata_t1343_ = x; __auto_type strata_t1344_ = t; __auto_type strata_t1345_ = str_concat("%xmm", str_from_int(k)); fput(strata_t1343_, strata_t1344_, strata_t1345_, i.dst); }));
         } else {
             const char* r = int_reg_arg(k);
             norm(x, t, r);
@@ -11273,7 +11408,7 @@ void emit_param(X64* x, Ins i) {
     } else {
         const char* m = str_concat(str_from_int((16 + (8 * k))), "(%rbp)");
         if (ir_is_float(t)) {
-            out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"));
+            (({ __auto_type strata_t1346_ = x; __auto_type strata_t1347_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"); out(strata_t1346_, strata_t1347_); }));
             fput(x, t, "%xmm0", i.dst);
         } else {
             out(x, str_concat(str_concat("movq ", m), ", %rax"));
@@ -11290,13 +11425,13 @@ void emit_call(X64* x, IrFunc* f, Ins i) {
         int64_t at = ((int64_t*)(f->vtypes).data)[a];
         if (ir_is_float(at)) {
             fget(x, at, a, "%xmm0");
-            out(x, str_concat(str_concat(str_concat(str_concat("mov", fsuf(at)), " %xmm0, "), str_from_int((8 * k))), "(%rsp)"));
+            (({ __auto_type strata_t1348_ = x; __auto_type strata_t1349_ = str_concat((({ __auto_type strata_t1350_ = str_concat(str_concat("mov", fsuf(at)), " %xmm0, "); __auto_type strata_t1351_ = str_from_int((8 * k)); str_concat(strata_t1350_, strata_t1351_); })), "(%rsp)"); out(strata_t1348_, strata_t1349_); }));
         } else 
         if (((int64_t*)(x->lazy).data)[a] == 1) {
-            out(x, str_concat(str_concat(str_concat(str_concat("movq ", src(x, a)), ", "), str_from_int((8 * k))), "(%rsp)"));
+            (({ __auto_type strata_t1352_ = x; __auto_type strata_t1353_ = str_concat((({ __auto_type strata_t1354_ = str_concat(str_concat("movq ", src(x, a)), ", "); __auto_type strata_t1355_ = str_from_int((8 * k)); str_concat(strata_t1354_, strata_t1355_); })), "(%rsp)"); out(strata_t1352_, strata_t1353_); }));
         } else {
             get(x, a, "%rax");
-            out(x, str_concat(str_concat("movq %rax, ", str_from_int((8 * k))), "(%rsp)"));
+            (({ __auto_type strata_t1356_ = x; __auto_type strata_t1357_ = str_concat(str_concat("movq %rax, ", str_from_int((8 * k))), "(%rsp)"); out(strata_t1356_, strata_t1357_); }));
         }
     }
     for (int64_t k = 0; k < n; k++) {
@@ -11304,9 +11439,9 @@ void emit_call(X64* x, IrFunc* f, Ins i) {
             int64_t a = ((int64_t*)(i.args).data)[k];
             int64_t at = ((int64_t*)(f->vtypes).data)[a];
             if (ir_is_float(at)) {
-                fget(x, at, a, str_concat("%xmm", str_from_int(k)));
+                (({ __auto_type strata_t1358_ = x; __auto_type strata_t1359_ = at; __auto_type strata_t1360_ = a; __auto_type strata_t1361_ = str_concat("%xmm", str_from_int(k)); fget(strata_t1358_, strata_t1359_, strata_t1360_, strata_t1361_); }));
             } else {
-                get(x, a, int_reg_arg(k));
+                (({ __auto_type strata_t1362_ = x; __auto_type strata_t1363_ = a; __auto_type strata_t1364_ = int_reg_arg(k); get(strata_t1362_, strata_t1363_, strata_t1364_); }));
             }
         }
     }
@@ -11397,7 +11532,7 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
         ({ int64_t _e = 0; arr_push(&(used), &_e); });
     }
     for (int64_t v = 0; v < regs.len; v++) {
-        if (((((int64_t*)(regs).data)[v] >= 0) && (((int64_t*)(regs).data)[v] < x64_saved_regs())) && (((int64_t*)(x->lazy).data)[v] == 0)) {
+        if (((((int64_t*)(regs).data)[v] >= 0) && (({ __auto_type strata_t1365_ = ((int64_t*)(regs).data)[v]; __auto_type strata_t1366_ = x64_saved_regs(); (strata_t1365_ < strata_t1366_); }))) && (((int64_t*)(x->lazy).data)[v] == 0)) {
             ((int64_t*)(used).data)[((int64_t*)(regs).data)[v]] = 1;
         }
     }
@@ -11411,7 +11546,7 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
     int64_t nint = 0;
     int64_t nflt = 0;
     for (int64_t k = 0; k < saved.len; k++) {
-        if (((int64_t*)(saved).data)[k] < x64_int_regs()) {
+        if (({ __auto_type strata_t1367_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t1368_ = x64_int_regs(); (strata_t1367_ < strata_t1368_); })) {
             nint += 1;
         } else {
             nflt += 1;
@@ -11463,8 +11598,8 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
     out(x, "pushq %rbp");
     out(x, "movq %rsp, %rbp");
     for (int64_t k = 0; k < saved.len; k++) {
-        if (((int64_t*)(saved).data)[k] < x64_int_regs()) {
-            out(x, str_concat("pushq ", reg_name(((int64_t*)(saved).data)[k])));
+        if (({ __auto_type strata_t1369_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t1370_ = x64_int_regs(); (strata_t1369_ < strata_t1370_); })) {
+            (({ __auto_type strata_t1371_ = x; __auto_type strata_t1372_ = str_concat("pushq ", reg_name(((int64_t*)(saved).data)[k])); out(strata_t1371_, strata_t1372_); }));
         }
     }
     int64_t left = frame;
@@ -11474,12 +11609,12 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
         left = (left - 4096);
     }
     if (left > 0) {
-        out(x, str_concat(str_concat("subq $", str_from_int(left)), ", %rsp"));
+        (({ __auto_type strata_t1373_ = x; __auto_type strata_t1374_ = str_concat(str_concat("subq $", str_from_int(left)), ", %rsp"); out(strata_t1373_, strata_t1374_); }));
     }
     int64_t fs = 0;
     for (int64_t k = 0; k < saved.len; k++) {
-        if (((int64_t*)(saved).data)[k] >= x64_int_regs()) {
-            out(x, str_concat(str_concat(str_concat(str_concat("movups ", reg_name(((int64_t*)(saved).data)[k])), ", "), str_from_int((x->save_base + (16 * fs)))), "(%rbp)"));
+        if (({ __auto_type strata_t1375_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t1376_ = x64_int_regs(); (strata_t1375_ >= strata_t1376_); })) {
+            (({ __auto_type strata_t1377_ = x; __auto_type strata_t1378_ = str_concat((({ __auto_type strata_t1379_ = str_concat(str_concat("movups ", reg_name(((int64_t*)(saved).data)[k])), ", "); __auto_type strata_t1380_ = str_from_int((x->save_base + (16 * fs))); str_concat(strata_t1379_, strata_t1380_); })), "(%rbp)"); out(strata_t1377_, strata_t1378_); }));
             fs += 1;
         }
     }
@@ -11495,17 +11630,17 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
     out_label(x, epilogue);
     fs = 0;
     for (int64_t k2 = 0; k2 < saved.len; k2++) {
-        if (((int64_t*)(saved).data)[k2] >= x64_int_regs()) {
-            out(x, str_concat(str_concat(str_concat("movups ", str_from_int((x->save_base + (16 * fs)))), "(%rbp), "), reg_name(((int64_t*)(saved).data)[k2])));
+        if (({ __auto_type strata_t1381_ = ((int64_t*)(saved).data)[k2]; __auto_type strata_t1382_ = x64_int_regs(); (strata_t1381_ >= strata_t1382_); })) {
+            (({ __auto_type strata_t1383_ = x; __auto_type strata_t1384_ = (({ __auto_type strata_t1385_ = str_concat(str_concat("movups ", str_from_int((x->save_base + (16 * fs)))), "(%rbp), "); __auto_type strata_t1386_ = reg_name(((int64_t*)(saved).data)[k2]); str_concat(strata_t1385_, strata_t1386_); })); out(strata_t1383_, strata_t1384_); }));
             fs += 1;
         }
     }
     if (nint > 0) {
-        out(x, str_concat(str_concat("leaq ", str_from_int((0 - (8 * nint)))), "(%rbp), %rsp"));
+        (({ __auto_type strata_t1387_ = x; __auto_type strata_t1388_ = str_concat(str_concat("leaq ", str_from_int((0 - (8 * nint)))), "(%rbp), %rsp"); out(strata_t1387_, strata_t1388_); }));
         int64_t r = (saved.len - 1);
         while (r >= 0) {
-            if (((int64_t*)(saved).data)[r] < x64_int_regs()) {
-                out(x, str_concat("popq ", reg_name(((int64_t*)(saved).data)[r])));
+            if (({ __auto_type strata_t1389_ = ((int64_t*)(saved).data)[r]; __auto_type strata_t1390_ = x64_int_regs(); (strata_t1389_ < strata_t1390_); })) {
+                (({ __auto_type strata_t1391_ = x; __auto_type strata_t1392_ = str_concat("popq ", reg_name(((int64_t*)(saved).data)[r])); out(strata_t1391_, strata_t1392_); }));
             }
             r -= 1;
         }
@@ -11529,7 +11664,7 @@ void x64_global(X64* x, IrGlobal g) {
         a = (a * 2);
         p += 1;
     }
-    out(x, str_concat(".p2align ", str_from_int(p)));
+    (({ __auto_type strata_t1393_ = x; __auto_type strata_t1394_ = str_concat(".p2align ", str_from_int(p)); out(strata_t1393_, strata_t1394_); }));
     if (g.global) {
         out(x, str_concat(".globl ", g.sym));
     }
@@ -11545,7 +11680,7 @@ void x64_global(X64* x, IrGlobal g) {
         if (g.size == 1) {
             d = ".byte ";
         }
-        out(x, str_concat(d, str_from_int(g.ival)));
+        (({ __auto_type strata_t1395_ = x; __auto_type strata_t1396_ = (({ __auto_type strata_t1397_ = d; __auto_type strata_t1398_ = str_from_int(g.ival); str_concat(strata_t1397_, strata_t1398_); })); out(strata_t1395_, strata_t1396_); }));
     } else 
     if (g.kind == 2) {
         if (g.ty == KF64) {
@@ -11559,9 +11694,9 @@ void x64_global(X64* x, IrGlobal g) {
     } else 
     if (g.kind == 4) {
         out(x, ".zero 24");
-        out(x, str_concat(".quad ", str_from_int(g.ival)));
+        (({ __auto_type strata_t1399_ = x; __auto_type strata_t1400_ = str_concat(".quad ", str_from_int(g.ival)); out(strata_t1399_, strata_t1400_); }));
     } else {
-        out(x, str_concat(".zero ", str_from_int(g.size)));
+        (({ __auto_type strata_t1401_ = x; __auto_type strata_t1402_ = str_concat(".zero ", str_from_int(g.size)); out(strata_t1401_, strata_t1402_); }));
     }
 }
 
@@ -11575,7 +11710,7 @@ const char* x64_finish(X64* x, IrProgram* prog) {
     if ((prog->strings.len > 0) || (x->data.len > 0)) {
         out(x, ".section .rdata,\"dr\"");
         for (int64_t k = 0; k < prog->strings.len; k++) {
-            ({ const char* _e = str_concat(str_concat(str_concat(((IrData*)(prog->strings).data)[k].sym, ":\n\t.asciz \""), as_text(((IrData*)(prog->strings).data)[k].text)), "\"\n"); arr_push(&(x->out), &_e); });
+            ({ const char* _e = str_concat((({ __auto_type strata_t1403_ = str_concat(((IrData*)(prog->strings).data)[k].sym, ":\n\t.asciz \""); __auto_type strata_t1404_ = as_text(((IrData*)(prog->strings).data)[k].text); str_concat(strata_t1403_, strata_t1404_); })), "\"\n"); arr_push(&(x->out), &_e); });
         }
         for (int64_t k = 0; k < x->data.len; k++) {
             ({ const char* _e = ((const char**)(x->data).data)[k]; arr_push(&(x->out), &_e); });
@@ -11604,12 +11739,12 @@ NativeResult native_compile(Program prog, bool with_main, bool optimize_code) {
         Array regs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
         if (optimize_code) {
             optimize(f);
-            regs = alloc_regs(f, x64_regs(), x64_lazy(f));
+            regs = (({ __auto_type strata_t1405_ = f; __auto_type strata_t1406_ = x64_regs(); __auto_type strata_t1407_ = x64_lazy(f); alloc_regs(strata_t1405_, strata_t1406_, strata_t1407_); }));
         }
         x64_function((&x), f, regs);
     }
     const char* asm_text = x64_finish((&x), (&l->prog));
-    return (NativeResult){true, "", asm_text, ir_program_text((&l->prog))};
+    return (({ __auto_type strata_t1408_ = asm_text; __auto_type strata_t1409_ = ir_program_text((&l->prog)); (NativeResult){true, "", strata_t1408_, strata_t1409_}; }));
 }
 
 Opnd no_opnd(void) {
@@ -11854,7 +11989,7 @@ Opnd parse_opnd(Asm* a, const char* s) {
     }
     if (s[0] == '$') {
         o.kind = 2;
-        o.imm = parse_num(a, str_sub(s, 1, (str_len(s) - 1)));
+        o.imm = (({ __auto_type strata_t1410_ = a; __auto_type strata_t1411_ = str_sub(s, 1, (str_len(s) - 1)); parse_num(strata_t1410_, strata_t1411_); }));
         return o;
     }
     int64_t p = (0 - 1);
@@ -11899,7 +12034,7 @@ Opnd parse_opnd(Asm* a, const char* s) {
                 o.sym = d;
             } else {
                 o.sym = str_sub(d, 0, q);
-                o.imm = parse_num(a, str_sub(d, q, (str_len(d) - q)));
+                o.imm = (({ __auto_type strata_t1412_ = a; __auto_type strata_t1413_ = str_sub(d, q, (str_len(d) - q)); parse_num(strata_t1412_, strata_t1413_); }));
             }
         }
     }
@@ -12220,7 +12355,7 @@ void mov(Asm* a, int64_t size, Opnd src, Opnd dst) {
 
 void need(Asm* a, Array ops, int64_t n) {
     if (ops.len != n) {
-        x64asm__fail(a, str_concat(str_concat("expected ", str_from_int(n)), " operand(s)"));
+        (({ __auto_type strata_t1414_ = a; __auto_type strata_t1415_ = str_concat(str_concat("expected ", str_from_int(n)), " operand(s)"); x64asm__fail(strata_t1414_, strata_t1415_); }));
     }
 }
 
@@ -12322,7 +12457,7 @@ void instruction(Asm* a, const char* mn, Array ops) {
     }
     if (((str_eq(mn, "movq") || str_eq(mn, "movl")) || str_eq(mn, "movw")) || str_eq(mn, "movb")) {
         need(a, ops, 2);
-        mov(a, size_of(last), x, y);
+        (({ __auto_type strata_t1416_ = a; __auto_type strata_t1417_ = size_of(last); mov(strata_t1416_, strata_t1417_, x, y); }));
         return;
     }
     if (str_eq(mn, "movabsq")) {
@@ -12635,7 +12770,7 @@ void directive(Asm* a, const char* s) {
             n = 1;
         }
         if ((str_len(arg) > 0) && ((x64asm__is_digit(arg[0]) || (arg[0] == '-')) || (arg[0] == '+'))) {
-            bytes_le(a, parse_num(a, arg), n);
+            (({ __auto_type strata_t1418_ = a; __auto_type strata_t1419_ = parse_num(a, arg); bytes_le(strata_t1418_, strata_t1419_, n); }));
         } else 
         if ((n == 8) && (a->sec == 3)) {
             const char* sym = arg;
@@ -12648,7 +12783,7 @@ void directive(Asm* a, const char* s) {
             }
             if (q > 0) {
                 sym = str_sub(arg, 0, q);
-                off = parse_num(a, str_sub(arg, q, (str_len(arg) - q)));
+                off = (({ __auto_type strata_t1420_ = a; __auto_type strata_t1421_ = str_sub(arg, q, (str_len(arg) - q)); parse_num(strata_t1420_, strata_t1421_); }));
             }
             ({ Fix _e = (Fix){a->o.data.len, sym, off, 0, 3}; arr_push(&(a->fixes), &_e); });
             bytes_le(a, 0, 8);
@@ -12677,10 +12812,10 @@ void directive(Asm* a, const char* s) {
         asciz(a, arg);
     } else 
     if (str_eq(name, ".float")) {
-        bytes_le(a, strata_f32_bits(arg), 4);
+        (({ __auto_type strata_t1422_ = a; __auto_type strata_t1423_ = strata_f32_bits(arg); bytes_le(strata_t1422_, strata_t1423_, 4); }));
     } else 
     if (str_eq(name, ".double")) {
-        bytes_le(a, strata_f64_bits(arg), 8);
+        (({ __auto_type strata_t1424_ = a; __auto_type strata_t1425_ = strata_f64_bits(arg); bytes_le(strata_t1424_, strata_t1425_, 8); }));
     } else {
         x64asm__fail(a, str_concat("unknown directive ", name));
     }
@@ -12762,7 +12897,7 @@ ObjFile assemble_x64(const char* src) {
     Array lo = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array gl = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array fx = ({ Array _a = arr_make(sizeof(Fix)); _a; });
-    Asm a = (Asm){(ObjFile){true, "", t, r, dt, rl, sy}, 1, ln, ls, lo, new_idx(((lines / 2) + 16)), gl, fx, new_idx(((lines / 8) + 16)), 0, ""};
+    Asm a = (({ __auto_type strata_t1426_ = (ObjFile){true, "", t, r, dt, rl, sy}; __auto_type strata_t1427_ = ln; __auto_type strata_t1428_ = ls; __auto_type strata_t1429_ = lo; __auto_type strata_t1430_ = new_idx(((lines / 2) + 16)); __auto_type strata_t1431_ = gl; __auto_type strata_t1432_ = fx; __auto_type strata_t1433_ = new_idx(((lines / 8) + 16)); (Asm){strata_t1426_, 1, strata_t1427_, strata_t1428_, strata_t1429_, strata_t1430_, strata_t1431_, strata_t1432_, strata_t1433_, 0, ""}; }));
     int64_t start = 0;
     int64_t i = 0;
     while ((i <= n) && a.o.ok) {
@@ -12772,7 +12907,7 @@ ObjFile assemble_x64(const char* src) {
             a.text = s;
             if ((str_len(s) > 0) && (s[0] != '#')) {
                 if (s[(str_len(s) - 1)] == ':') {
-                    define_label((&a), str_sub(s, 0, (str_len(s) - 1)));
+                    (({ __auto_type strata_t1434_ = (&a); __auto_type strata_t1435_ = str_sub(s, 0, (str_len(s) - 1)); define_label(strata_t1434_, strata_t1435_); }));
                 } else 
                 if (s[0] == '.') {
                     directive((&a), s);
@@ -12784,9 +12919,9 @@ ObjFile assemble_x64(const char* src) {
                         }
                     }
                     if (sp < 0) {
-                        instruction((&a), s, split_operands(""));
+                        (({ __auto_type strata_t1436_ = (&a); __auto_type strata_t1437_ = s; __auto_type strata_t1438_ = split_operands(""); instruction(strata_t1436_, strata_t1437_, strata_t1438_); }));
                     } else {
-                        instruction((&a), str_sub(s, 0, sp), split_operands(str_sub(s, sp, (str_len(s) - sp))));
+                        (({ __auto_type strata_t1439_ = (&a); __auto_type strata_t1440_ = str_sub(s, 0, sp); __auto_type strata_t1441_ = split_operands(str_sub(s, sp, (str_len(s) - sp))); instruction(strata_t1439_, strata_t1440_, strata_t1441_); }));
                     }
                 }
             }
@@ -12812,7 +12947,7 @@ ObjFile assemble_x64(const char* src) {
                 ({ ObjReloc _e = (ObjReloc){3, f.pos, (0 - ((int64_t*)(a.lsec).data)[li]), 0, 1}; arr_push(&(a.o.relocs), &_e); });
             } else {
                 patch64_data((&a), f.pos, f.addend);
-                ({ ObjReloc _e = (ObjReloc){3, f.pos, symbol_index((&a), f.label, 0, 0), 0, 1}; arr_push(&(a.o.relocs), &_e); });
+                ({ ObjReloc _e = (({ __auto_type strata_t1442_ = f.pos; __auto_type strata_t1443_ = symbol_index((&a), f.label, 0, 0); (ObjReloc){3, strata_t1442_, strata_t1443_, 0, 1}; })); arr_push(&(a.o.relocs), &_e); });
             }
         } else 
         if ((li >= 0) && (((int64_t*)(a.lsec).data)[li] == 1)) {
@@ -12823,7 +12958,7 @@ ObjFile assemble_x64(const char* src) {
             ({ ObjReloc _e = (ObjReloc){1, f.pos, (0 - ((int64_t*)(a.lsec).data)[li]), f.after, 0}; arr_push(&(a.o.relocs), &_e); });
         } else {
             patch32((&a), f.pos, f.addend);
-            ({ ObjReloc _e = (ObjReloc){1, f.pos, symbol_index((&a), f.label, 0, 0), f.after, 0}; arr_push(&(a.o.relocs), &_e); });
+            ({ ObjReloc _e = (({ __auto_type strata_t1444_ = f.pos; __auto_type strata_t1445_ = symbol_index((&a), f.label, 0, 0); (ObjReloc){1, strata_t1444_, strata_t1445_, f.after, 0}; })); arr_push(&(a.o.relocs), &_e); });
         }
     }
     return a.o;
@@ -13053,7 +13188,7 @@ int64_t rd16(Array b, int64_t at) {
 }
 
 int64_t rd32(Array b, int64_t at) {
-    return (rd16(b, at) | (rd16(b, (at + 2)) << 16));
+    return (({ __auto_type strata_t1446_ = rd16(b, at); __auto_type strata_t1447_ = (rd16(b, (at + 2)) << 16); (strata_t1446_ | strata_t1447_); }));
 }
 
 const char* rdstr(Array b, int64_t at, int64_t max) {
@@ -13084,7 +13219,7 @@ Linker* new_linker(void) {
     ({ const char* _e = str_concat(sys, "\\msvcrt.dll"); arr_push(&(dp), &_e); });
     ({ const char* _e = "kernel32.dll"; arr_push(&(dl), &_e); });
     ({ const char* _e = str_concat(sys, "\\kernel32.dll"); arr_push(&(dp), &_e); });
-    return ({ Linker _v = (Linker){true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, dp, en, ed, new_idx(8192), false, a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0}; Linker* _p = (Linker*)arena_alloc(strata_heap(), sizeof(Linker)); *_p = _v; _p; });
+    return ({ Linker _v = (({ __auto_type strata_t1448_ = o; __auto_type strata_t1449_ = s; __auto_type strata_t1450_ = gn; __auto_type strata_t1451_ = gs; __auto_type strata_t1452_ = gv; __auto_type strata_t1453_ = new_idx(4096); __auto_type strata_t1454_ = im; __auto_type strata_t1455_ = id; __auto_type strata_t1456_ = new_idx(1024); __auto_type strata_t1457_ = dl; __auto_type strata_t1458_ = dp; __auto_type strata_t1459_ = en; __auto_type strata_t1460_ = ed; __auto_type strata_t1461_ = new_idx(8192); (Linker){true, "", strata_t1448_, strata_t1449_, strata_t1450_, strata_t1451_, strata_t1452_, strata_t1453_, strata_t1454_, strata_t1455_, strata_t1456_, strata_t1457_, strata_t1458_, strata_t1459_, strata_t1460_, strata_t1461_, false, a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0}; })); Linker* _p = (Linker*)arena_alloc(strata_heap(), sizeof(Linker)); *_p = _v; _p; });
 }
 
 int64_t out_of(Linker* l, const char* name, int64_t flags) {
@@ -13142,7 +13277,7 @@ void link_add(Linker* l, const char* name, Array b) {
             nm = rdstr(b, (strat + off), 4096);
         }
         int64_t flags = rd32(b, (h + 36));
-        ({ LSec _e = (LSec){oi, nm, flags, rd32(b, (h + 16)), rd32(b, (h + 20)), rd16(b, (h + 32)), rd32(b, (h + 24)), out_of(l, nm, flags), 0}; arr_push(&(l->secs), &_e); });
+        ({ LSec _e = (({ __auto_type strata_t1462_ = oi; __auto_type strata_t1463_ = nm; __auto_type strata_t1464_ = flags; __auto_type strata_t1465_ = rd32(b, (h + 16)); __auto_type strata_t1466_ = rd32(b, (h + 20)); __auto_type strata_t1467_ = rd16(b, (h + 32)); __auto_type strata_t1468_ = rd32(b, (h + 24)); __auto_type strata_t1469_ = out_of(l, nm, flags); (LSec){strata_t1462_, strata_t1463_, strata_t1464_, strata_t1465_, strata_t1466_, strata_t1467_, strata_t1468_, strata_t1469_, 0}; })); arr_push(&(l->secs), &_e); });
     }
     Array syms = ({ Array _a = arr_make(sizeof(LSym)); _a; });
     int64_t k = 0;
@@ -13150,7 +13285,7 @@ void link_add(Linker* l, const char* name, Array b) {
         int64_t at = (symat + (18 * k));
         const char* nm = "";
         if (rd32(b, at) == 0) {
-            nm = rdstr(b, (strat + rd32(b, (at + 4))), 4096);
+            nm = (({ __auto_type strata_t1470_ = b; __auto_type strata_t1471_ = (({ __auto_type strata_t1472_ = strat; __auto_type strata_t1473_ = rd32(b, (at + 4)); (strata_t1472_ + strata_t1473_); })); rdstr(strata_t1470_, strata_t1471_, 4096); }));
         } else {
             nm = rdstr(b, at, 8);
         }
@@ -13159,7 +13294,7 @@ void link_add(Linker* l, const char* name, Array b) {
             sec = (sec - 65536);
         }
         int64_t naux = ((int64_t)(((uint8_t*)(b).data)[(at + 17)]));
-        ({ LSym _e = (LSym){nm, rd32(b, (at + 8)), sec, ((int64_t)(((uint8_t*)(b).data)[(at + 16)]))}; arr_push(&(syms), &_e); });
+        ({ LSym _e = (({ __auto_type strata_t1474_ = nm; __auto_type strata_t1475_ = rd32(b, (at + 8)); (LSym){strata_t1474_, strata_t1475_, sec, ((int64_t)(((uint8_t*)(b).data)[(at + 16)]))}; })); arr_push(&(syms), &_e); });
         for (int64_t q = 0; q < naux; q++) {
             ({ LSym _e = (LSym){"", 0, (0 - 99), 0}; arr_push(&(syms), &_e); });
         }
@@ -13270,17 +13405,17 @@ bool link_library(Linker* l, const char* name, Array dirs) {
 int64_t rva_to_file(Array b, int64_t rva) {
     int64_t pe = rd32(b, 60);
     int64_t nsec = rd16(b, (pe + 6));
-    int64_t sh = ((pe + 24) + rd16(b, (pe + 20)));
+    int64_t sh = (({ __auto_type strata_t1476_ = (pe + 24); __auto_type strata_t1477_ = rd16(b, (pe + 20)); (strata_t1476_ + strata_t1477_); }));
     int64_t r = (0 - 1);
     for (int64_t k = 0; k < nsec; k++) {
         int64_t h = (sh + (40 * k));
         int64_t va = rd32(b, (h + 12));
         int64_t vs = rd32(b, (h + 8));
-        if (vs < rd32(b, (h + 16))) {
+        if (({ __auto_type strata_t1478_ = vs; __auto_type strata_t1479_ = rd32(b, (h + 16)); (strata_t1478_ < strata_t1479_); })) {
             vs = rd32(b, (h + 16));
         }
         if ((rva >= va) && (rva < (va + vs))) {
-            r = ((rva - va) + rd32(b, (h + 20)));
+            r = (({ __auto_type strata_t1480_ = (rva - va); __auto_type strata_t1481_ = rd32(b, (h + 20)); (strata_t1480_ + strata_t1481_); }));
         }
     }
     return r;
@@ -13302,9 +13437,9 @@ void load_exports(Linker* l) {
             int64_t ed = rva_to_file(b, expdir);
             if (ed >= 0) {
                 int64_t n = rd32(b, (ed + 24));
-                int64_t names = rva_to_file(b, rd32(b, (ed + 32)));
+                int64_t names = (({ __auto_type strata_t1482_ = b; __auto_type strata_t1483_ = rd32(b, (ed + 32)); rva_to_file(strata_t1482_, strata_t1483_); }));
                 for (int64_t i = 0; i < n; i++) {
-                    const char* nm = rdstr(b, rva_to_file(b, rd32(b, (names + (4 * i)))), 512);
+                    const char* nm = (({ __auto_type strata_t1484_ = b; __auto_type strata_t1485_ = (({ __auto_type strata_t1486_ = b; __auto_type strata_t1487_ = rd32(b, (names + (4 * i))); rva_to_file(strata_t1486_, strata_t1487_); })); rdstr(strata_t1484_, strata_t1485_, 512); }));
                     idx_add((&l->expidx), nm, l->exp_name.len);
                     ({ const char* _e = nm; arr_push(&(l->exp_name), &_e); });
                     ({ int64_t _e = d; arr_push(&(l->exp_dll), &_e); });
@@ -13469,7 +13604,7 @@ int64_t symbol_rva(Linker* l, ImpLayout il, int64_t oi, int64_t symi) {
             LSec s = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
             return ((((int64_t*)(l->orva).data)[s.out] + s.at) + ((int64_t*)(l->gval).data)[g]);
         }
-        int64_t i = find_import(l, import_base(y.name));
+        int64_t i = (({ __auto_type strata_t1488_ = l; __auto_type strata_t1489_ = import_base(y.name); find_import(strata_t1488_, strata_t1489_); }));
         if (i < 0) {
             lk_fail(l, str_concat(str_concat("undefined symbol '", y.name), "'"));
             return 0;
@@ -13527,19 +13662,19 @@ void apply_relocs(Linker* l, ImpLayout il, int64_t si, Array* out) {
         int64_t prva = (((int64_t*)(l->orva).data)[s.out] + p);
         int64_t sv = symbol_rva(l, il, s.obj, symi);
         if ((typ >= 4) && (typ <= 9)) {
-            put32(out, p, ((rd32(out[0], p) + sv) - ((prva + 4) + (typ - 4))));
+            (({ __auto_type strata_t1490_ = out; __auto_type strata_t1491_ = p; __auto_type strata_t1492_ = ((rd32(out[0], p) + sv) - ((prva + 4) + (typ - 4))); put32(strata_t1490_, strata_t1491_, strata_t1492_); }));
         } else 
         if (typ == 1) {
-            put64(out, p, ((get64(out[0], p) + image_base()) + sv));
+            (({ __auto_type strata_t1493_ = out; __auto_type strata_t1494_ = p; __auto_type strata_t1495_ = ((({ __auto_type strata_t1496_ = get64(out[0], p); __auto_type strata_t1497_ = image_base(); (strata_t1496_ + strata_t1497_); })) + sv); put64(strata_t1493_, strata_t1494_, strata_t1495_); }));
         } else 
         if (typ == 3) {
-            put32(out, p, (rd32(out[0], p) + sv));
+            (({ __auto_type strata_t1498_ = out; __auto_type strata_t1499_ = p; __auto_type strata_t1500_ = (rd32(out[0], p) + sv); put32(strata_t1498_, strata_t1499_, strata_t1500_); }));
         } else 
         if (typ == 2) {
-            put32(out, p, ((rd32(out[0], p) + image_base()) + sv));
+            (({ __auto_type strata_t1501_ = out; __auto_type strata_t1502_ = p; __auto_type strata_t1503_ = ((({ __auto_type strata_t1504_ = rd32(out[0], p); __auto_type strata_t1505_ = image_base(); (strata_t1504_ + strata_t1505_); })) + sv); put32(strata_t1501_, strata_t1502_, strata_t1503_); }));
         } else 
         if (typ != 0) {
-            lk_fail(l, str_concat(str_concat(str_concat("unsupported relocation type ", str_from_int(typ)), " in "), o.name));
+            (({ __auto_type strata_t1506_ = l; __auto_type strata_t1507_ = str_concat(str_concat(str_concat("unsupported relocation type ", str_from_int(typ)), " in "), o.name); lk_fail(strata_t1506_, strata_t1507_); }));
         }
     }
 }
@@ -13594,7 +13729,7 @@ bool link_exe(Linker* l, const char* path) {
         lk_fail(l, str_concat("startup: ", st.err));
         return false;
     }
-    link_add(l, "startup", coff_bytes((&st)));
+    (({ __auto_type strata_t1508_ = l; __auto_type strata_t1509_ = coff_bytes((&st)); link_add(strata_t1508_, "startup", strata_t1509_); }));
     if (!l->ok) {
         return false;
     }
@@ -13615,7 +13750,7 @@ bool link_exe(Linker* l, const char* path) {
     for (int64_t si = 0; si < l->secs.len; si++) {
         int64_t out = ((LSec*)(l->secs).data)[si].out;
         if (out >= 0) {
-            int64_t at = pelink__align_up(((int64_t*)(l->osize).data)[out], sec_align(((LSec*)(l->secs).data)[si].flags));
+            int64_t at = (({ __auto_type strata_t1510_ = ((int64_t*)(l->osize).data)[out]; __auto_type strata_t1511_ = sec_align(((LSec*)(l->secs).data)[si].flags); pelink__align_up(strata_t1510_, strata_t1511_); }));
             ((LSec*)(l->secs).data)[si].at = at;
             ((int64_t*)(l->osize).data)[out] = (at + ((LSec*)(l->secs).data)[si].size);
         }
@@ -13698,7 +13833,7 @@ bool link_exe(Linker* l, const char* path) {
         int64_t at = (l->thunks_at + (8 * i));
         ((uint8_t*)(text).data)[at] = ((uint8_t)(255));
         ((uint8_t*)(text).data)[(at + 1)] = ((uint8_t)(37));
-        put32((&text), (at + 2), (iat_slot(l, il, i) - ((((int64_t*)(l->orva).data)[0] + at) + 6)));
+        (({ __auto_type strata_t1512_ = (&text); __auto_type strata_t1513_ = (at + 2); __auto_type strata_t1514_ = (iat_slot(l, il, i) - ((((int64_t*)(l->orva).data)[0] + at) + 6)); put32(strata_t1512_, strata_t1513_, strata_t1514_); }));
     }
     int64_t idt_rva = 0;
     int64_t idt_size = 0;
@@ -13769,7 +13904,7 @@ bool link_exe(Linker* l, const char* path) {
     p8((&o), 0);
     p32((&o), ((int64_t*)(l->oraw).data)[0]);
     p32((&o), (((int64_t*)(l->oraw).data)[1] + ((int64_t*)(l->oraw).data)[2]));
-    p32((&o), pelink__align_up(((int64_t*)(l->osize).data)[3], 512));
+    (({ __auto_type strata_t1515_ = (&o); __auto_type strata_t1516_ = pelink__align_up(((int64_t*)(l->osize).data)[3], 512); p32(strata_t1515_, strata_t1516_); }));
     p32((&o), entry);
     p32((&o), ((int64_t*)(l->orva).data)[0]);
     p32((&o), 1073741824);
@@ -13788,7 +13923,7 @@ bool link_exe(Linker* l, const char* path) {
     p32((&o), 0);
     p16((&o), 3);
     p16((&o), 33024);
-    p32((&o), 2097152);
+    p32((&o), 8388608);
     p32((&o), 0);
     p32((&o), 4096);
     p32((&o), 0);
@@ -13890,10 +14025,10 @@ const char* pad_right(const char* s, int64_t w) {
 }
 
 void print_token(Token t) {
-    const char* loc = str_concat(str_concat(pad_left(str_from_int(t.line), 3), ":"), pad_right(str_from_int(t.col), 3));
+    const char* loc = (({ __auto_type strata_t1517_ = str_concat(pad_left(str_from_int(t.line), 3), ":"); __auto_type strata_t1518_ = pad_right(str_from_int(t.col), 3); str_concat(strata_t1517_, strata_t1518_); }));
     const char* name = kind_name(t.kind);
     if (is_text_kind(t.kind)) {
-        printf("%s\n", str_concat(str_concat(str_concat(str_concat(loc, "  "), pad_right(name, 8)), "  "), t.text));
+        printf("%s\n", str_concat(str_concat((({ __auto_type strata_t1519_ = str_concat(loc, "  "); __auto_type strata_t1520_ = pad_right(name, 8); str_concat(strata_t1519_, strata_t1520_); })), "  "), t.text));
     } else {
         printf("%s\n", str_concat(str_concat(loc, "  "), name));
     }
@@ -14052,13 +14187,13 @@ void pr_expr(int64_t ind, Expr* e) {
         }
         case ExCast:
         {
-            pr(ind, str_concat("Cast ", ast_type_str(e->type)));
+            (({ __auto_type strata_t1521_ = ind; __auto_type strata_t1522_ = str_concat("Cast ", ast_type_str(e->type)); pr(strata_t1521_, strata_t1522_); }));
             pr_expr((ind + 1), e->a);
             break;
         }
         case ExSizeof:
         {
-            pr(ind, str_concat("Sizeof ", ast_type_str(e->type)));
+            (({ __auto_type strata_t1523_ = ind; __auto_type strata_t1524_ = str_concat("Sizeof ", ast_type_str(e->type)); pr(strata_t1523_, strata_t1524_); }));
             break;
         }
         default: {
@@ -14092,7 +14227,7 @@ void pr_stmt(int64_t ind, Stmt* s) {
                 if (s->type == 0) {
                     head = str_concat(head, "var");
                 } else {
-                    head = str_concat(head, ast_type_str(s->type));
+                    head = (({ __auto_type strata_t1525_ = head; __auto_type strata_t1526_ = ast_type_str(s->type); str_concat(strata_t1525_, strata_t1526_); }));
                 }
                 head = str_concat(str_concat(head, " "), s->name);
                 pr(ind, head);
@@ -14210,12 +14345,12 @@ void pr_decl(Decl* d) {
         case DcFunc:
         {
             {
-                const char* head = str_concat(str_concat(str_concat(str_concat(str_concat(ex, "Func "), ast_type_str(d->ret)), " "), d->name), "(");
+                const char* head = str_concat(str_concat(str_concat((({ __auto_type strata_t1527_ = str_concat(ex, "Func "); __auto_type strata_t1528_ = ast_type_str(d->ret); str_concat(strata_t1527_, strata_t1528_); })), " "), d->name), "(");
                 for (int64_t i = 0; i < d->params.len; i++) {
                     if (i > 0) {
                         head = str_concat(head, ", ");
                     }
-                    head = str_concat(str_concat(str_concat(head, ast_type_str(((Param*)(d->params).data)[i].type)), " "), ((Param*)(d->params).data)[i].name);
+                    head = str_concat(str_concat((({ __auto_type strata_t1529_ = head; __auto_type strata_t1530_ = ast_type_str(((Param*)(d->params).data)[i].type); str_concat(strata_t1529_, strata_t1530_); })), " "), ((Param*)(d->params).data)[i].name);
                 }
                 head = str_concat(head, ")");
                 if (d->is_foreign) {
@@ -14229,7 +14364,7 @@ void pr_decl(Decl* d) {
         }
         case DcGlobal:
         {
-            pr(0, str_concat(str_concat(str_concat(str_concat(ex, "Global "), ast_type_str(d->ret)), " "), d->name));
+            pr(0, str_concat(str_concat((({ __auto_type strata_t1531_ = str_concat(ex, "Global "); __auto_type strata_t1532_ = ast_type_str(d->ret); str_concat(strata_t1531_, strata_t1532_); })), " "), d->name));
             if (d->init != 0) {
                 pr_expr(1, d->init);
             }
@@ -14237,7 +14372,7 @@ void pr_decl(Decl* d) {
         }
         case DcConst:
         {
-            pr(0, str_concat(str_concat(str_concat(str_concat(ex, "Foreign Const "), ast_type_str(d->ret)), " "), d->name));
+            pr(0, str_concat(str_concat((({ __auto_type strata_t1533_ = str_concat(ex, "Foreign Const "); __auto_type strata_t1534_ = ast_type_str(d->ret); str_concat(strata_t1533_, strata_t1534_); })), " "), d->name));
             pr_expr(1, d->init);
             break;
         }
@@ -14342,7 +14477,7 @@ const char* strip_comment(const char* s) {
 
 void toml_error(Toml* t, const char* msg) {
     t->p.ok = false;
-    strata_report(str_concat(str_concat(str_concat(str_concat(t->fname, ":"), str_from_int(t->line)), ": error: "), msg));
+    strata_report(str_concat(str_concat((({ __auto_type strata_t1535_ = str_concat(t->fname, ":"); __auto_type strata_t1536_ = str_from_int(t->line); str_concat(strata_t1535_, strata_t1536_); })), ": error: "), msg));
 }
 
 const char* toml_string(Toml* t, const char* v) {
@@ -14354,10 +14489,10 @@ const char* toml_string(Toml* t, const char* v) {
     int64_t i = 1;
     while (i < (str_len(v) - 1)) {
         if ((v[i] == '\\') && ((i + 1) < (str_len(v) - 1))) {
-            r = str_concat(r, str_sub(v, (i + 1), 1));
+            r = (({ __auto_type strata_t1537_ = r; __auto_type strata_t1538_ = str_sub(v, (i + 1), 1); str_concat(strata_t1537_, strata_t1538_); }));
             i += 2;
         } else {
-            r = str_concat(r, str_sub(v, i, 1));
+            r = (({ __auto_type strata_t1539_ = r; __auto_type strata_t1540_ = str_sub(v, i, 1); str_concat(strata_t1539_, strata_t1540_); }));
             i += 1;
         }
     }
@@ -14390,15 +14525,15 @@ Array toml_array(Toml* t, const char* v) {
         }
         if ((c == ',') && (!in_str)) {
             if (!str_eq(project__trim(item), "")) {
-                ({ const char* _e = toml_string(t, project__trim(item)); arr_push(&(out), &_e); });
+                ({ const char* _e = (({ __auto_type strata_t1541_ = t; __auto_type strata_t1542_ = project__trim(item); toml_string(strata_t1541_, strata_t1542_); })); arr_push(&(out), &_e); });
             }
             item = "";
         } else {
-            item = str_concat(item, str_sub(body, i, 1));
+            item = (({ __auto_type strata_t1543_ = item; __auto_type strata_t1544_ = str_sub(body, i, 1); str_concat(strata_t1543_, strata_t1544_); }));
         }
     }
     if (!str_eq(project__trim(item), "")) {
-        ({ const char* _e = toml_string(t, project__trim(item)); arr_push(&(out), &_e); });
+        ({ const char* _e = (({ __auto_type strata_t1545_ = t; __auto_type strata_t1546_ = project__trim(item); toml_string(strata_t1545_, strata_t1546_); })); arr_push(&(out), &_e); });
     }
     return out;
 }
@@ -14479,7 +14614,7 @@ void toml_key(Toml* t, const char* key, const char* v) {
         toml_build_key(t, key, v, false, true);
     } else 
     if ((str_eq(sec, "windows") || str_eq(sec, "linux")) || str_eq(sec, "macos")) {
-        toml_build_key(t, key, v, true, str_eq(sec, host_os()));
+        (({ __auto_type strata_t1547_ = t; __auto_type strata_t1548_ = key; __auto_type strata_t1549_ = v; __auto_type strata_t1550_ = (({ __auto_type strata_t1551_ = sec; __auto_type strata_t1552_ = host_os(); str_eq(strata_t1551_, strata_t1552_); })); toml_build_key(strata_t1547_, strata_t1548_, strata_t1549_, true, strata_t1550_); }));
     } else 
     if (str_eq(sec, "")) {
         toml_error(t, str_concat(str_concat("'", key), "' must be inside a section such as [project]"));
@@ -14493,8 +14628,8 @@ Project load_project(const char* path) {
     Array l = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array cs = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array fw = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    Project p = (Project){true, path, dirname_of(path), "", "", "src/main.strata", "exe", "build", false, d, i, ld, l, cs, fw, true};
-    Toml t = (Toml){p, "", 0, basename_of(path)};
+    Project p = (({ __auto_type strata_t1553_ = path; __auto_type strata_t1554_ = dirname_of(path); (Project){true, strata_t1553_, strata_t1554_, "", "", "src/main.strata", "exe", "build", false, d, i, ld, l, cs, fw, true}; }));
+    Toml t = (({ __auto_type strata_t1555_ = p; __auto_type strata_t1556_ = basename_of(path); (Toml){strata_t1555_, "", 0, strata_t1556_}; }));
     const char* src = strata_read_file(path);
     if (str_len(src) == 0) {
         strata_report(str_concat(str_concat(str_concat(basename_of(path), ": error: cannot read the project file ("), path), ")"));
@@ -14508,7 +14643,7 @@ Project load_project(const char* path) {
             ({ const char* _e = cur; arr_push(&(lines), &_e); });
             cur = "";
         } else {
-            cur = str_concat(cur, str_sub(src, k, 1));
+            cur = (({ __auto_type strata_t1557_ = cur; __auto_type strata_t1558_ = str_sub(src, k, 1); str_concat(strata_t1557_, strata_t1558_); }));
         }
     }
     ({ const char* _e = cur; arr_push(&(lines), &_e); });
@@ -14543,7 +14678,7 @@ Project load_project(const char* path) {
                 const char* val = project__trim(str_sub(ln, (eq + 1), ((str_len(ln) - eq) - 1)));
                 if ((str_len(val) > 0) && (val[0] == '[')) {
                     while ((val[(str_len(val) - 1)] != ']') && (n < lines.len)) {
-                        val = str_concat(str_concat(val, " "), project__trim(strip_comment(((const char**)(lines).data)[n])));
+                        val = (({ __auto_type strata_t1559_ = str_concat(val, " "); __auto_type strata_t1560_ = project__trim(strip_comment(((const char**)(lines).data)[n])); str_concat(strata_t1559_, strata_t1560_); }));
                         n += 1;
                     }
                 }
@@ -14583,7 +14718,7 @@ const char* dll_ext(void) {
 
 BuildSpec spec_for_file(const char* path, const char* version, bool quiet) {
     const char* stem = stem_of(path);
-    return (BuildSpec){path, str_concat(stem, ".c"), str_concat(stem, exe_ext()), false, true, no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), "", false, quiet, version, false, "auto"};
+    return (({ __auto_type strata_t1561_ = path; __auto_type strata_t1562_ = str_concat(stem, ".c"); __auto_type strata_t1563_ = (({ __auto_type strata_t1564_ = stem; __auto_type strata_t1565_ = exe_ext(); str_concat(strata_t1564_, strata_t1565_); })); __auto_type strata_t1566_ = no_strings(); __auto_type strata_t1567_ = no_strings(); __auto_type strata_t1568_ = no_strings(); __auto_type strata_t1569_ = no_strings(); __auto_type strata_t1570_ = no_strings(); __auto_type strata_t1571_ = no_strings(); (BuildSpec){strata_t1561_, strata_t1562_, strata_t1563_, false, true, strata_t1566_, strata_t1567_, strata_t1568_, strata_t1569_, strata_t1570_, strata_t1571_, "", false, quiet, version, false, "auto"}; }));
 }
 
 BuildSpec spec_for_project(Project p, const char* version, bool release, bool force, bool quiet) {
@@ -14593,7 +14728,7 @@ BuildSpec spec_for_project(Project p, const char* version, bool release, bool fo
     if (str_eq(p.output, "dll")) {
         ext = dll_ext();
     }
-    BuildSpec s = (BuildSpec){str_concat(str_concat(root, "/"), p.entry), str_concat(str_concat(str_concat(out, "/"), p.name), ".c"), str_concat(str_concat(str_concat(out, "/"), p.name), ext), str_eq(p.output, "dll"), (release || p.release), p.defines, no_strings(), no_strings(), p.libs, no_strings(), p.frameworks, str_concat(out, "/.strata-cache"), force, quiet, version, p.split, "auto"};
+    BuildSpec s = (({ __auto_type strata_t1572_ = str_concat(str_concat(root, "/"), p.entry); __auto_type strata_t1573_ = str_concat(str_concat(str_concat(out, "/"), p.name), ".c"); __auto_type strata_t1574_ = str_concat(str_concat(str_concat(out, "/"), p.name), ext); __auto_type strata_t1575_ = str_eq(p.output, "dll"); __auto_type strata_t1576_ = (release || p.release); __auto_type strata_t1577_ = p.defines; __auto_type strata_t1578_ = no_strings(); __auto_type strata_t1579_ = no_strings(); __auto_type strata_t1580_ = p.libs; __auto_type strata_t1581_ = no_strings(); (BuildSpec){strata_t1572_, strata_t1573_, strata_t1574_, strata_t1575_, strata_t1576_, strata_t1577_, strata_t1578_, strata_t1579_, strata_t1580_, strata_t1581_, p.frameworks, str_concat(out, "/.strata-cache"), force, quiet, version, p.split, "auto"}; }));
     for (int64_t i = 0; i < p.include_dirs.len; i++) {
         ({ const char* _e = str_concat(str_concat(root, "/"), ((const char**)(p.include_dirs).data)[i]); arr_push(&(s.include_dirs), &_e); });
     }
@@ -14613,7 +14748,7 @@ const char* win_path(const char* p) {
         if (p[i] == '/') {
             r = str_concat(r, "\\");
         } else {
-            r = str_concat(r, str_sub(p, i, 1));
+            r = (({ __auto_type strata_t1582_ = r; __auto_type strata_t1583_ = str_sub(p, i, 1); str_concat(strata_t1582_, strata_t1583_); }));
         }
     }
     return r;
@@ -14709,10 +14844,10 @@ const char* guard_for(const char* name) {
     for (int64_t i = 0; i < n; i++) {
         char c = name[i];
         if ((c >= 'a') && (c <= 'z')) {
-            g = str_concat(g, str_sub(upper, (((int64_t)(c)) - ((int64_t)('a'))), 1));
+            g = (({ __auto_type strata_t1584_ = g; __auto_type strata_t1585_ = str_sub(upper, (((int64_t)(c)) - ((int64_t)('a'))), 1); str_concat(strata_t1584_, strata_t1585_); }));
         } else 
         if (((c >= 'A') && (c <= 'Z')) || ((c >= '0') && (c <= '9'))) {
-            g = str_concat(g, str_sub(name, i, 1));
+            g = (({ __auto_type strata_t1586_ = g; __auto_type strata_t1587_ = str_sub(name, i, 1); str_concat(strata_t1586_, strata_t1587_); }));
         } else {
             g = str_concat(g, "_");
         }
@@ -14733,11 +14868,11 @@ bool run_build(BuildSpec s, const char* libdir) {
     }
     if (s.dll && (prog.main.len > 0)) {
         Stmt* st = ((Stmt**)(prog.main).data)[0];
-        strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(basename_of(s.entry), ":"), str_from_int(st->line)), ":"), str_from_int(st->col)), ": error: a dll has no main, so its entry file can't contain top-level code"));
+        strata_report(str_concat((({ __auto_type strata_t1590_ = str_concat((({ __auto_type strata_t1588_ = str_concat(basename_of(s.entry), ":"); __auto_type strata_t1589_ = str_from_int(st->line); str_concat(strata_t1588_, strata_t1589_); })), ":"); __auto_type strata_t1591_ = str_from_int(st->col); str_concat(strata_t1590_, strata_t1591_); })), ": error: a dll has no main, so its entry file can't contain top-level code"));
         return false;
     }
     if (!str_eq(s.backend, "c")) {
-        const char* why = native_target_why(host_os(), host_arch());
+        const char* why = (({ __auto_type strata_t1592_ = host_os(); __auto_type strata_t1593_ = host_arch(); native_target_why(strata_t1592_, strata_t1593_); }));
         if (str_eq(why, "") && s.dll) {
             why = "the native backend doesn't build dlls yet";
         }
@@ -14825,13 +14960,13 @@ bool run_build(BuildSpec s, const char* libdir) {
     const char* cmd = spaced(argv);
     const char* header = "";
     if (s.dll) {
-        header = generate_header(prog, guard_for(basename_of(stem_of(s.out_bin))), basename_of(s.entry));
+        header = (({ __auto_type strata_t1594_ = prog; __auto_type strata_t1595_ = guard_for(basename_of(stem_of(s.out_bin))); __auto_type strata_t1596_ = basename_of(s.entry); generate_header(strata_t1594_, strata_t1595_, strata_t1596_); }));
     }
     const char* key = "";
     if (!str_eq(s.cache_file, "")) {
         const char* all = str_concat(str_concat(str_concat(str_concat(c, "\n"), cmd), "\n"), s.tool_version);
         for (int64_t i = 0; i < s.c_sources.len; i++) {
-            all = str_concat(str_concat(all, "\n"), strata_read_file(((const char**)(s.c_sources).data)[i]));
+            all = (({ __auto_type strata_t1597_ = str_concat(all, "\n"); __auto_type strata_t1598_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1597_, strata_t1598_); }));
         }
         key = fingerprint(all);
         if (((!s.force) && str_eq(strata_read_file(s.cache_file), key)) && file_present(s.out_bin)) {
@@ -14931,9 +15066,9 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
     }
     const char* key = "";
     if (!str_eq(s.cache_file, "")) {
-        const char* all = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(asm_text, "\n"), cmd), "\n"), s.tool_version), "\n"), strata_read_file(str_concat(libdir, "/srt.strata")));
+        const char* all = (({ __auto_type strata_t1599_ = str_concat(str_concat(str_concat(str_concat(str_concat(asm_text, "\n"), cmd), "\n"), s.tool_version), "\n"); __auto_type strata_t1600_ = strata_read_file(str_concat(libdir, "/srt.strata")); str_concat(strata_t1599_, strata_t1600_); }));
         for (int64_t i = 0; i < s.c_sources.len; i++) {
-            all = str_concat(str_concat(all, "\n"), strata_read_file(((const char**)(s.c_sources).data)[i]));
+            all = (({ __auto_type strata_t1601_ = str_concat(all, "\n"); __auto_type strata_t1602_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1601_, strata_t1602_); }));
         }
         key = fingerprint(all);
         if (((!s.force) && str_eq(strata_read_file(s.cache_file), key)) && file_present(s.out_bin)) {
@@ -14953,8 +15088,8 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
     }
     bool linked = false;
     if (own) {
-        link_add(lk, obj_file, coff_bytes(ob));
-        link_add(lk, "srt.o", strata_read_bytes(str_concat(libdir, "/srt.o")));
+        (({ __auto_type strata_t1603_ = lk; __auto_type strata_t1604_ = obj_file; __auto_type strata_t1605_ = coff_bytes(ob); link_add(strata_t1603_, strata_t1604_, strata_t1605_); }));
+        (({ __auto_type strata_t1606_ = lk; __auto_type strata_t1607_ = strata_read_bytes(str_concat(libdir, "/srt.o")); link_add(strata_t1606_, "srt.o", strata_t1607_); }));
         linked = (lk->ok && link_exe(lk, s.out_bin));
         if ((!linked) && str_eq(s.backend, "native")) {
             strata_report(str_concat(str_concat(basename_of(s.entry), ": error: can't link: "), lk->err));
@@ -14971,7 +15106,7 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
         if (linked) {
             strata_report(str_concat(str_concat("built ", s.out_bin), " (native)"));
         } else {
-            strata_report(str_concat(str_concat(str_concat(str_concat("built ", s.out_bin), " (native, linked by "), strata_cc()), ")"));
+            strata_report(str_concat((({ __auto_type strata_t1608_ = str_concat(str_concat("built ", s.out_bin), " (native, linked by "); __auto_type strata_t1609_ = strata_cc(); str_concat(strata_t1608_, strata_t1609_); })), ")"));
         }
     }
     return true;
@@ -14990,7 +15125,7 @@ const char* fwd_path(const char* p) {
         if (p[i] == '\\') {
             r = str_concat(r, "/");
         } else {
-            r = str_concat(r, str_sub(p, i, 1));
+            r = (({ __auto_type strata_t1610_ = r; __auto_type strata_t1611_ = str_sub(p, i, 1); str_concat(strata_t1610_, strata_t1611_); }));
         }
     }
     return r;
@@ -15013,7 +15148,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     strata_make_dirs(obj);
     Codegen cg = new_codegen();
     cg.no_main = s.dll;
-    SplitOutput so = generate_split((&cg), prog, str_concat(name, ".strata.h"), guard_for(str_concat(name, "_strata")));
+    SplitOutput so = (({ __auto_type strata_t1612_ = (&cg); __auto_type strata_t1613_ = prog; __auto_type strata_t1614_ = str_concat(name, ".strata.h"); __auto_type strata_t1615_ = guard_for(str_concat(name, "_strata")); generate_split(strata_t1612_, strata_t1613_, strata_t1614_, strata_t1615_); }));
     if (cg.had_error) {
         strata_report("codegen: program uses features not supported yet");
         return false;
@@ -15023,12 +15158,12 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     if (needs_pic(s)) {
         pic = " -fPIC";
     }
-    const char* flags = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("-std=gnu11", opt), pic), " -pipe -I"), rsp_arg(obj)), " -I"), rsp_arg(libdir));
+    const char* flags = (({ __auto_type strata_t1618_ = str_concat((({ __auto_type strata_t1616_ = str_concat(str_concat(str_concat("-std=gnu11", opt), pic), " -pipe -I"); __auto_type strata_t1617_ = rsp_arg(obj); str_concat(strata_t1616_, strata_t1617_); })), " -I"); __auto_type strata_t1619_ = rsp_arg(libdir); str_concat(strata_t1618_, strata_t1619_); }));
     for (int64_t i = 0; i < s.include_dirs.len; i++) {
-        flags = str_concat(str_concat(flags, " -I"), rsp_arg(((const char**)(s.include_dirs).data)[i]));
+        flags = (({ __auto_type strata_t1620_ = str_concat(flags, " -I"); __auto_type strata_t1621_ = rsp_arg(((const char**)(s.include_dirs).data)[i]); str_concat(strata_t1620_, strata_t1621_); }));
     }
     for (int64_t i = 0; i < s.defines.len; i++) {
-        flags = str_concat(str_concat(flags, " -D"), quoted(((const char**)(s.defines).data)[i]));
+        flags = (({ __auto_type strata_t1622_ = str_concat(flags, " -D"); __auto_type strata_t1623_ = quoted(((const char**)(s.defines).data)[i]); str_concat(strata_t1622_, strata_t1623_); }));
     }
     const char* salt = str_concat(str_concat(str_concat(flags, "\n"), s.tool_version), "\n");
     int64_t jobs = strata_cpu_count();
@@ -15054,7 +15189,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         const char* text = strata_join((&parts));
         const char* cfile = str_concat(str_concat(obj, "/"), ((const char**)(so.names).data)[u]);
         if ((end - u) > 1) {
-            cfile = str_concat(str_concat(str_concat(str_concat(obj, "/chunk"), str_from_int(u)), "_"), ((const char**)(so.names).data)[u]);
+            cfile = str_concat(str_concat((({ __auto_type strata_t1624_ = str_concat(obj, "/chunk"); __auto_type strata_t1625_ = str_from_int(u); str_concat(strata_t1624_, strata_t1625_); })), "_"), ((const char**)(so.names).data)[u]);
         }
         const char* ofile = str_concat(stem_of(cfile), ".o");
         const char* key = fingerprint(str_concat(str_concat(str_concat(salt, so.header), "\n"), text));
@@ -15063,7 +15198,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         if ((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile))) {
             write_if_changed(cfile, text);
             const char* rsp = str_concat(stem_of(cfile), ".rsp");
-            write_if_changed(rsp, str_concat(str_concat(str_concat(str_concat(str_concat(flags, " -c "), rsp_arg(cfile)), " -o "), rsp_arg(ofile)), "\n"));
+            (({ __auto_type strata_t1626_ = rsp; __auto_type strata_t1627_ = str_concat((({ __auto_type strata_t1630_ = str_concat((({ __auto_type strata_t1628_ = str_concat(flags, " -c "); __auto_type strata_t1629_ = rsp_arg(cfile); str_concat(strata_t1628_, strata_t1629_); })), " -o "); __auto_type strata_t1631_ = rsp_arg(ofile); str_concat(strata_t1630_, strata_t1631_); })), "\n"); write_if_changed(strata_t1626_, strata_t1627_); }));
             ({ const char* _e = rsp; arr_push(&(rsps), &_e); });
             ({ const char* _e = key; arr_push(&(keys), &_e); });
             ({ const char* _e = str_concat(ofile, ".key"); arr_push(&(key_files), &_e); });
@@ -15071,20 +15206,20 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         u = end;
     }
     for (int64_t i = 0; i < s.c_sources.len; i++) {
-        const char* ofile = str_concat(str_concat(str_concat(str_concat(str_concat(obj, "/c"), str_from_int(i)), "_"), basename_of(stem_of(((const char**)(s.c_sources).data)[i]))), ".o");
-        const char* key = fingerprint(str_concat(salt, strata_read_file(((const char**)(s.c_sources).data)[i])));
+        const char* ofile = str_concat((({ __auto_type strata_t1634_ = str_concat((({ __auto_type strata_t1632_ = str_concat(obj, "/c"); __auto_type strata_t1633_ = str_from_int(i); str_concat(strata_t1632_, strata_t1633_); })), "_"); __auto_type strata_t1635_ = basename_of(stem_of(((const char**)(s.c_sources).data)[i])); str_concat(strata_t1634_, strata_t1635_); })), ".o");
+        const char* key = fingerprint((({ __auto_type strata_t1636_ = salt; __auto_type strata_t1637_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1636_, strata_t1637_); })));
         ({ const char* _e = ofile; arr_push(&(objects), &_e); });
         total += 1;
         if ((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile))) {
             const char* rsp = str_concat(stem_of(ofile), ".rsp");
-            write_if_changed(rsp, str_concat(str_concat(str_concat(str_concat(str_concat(flags, " -c "), rsp_arg(((const char**)(s.c_sources).data)[i])), " -o "), rsp_arg(ofile)), "\n"));
+            (({ __auto_type strata_t1638_ = rsp; __auto_type strata_t1639_ = str_concat((({ __auto_type strata_t1642_ = str_concat((({ __auto_type strata_t1640_ = str_concat(flags, " -c "); __auto_type strata_t1641_ = rsp_arg(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1640_, strata_t1641_); })), " -o "); __auto_type strata_t1643_ = rsp_arg(ofile); str_concat(strata_t1642_, strata_t1643_); })), "\n"); write_if_changed(strata_t1638_, strata_t1639_); }));
             ({ const char* _e = rsp; arr_push(&(rsps), &_e); });
             ({ const char* _e = key; arr_push(&(keys), &_e); });
             ({ const char* _e = str_concat(ofile, ".key"); arr_push(&(key_files), &_e); });
         }
     }
     if (s.dll) {
-        write_if_changed(str_concat(stem_of(s.out_bin), ".h"), generate_header(prog, guard_for(name), basename_of(s.entry)));
+        (({ __auto_type strata_t1644_ = str_concat(stem_of(s.out_bin), ".h"); __auto_type strata_t1645_ = (({ __auto_type strata_t1646_ = prog; __auto_type strata_t1647_ = guard_for(name); __auto_type strata_t1648_ = basename_of(s.entry); generate_header(strata_t1646_, strata_t1647_, strata_t1648_); })); write_if_changed(strata_t1644_, strata_t1645_); }));
     }
     if (rsps.len > 0) {
         if (strata_run_cc_parallel((&rsps), jobs) > 0) {
@@ -15141,7 +15276,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     }
     strata_write_file(s.cache_file, link_key);
     if (!s.quiet) {
-        strata_report(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("built ", s.out_bin), " ("), str_from_int(rsps.len)), " of "), str_from_int(total)), " C files compiled, "), str_from_int(so.units.len)), " modules)"));
+        strata_report(str_concat((({ __auto_type strata_t1653_ = str_concat((({ __auto_type strata_t1651_ = str_concat((({ __auto_type strata_t1649_ = str_concat(str_concat("built ", s.out_bin), " ("); __auto_type strata_t1650_ = str_from_int(rsps.len); str_concat(strata_t1649_, strata_t1650_); })), " of "); __auto_type strata_t1652_ = str_from_int(total); str_concat(strata_t1651_, strata_t1652_); })), " C files compiled, "); __auto_type strata_t1654_ = str_from_int(so.units.len); str_concat(strata_t1653_, strata_t1654_); })), " modules)"));
     }
     return true;
 }
@@ -15157,7 +15292,7 @@ Project no_project(void) {
 
 Target resolve_target(const char* arg) {
     if (ends_with(arg, ".strata") || ends_with(arg, ".str")) {
-        return (Target){true, false, arg, no_project()};
+        return (({ __auto_type strata_t1655_ = arg; __auto_type strata_t1656_ = no_project(); (Target){true, false, strata_t1655_, strata_t1656_}; }));
     }
     const char* toml = "strata.toml";
     if (ends_with(arg, "strata.toml")) {
@@ -15186,7 +15321,7 @@ BuildSpec target_spec(Target t, const char* version, bool release, bool force, b
 }
 
 const char* stratac_version(void) {
-    return "2.3.0 (C libraries without C)";
+    return "2.4.0 (self-hosted natively)";
 }
 
 bool file_exists(const char* p) {
@@ -15229,7 +15364,7 @@ int64_t cmd_ast(const char* path) {
     Parser p = new_parser(lex(strata_read_file(path)));
     Program prog = parse_program((&p));
     if (p.had_error) {
-        printf("%s\n", str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(basename_of(path), ":"), str_from_int(p.err_line)), ":"), str_from_int(p.err_col)), ": parse error: "), p.err_msg));
+        printf("%s\n", str_concat(str_concat((({ __auto_type strata_t1659_ = str_concat((({ __auto_type strata_t1657_ = str_concat(basename_of(path), ":"); __auto_type strata_t1658_ = str_from_int(p.err_line); str_concat(strata_t1657_, strata_t1658_); })), ":"); __auto_type strata_t1660_ = str_from_int(p.err_col); str_concat(strata_t1659_, strata_t1660_); })), ": parse error: "), p.err_msg));
         return 1;
     }
     print_program(prog);
@@ -15251,7 +15386,7 @@ int64_t cmd_check(const char* path) {
     return 0;
 }
 
-int64_t cmd_emit(const char* path) {
+int64_t cmd_emit(const char* path, const char* out_file) {
     LoadResult lr = load_program(path);
     if (!lr.ok) {
         return 1;
@@ -15268,7 +15403,14 @@ int64_t cmd_emit(const char* path) {
         printf("%s\n", "codegen: program uses features not supported yet");
         return 1;
     }
-    printf(("%s"), (out));
+    if (!str_eq(out_file, "")) {
+        if (!strata_write_file(out_file, out)) {
+            printf("%s\n", str_concat("error: can't write ", out_file));
+            return 1;
+        }
+        return 0;
+    }
+    strata_print_raw(out);
     return 0;
 }
 
@@ -15289,9 +15431,9 @@ int64_t cmd_native(const char* path, bool show_ir, bool opt) {
         return 1;
     }
     if (show_ir) {
-        printf(("%s"), (nr.ir));
+        strata_print_raw(nr.ir);
     } else {
-        printf(("%s"), (nr.asm_text));
+        strata_print_raw(nr.asm_text);
     }
     return 0;
 }
@@ -15330,7 +15472,7 @@ int64_t cmd_object(const char* path, const char* out) {
     }
     if (prog.main.len > 0) {
         Stmt* st = ((Stmt**)(prog.main).data)[0];
-        printf("%s\n", str_concat(str_concat(str_concat(str_concat(str_concat(basename_of(path), ":"), str_from_int(st->line)), ":"), str_from_int(st->col)), ": error: an object file has no main, so its file can't contain top-level code"));
+        printf("%s\n", str_concat((({ __auto_type strata_t1663_ = str_concat((({ __auto_type strata_t1661_ = str_concat(basename_of(path), ":"); __auto_type strata_t1662_ = str_from_int(st->line); str_concat(strata_t1661_, strata_t1662_); })), ":"); __auto_type strata_t1664_ = str_from_int(st->col); str_concat(strata_t1663_, strata_t1664_); })), ": error: an object file has no main, so its file can't contain top-level code"));
         return 1;
     }
     NativeResult nr = native_compile(prog, false, true);
@@ -15354,7 +15496,7 @@ int64_t cmd_object(const char* path, const char* out) {
 }
 
 BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend) {
-    BuildSpec s = target_spec(t, stratac_version(), release, force, quiet);
+    BuildSpec s = (({ __auto_type strata_t1665_ = t; __auto_type strata_t1666_ = stratac_version(); target_spec(strata_t1665_, strata_t1666_, release, force, quiet); }));
     s.backend = backend;
     return s;
 }
@@ -15420,7 +15562,7 @@ int64_t usage(void) {
     printf("%s\n", "  stratac run    [target] [--release] [--force] [--backend b] [-- args]   build and run");
     printf("%s\n", "  stratac build  [target] [--release] [--force] [--backend b]             build an exe or dll");
     printf("%s\n", "  stratac check  [target]          type-check only");
-    printf("%s\n", "  stratac emit   [target]          print the generated C");
+    printf("%s\n", "  stratac emit   [target] [out.c]  print (or write) the generated C");
     printf("%s\n", "  stratac asm    [target] [--release]   print the generated assembly (native backend)");
     printf("%s\n", "  stratac ir     [target] [--release]   print the native backend's IR");
     printf("%s\n", "  stratac assemble <file.s> [out.o]     assemble x86-64 (AT&T) into an object file");
@@ -15535,7 +15677,11 @@ int64_t dmm_main(Array args) {
         return cmd_check(t.file);
     }
     if (str_eq(cmd, "emit")) {
-        return cmd_emit(t.file);
+        const char* out = "";
+        if (prog_args.len > 0) {
+            out = ((const char**)(prog_args).data)[0];
+        }
+        return cmd_emit(t.file, out);
     }
     if (str_eq(cmd, "asm")) {
         return cmd_native(t.file, false, release);

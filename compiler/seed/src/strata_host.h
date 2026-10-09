@@ -3,8 +3,8 @@
 /* src/strata_host.h - the compiler's link to whatever is hosting it.
  *
  * The compiler is written in Strata, but a few things it needs are plain process state,
- * which Strata (no global variables) keeps here in C. Compiler modules
- * `import "strata_host.h"`:
+ * kept here in C for the C backend. Compiler modules `import host` (host.strata declares
+ * these in a foreign block):
  *
  *   strata_report(msg)     every message for the user (errors, "built ...") goes through
  *                          this: printed by the CLI, captured into a buffer when a host
@@ -58,6 +58,9 @@ static inline void strata_report(const char* msg) {
     strata_host_buf[strata_host_len++] = '\n';
     strata_host_buf[strata_host_len] = '\0';
 }
+
+/* Text to stdout exactly as it is (no newline added): `stratac emit` / `asm` / `ir`. */
+static inline void strata_print_raw(const char* text) { fputs(text, stdout); }
 
 /* Start capturing messages (clears the previous capture). */
 static inline void strata_capture_begin(void) {
@@ -249,7 +252,8 @@ static inline long long strata_f64_bits(const char* text) {
 
 /* Free one dynamic array's buffer now (e.g. a module's tokens once it's parsed) and leave
  * it empty. Only for arrays nothing else still points into. */
-static inline void strata_array_free(Array* a) {
+static inline void strata_array_free(void* array) {
+    Array* a = (Array*)array;
 #ifdef STRATA_ARR_TRACKED
     if (a->data) {
         StrataArrLink* h = ((StrataArrLink*)a->data) - 1;

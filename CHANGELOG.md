@@ -4,7 +4,7 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
-## [Unreleased]
+## [2.4.0] - 2026-10-09
 **The compiler compiles itself natively.** `stratac` is built by Strata's own backend,
 assembler and linker; building Strata on Windows needs no C compiler.
 

@@ -6,9 +6,9 @@
 > [`CHANGELOG.md`](CHANGELOG.md) (per-version detail) and
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
-**Current:** stratac **2.3.0** (C libraries without C: foreign structs / constants, DLL linking), released 2026-10-09
+**Current:** stratac **2.4.0** (self-hosted natively: no C compiler to build Strata on Windows), released 2026-10-09
 · tests **72/72** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
-· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.3.0)
+· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.4.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
 relies on nothing but the OS and what a game engine provides. 2.0 is step one: its own
@@ -18,7 +18,15 @@ x86-64 code generator and optimizer. C remains an option (`--backend c`). See §
 
 ## 0. Start here (handoff from the 2026-10-09 chat)
 
-**The user's latest instruction, verbatim:** *"do whatevers best but just try to move away
+**The user's latest instruction (2026-10-09), verbatim:** *"do those all in order but also
+remove the C compilation process just make it assembly we don't need C"* — "those" = the
+plan below. Asked when C should go, the user chose **at the end**: (1) ~~release 2.4.0~~,
+(2) stack-slot sharing in the optimizer, (3) native dlls (libstrata without gcc), (4) native
+ARM64 Mach-O + x86-64 ELF backends (macOS / Linux; testable only through CI), (5) **then
+delete the C backend** (codegen, `--backend c`, `emit`, `import <x.h>`, the C seed,
+`strata_host.h`, `lib/*.h`). Nothing may break along the way.
+
+The instruction before it: *"do whatevers best but just try to move away
 from c so we can clean up a lot of stuff"* — then: put that in this file and move to a new
 chat. So: **keep moving Strata off C, and clean up what that frees** (fewer C files, fewer
 gcc/C code paths). Use judgment on the order; prefer steps that remove a dependency. The
@@ -34,7 +42,7 @@ plus releases, and approve releases when asked.
 - **2.3.0** released 2026-10-09: `struct`s and `const`ants in `foreign` blocks; the raylib
   examples import `examples/raylib.strata` and build natively; Strata's linker links
   `link "x"` / `libs` against the libraries' DLLs (raylib builds with no gcc). 71 tests.
-- **Unreleased on `main` (next: 2.4.0): the compiler compiles itself natively.** `build.ps1`
+- **2.4.0** released 2026-10-09: **the compiler compiles itself natively.** `build.ps1`
   bootstraps stage0 (2.3.0) → stage1 → stage2 → stage3, all with the native backend, no
   gcc; stage2 == stage3 byte for byte. Compiler modules `import host` (`src/host.strata`,
   a foreign block): `strata_host.h` serves the C build (macOS / Linux, the seed), the
@@ -64,8 +72,7 @@ plus releases, and approve releases when asked.
 
 **Suggested order:** (a) ~~release 2.2.0~~ done; (b) ~~`struct` (and constant) declarations in
 `foreign` blocks + native raylib examples~~ done; (c) ~~`pelink` resolving `link "x"` DLLs itself~~ done;
-(d) ~~the compiler compiled natively~~ done on Windows (release it as 2.4.0, after CI shows
-macOS / Linux still bootstrap from the new seed). Then: (e) stack-slot sharing in the
+(d) ~~the compiler compiled natively~~ done on Windows (2.4.0). Then: (e) stack-slot sharing in the
 optimizer (the native compiler's frames are 2-4 KB: `primary`, `gen_expr`, `ck_expr_i`;
 hence the 8 MB stack); (f) native dlls (then libstrata needs no gcc); (g) ARM64 / ELF /
 Mach-O targets (what finally retires the C seed); (h) reading C headers into foreign
@@ -462,7 +469,8 @@ builds, hardened limits · 1.6 stratac on Windows, macOS and Linux (crossplatfor
 · **2.0 the native backend: x86-64 code + an optimizer, Strata's own** · **2.1 Strata's own
 assembler + COFF writer + linker: native builds need no C compiler.** · **2.2 the native
 runtime in Strata (`foreign` blocks, `global` variables).** · **2.3 C libraries without C:
-structs / constants in `foreign` blocks, Strata's linker links DLLs (raylib, no gcc).**
+structs / constants in `foreign` blocks, Strata's linker links DLLs (raylib, no gcc).** · **2.4
+the compiler compiles itself natively (no C compiler to build Strata on Windows).**
 
 **The independence road (the user's chosen direction; one step at a time, C path kept):**
 1. ~~**Object files directly** (COFF): an x86-64 encoder in Strata, no assembler.~~ Done
@@ -477,7 +485,7 @@ structs / constants in `foreign` blocks, Strata's linker links DLLs (raylib, no 
    declare what it uses by hand (functions, structs, constants): raylib works that way.
 5. **More targets**: ARM64 (the user's Apple Silicon Mac), Linux / macOS x86-64 — the IR
    is shared; each is a new `x64.strata`-like file + ABI rules.
-6. ~~**Self-compiling natively**~~ Done on Windows (unreleased: 2.4.0): the compiler is
+6. ~~**Self-compiling natively**~~ Done on Windows (2.4.0): the compiler is
    built by its own native backend, stage2 == stage3. The C seed stays for macOS / Linux
    until step 5. Next: the optimizer keeps improving (stack-slot sharing first, then
    inlining, better allocation, SIMD for vec math, tail calls).
