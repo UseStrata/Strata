@@ -1,12 +1,12 @@
 # tests/run.ps1 - bootstrap the Strata compiler (build.ps1) and validate it:
-#   1. the bootstrap: stage0 (pinned release) -> stage1 -> stage2, fixpoint-checked
+#   1. the bootstrap: stage0 (pinned release) -> stage1 -> stage2 -> stage3, fixpoint-checked
 #   2. goldens: each stage's output vs its golden file, byte-for-byte (ARCHITECTURE.md sec 6)
 # Run from anywhere:
 #     powershell -ExecutionPolicy Bypass -File compiler\tests\run.ps1
 #
 # A golden file  tests/<stage>/<name>.expected  is compared against the output of
 #     stratac <stage> examples/<name>.strata
-# using the SHIPPED compiler (bin\stratac.exe, the self-hosted stage2).
+# using the SHIPPED compiler (bin\stratac.exe, the self-hosted stage3).
 # Exit code 0 = all passed, 1 = a mismatch or build failure.
 
 $ErrorActionPreference = "Stop"
@@ -15,11 +15,11 @@ $compiler = Split-Path -Parent $here                          # ...\compiler
 $src      = Join-Path $compiler "src"
 $examples = Join-Path $compiler "examples"
 
-# --- bootstrap (stage0 -> stage1 -> stage2, with the fixpoint check) ---------
+# --- bootstrap (stage0 -> stage1 -> stage2 -> stage3, with the fixpoint check) ---
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $compiler "build.ps1") | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: bootstrap build failed (run compiler\build.ps1 to see why)" -ForegroundColor Red; exit 1 }
 $strata = Join-Path $compiler "bin\stratac.exe"
-Write-Host "PASS  bootstrap (pinned release -> stage1 -> stage2, fixpoint)" -ForegroundColor Green
+Write-Host "PASS  bootstrap (pinned release -> stage1 -> stage2 -> stage3, native, fixpoint)" -ForegroundColor Green
 $pass = 1; $fail = 0
 
 # --- run each golden ---------------------------------------------------------
@@ -181,6 +181,18 @@ try {
     if ($raylibDll) {
         $out = (& $strata build (Join-Path $examples "window.strata") --backend native --force) -join " "
         if ($LASTEXITCODE -ne 0 -or $out -match "linked by") { $noCc += "window (raylib)" }
+    }
+    # the compiler builds itself, and the compiler it builds works
+    # (the copy runs from compiler\build\, where it finds compiler\lib\)
+    $selfExe  = Join-Path $compiler "src\stratac.exe"
+    $selfCopy = Join-Path $compiler "build\selftest.exe"
+    & $strata build (Join-Path $compiler "src\stratac.strata") --backend native --force | Out-Null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $selfExe)) { $noCc += "the compiler itself" }
+    else {
+        Copy-Item $selfExe $selfCopy -Force
+        $out  = ((& $selfCopy run (Join-Path $examples "hello.strata") --force) -join "`n") -replace "`r",""
+        $want = ((Get-Content (Join-Path $here "run\hello.expected") -Raw) -replace "`r","").TrimEnd("`n")
+        if ($out.TrimEnd("`n") -ne $want) { $noCc += "the compiler itself (its hello)" }
     }
     foreach ($name in @("hello", "abi", "loops", "matrix", "foreign")) {
         $out  = ((& $strata run (Join-Path $examples "$name.strata") --backend native) -join "`n") -replace "`r",""

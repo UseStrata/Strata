@@ -22,7 +22,7 @@ int64_t fib(int64_t n) {
     if (n < 2) {
         return n;
     }
-    return (fib((n - 1)) + fib((n - 2)));
+    return (({ __auto_type strata_t1_ = fib((n - 1)); __auto_type strata_t2_ = fib((n - 2)); (strata_t1_ + strata_t2_); }));
 }
 
 int main(int strata_argc_, char** strata_argv_) {

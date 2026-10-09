@@ -19,7 +19,7 @@
 // and to functions defined elsewhere become relocations.
 
 import hashidx
-import "strata_host.h"   // strata_f32_bits, strata_f64_bits
+import host   // strata_f32_bits, strata_f64_bits
 
 // A relocation: in `section` (1 .text, 3 .data) at `offset`. kind 0: a 32-bit PC-relative
 // field (in .text; `after`: how many bytes of the instruction follow it, an immediate);

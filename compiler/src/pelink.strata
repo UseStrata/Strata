@@ -22,7 +22,7 @@
 import x64asm   // ObjFile, assemble_x64 (the startup stub)
 import coff     // coff_bytes
 import hashidx
-import "strata_host.h"   // strata_read_bytes, strata_write_bytes, strata_getenv
+import host   // strata_read_bytes, strata_write_bytes, strata_getenv
 
 // ---- the inputs -----------------------------------------------------------------------------
 
@@ -666,7 +666,7 @@ export bool link_exe(Linker* l, string path) {
     p32(&o, 0)                     // checksum
     p16(&o, 3)                     // console subsystem
     p16(&o, 33024)                 // NX compatible, terminal-server aware (no ASLR: a fixed base)
-    p32(&o, 2097152)               // stack reserve 2 MB
+    p32(&o, 8388608)               // stack reserve 8 MB (committed as it grows)
     p32(&o, 0)
     p32(&o, 4096)                  // stack commit
     p32(&o, 0)

@@ -24,7 +24,7 @@
 
 import ast
 import ir
-import "strata_host.h"   // strata_join
+import host   // strata_join
 
 // ---- layouts ---------------------------------------------------------------------
 

@@ -283,6 +283,16 @@ foreign {                            // no header: found when linking (e.g. a sy
 
 ---
 
+## 8b. Evaluation order
+
+- **Settled (2026-10-09): left to right.** A call's arguments, a struct literal's fields
+  and the two operands of a binary operator are evaluated left to right, on every backend
+  (as in Go, Java, C#). `&&` / `||` evaluate their right side only when needed. C leaves
+  argument order unspecified, so the C backend computes earlier operands into temporaries
+  when a later one calls a function.
+
+---
+
 ## 9. Naming & style (proposal)
 
 - `snake_case` functions/variables, `PascalCase` types, `SCREAMING_CASE` constants.

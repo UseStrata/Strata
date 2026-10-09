@@ -32,6 +32,17 @@ foreign {
     float sinf(float x)
     float cosf(float x)
     float tanf(float x)
+    // for the host functions (the end of this file)
+    i32 fflush(u8* f)
+    u8* __iob_func()
+    string getenv(string name)
+    i32 _mkdir(string path)
+    int _spawnvp(i32 mode, string cmd, string* argv)
+    int _cwait(i32* status, int process, i32 action)
+}
+foreign {   // kernel32.dll
+    u32 GetFileAttributesA(string path)
+    u32 GetModuleFileNameA(u8* module, u8* buf, u32 size)
 }
 
 // ---- arenas -------------------------------------------------------------------------------
@@ -79,12 +90,74 @@ export u8* srt_heap_alloc(int size) { return pool_alloc(&heap, size) }
 
 u8* bytes(string s) { return cast<u8*>(s) }
 
+// Long strings the runtime makes have their length remembered (lib/sstr.h does the same),
+// so `.len` and substr on them are O(1): a program walking a big file with s[i] / s.len
+// stays linear. An open-addressing table keyed by the string's address; any other string
+// (a literal, a buffer from C) is measured with strlen.
+global u64* len_keys
+global int* len_vals
+global int len_cap      // a power of two
+global int len_count
+
+int len_min() { return 128 }   // shorter strings are cheap to measure
+
+int len_slot(u64 p, int cap) {
+    u64 x = p
+    x = x ^ (x >> cast<u64>(29))
+    x = x * cast<u64>(0 - 4658895280553007687)    // 0xBF58476D1CE4E5B9
+    x = x ^ (x >> cast<u64>(32))
+    return cast<int>(x & cast<u64>(cap - 1))
+}
+
+void len_put(u8* s, int len) {
+    if len < len_min() { return }
+    if (len_count + 1) * 2 > len_cap {        // keep the load at most 1/2
+        int ncap = 1024
+        if len_cap > 0 { ncap = len_cap * 2 }
+        u64* nk = cast<u64*>(malloc(8 * ncap))
+        int* nv = cast<int*>(malloc(8 * ncap))
+        memset(cast<u8*>(nk), 0, 8 * ncap)
+        for i in 0..len_cap {
+            if len_keys[i] != cast<u64>(0) {
+                int j = len_slot(len_keys[i], ncap)
+                while nk[j] != cast<u64>(0) { j = (j + 1) & (ncap - 1) }
+                nk[j] = len_keys[i]
+                nv[j] = len_vals[i]
+            }
+        }
+        if len_cap > 0 { free(cast<u8*>(len_keys)); free(cast<u8*>(len_vals)) }
+        len_keys = nk
+        len_vals = nv
+        len_cap = ncap
+    }
+    u64 key = cast<u64>(cast<int>(s))
+    int j = len_slot(key, len_cap)
+    while len_keys[j] != cast<u64>(0) && len_keys[j] != key { j = (j + 1) & (len_cap - 1) }
+    if len_keys[j] == cast<u64>(0) { len_count += 1 }
+    len_keys[j] = key
+    len_vals[j] = len
+}
+
+// strlen, unless the runtime remembers this string's length
+int str_length(string s) {
+    if len_cap > 0 {
+        u64 key = cast<u64>(cast<int>(cast<u8*>(s)))
+        int j = len_slot(key, len_cap)
+        while len_keys[j] != cast<u64>(0) {
+            if len_keys[j] == key { return len_vals[j] }
+            j = (j + 1) & (len_cap - 1)
+        }
+    }
+    return strlen(s)
+}
+
 export string srt_str_concat(string x, string y) {
-    int lx = strlen(x)
-    int ly = strlen(y)
+    int lx = str_length(x)
+    int ly = str_length(y)
     u8* r = pool_alloc(&strs, lx + ly + 1)
     memcpy(r, bytes(x), lx)
     memcpy(&r[lx], bytes(y), ly)
+    len_put(r, lx + ly)
     return cast<string>(r)
 }
 
@@ -93,11 +166,11 @@ export i32 srt_str_eq(string x, string y) {
     return 0
 }
 
-export int srt_str_len(string s) { return strlen(s) }
+export int srt_str_len(string s) { return str_length(s) }
 
 // substr(s, start, n): n bytes from `start`, clamped to the string's bounds
 export string srt_str_sub(string s, int start, int n) {
-    int len = strlen(s)
+    int len = str_length(s)
     if start < 0 { start = 0 }
     if start > len { start = len }
     if n < 0 { n = 0 }
@@ -105,6 +178,7 @@ export string srt_str_sub(string s, int start, int n) {
     u8* r = pool_alloc(&strs, n + 1)
     u8* sb = bytes(s)
     memcpy(r, &sb[start], n)
+    len_put(r, n)
     return cast<string>(r)
 }
 
@@ -380,13 +454,14 @@ export string srt_read_file(string path) {
     int got = fread(buf, 1, cast<int>(size), f)
     fclose(f)
     buf[got] = cast<u8>(0)
+    len_put(buf, got)
     return cast<string>(buf)
 }
 
 export bool srt_write_file(string path, string data) {
     u8* f = fopen(path, "wb")
     if f == null { return false }
-    int len = strlen(data)
+    int len = str_length(data)
     int wrote = 0
     if len > 0 { wrote = fwrite(bytes(data), 1, len, f) }
     fclose(f)
@@ -628,4 +703,464 @@ export void srt_quat_to_mat4(mat4* r, quat* p) {
     m[6] = two * (y * z + w * x)
     m[10] = one - two * (x * x + y * y)
     *r = res
+}
+
+// ---- the host functions (the compiler's src/host.strata) ----------------------------------------
+// What the compiler, built natively, asks of whatever hosts it: the `strata_*` functions
+// that src/strata_host.h gives its C build, here in Strata on top of msvcrt / kernel32,
+// with the same behavior (lib/crossplatform.h's Windows code, line for line).
+
+global bool capturing
+global u8* cap_buf
+global int cap_len
+global int cap_size
+
+export void strata_report(string msg) {
+    if !capturing { puts(msg); return }
+    int n = strlen(msg)
+    if cap_len + n + 2 > cap_size {
+        int size = cap_size
+        if size == 0 { size = 256 }
+        while cap_len + n + 2 > size { size = size * 2 }
+        cap_buf = realloc(cap_buf, size)
+        cap_size = size
+    }
+    memcpy(&cap_buf[cap_len], bytes(msg), n)
+    cap_len = cap_len + n
+    cap_buf[cap_len] = cast<u8>(10)
+    cap_len = cap_len + 1
+    cap_buf[cap_len] = cast<u8>(0)
+}
+
+export void strata_capture_begin() {
+    capturing = true
+    cap_len = 0
+    if cap_buf != null { cap_buf[0] = cast<u8>(0) }
+}
+export void strata_capture_end() { capturing = false }
+export string strata_capture_text() {
+    if cap_buf == null { return "" }
+    return cast<string>(cap_buf)
+}
+
+// stdout: msvcrt's FILE array, entry 1 (a FILE is 48 bytes)
+u8* stdout_file() { return cast<u8*>(cast<int>(__iob_func()) + 48) }
+
+export void strata_print_raw(string text) {
+    int n = strlen(text)
+    if n > 0 { fwrite(bytes(text), 1, n, stdout_file()) }
+}
+
+export string strata_join(ArrayRep* parts) {
+    string* p = cast<string*>(parts.data)
+    int total = 0
+    for i in 0..parts.len { total = total + str_length(p[i]) }
+    u8* r = pool_alloc(&strs, total + 1)
+    int at = 0
+    for i in 0..parts.len {
+        int n = str_length(p[i])
+        memcpy(&r[at], bytes(p[i]), n)
+        at = at + n
+    }
+    len_put(r, total)
+    return cast<string>(r)
+}
+
+export string strata_host_os() { return "windows" }
+export string strata_host_arch() { return "x86_64" }
+
+export string strata_getenv(string name) {
+    string v = getenv(name)
+    if cast<u8*>(v) == null { return "" }
+    return v
+}
+
+export string strata_cc() {
+    string cc = strata_getenv("STRATA_CC")
+    if cc != "" { return cc }
+    return "gcc"
+}
+
+// a path the OS wrote into a buffer, as a runtime string ("" on failure)
+string module_path() {
+    u8* buf = pool_alloc(&strs, 4096)
+    u32 n = GetModuleFileNameA(null, buf, cast<u32>(4096))
+    if n == cast<u32>(0) || n >= cast<u32>(4096) { return "" }
+    return cast<string>(buf)
+}
+
+export string strata_exe_path() { return module_path() }
+
+export int strata_cpu_count() {
+    string n = getenv("NUMBER_OF_PROCESSORS")
+    int v = 0
+    if cast<u8*>(n) != null {
+        u8* b = bytes(n)
+        int i = 0
+        while b[i] >= cast<u8>('0') && b[i] <= cast<u8>('9') {
+            v = v * 10 + (cast<int>(b[i]) - cast<int>('0'))
+            i += 1
+        }
+    }
+    if v > 0 { return v }
+    return 1
+}
+
+// ---- files
+
+u32 no_file() { return cast<u32>(4294967295) }   // INVALID_FILE_ATTRIBUTES
+
+export bool strata_file_exists(string path) {
+    if strlen(path) == 0 { return false }
+    return GetFileAttributesA(path) != no_file()
+}
+
+bool is_directory(string path) {
+    if strlen(path) == 0 { return false }
+    u32 a = GetFileAttributesA(path)
+    return a != no_file() && (a & cast<u32>(16)) != cast<u32>(0)
+}
+
+bool is_sep(u8 c) { return c == cast<u8>('/') || c == cast<u8>('\\') }
+
+// make each parent in turn ("a", "a/b", ...), then the folder itself
+export bool strata_make_dirs(string path) {
+    int n = strlen(path)
+    if n == 0 { return false }
+    if is_directory(path) { return true }
+    u8* p = pool_alloc(&strs, n + 1)
+    memcpy(p, bytes(path), n)
+    int start = 0
+    if n >= 2 && p[1] == cast<u8>(':') { start = 2 }                 // C:\...
+    else if n >= 2 && is_sep(p[0]) && is_sep(p[1]) {                  // \\server\share\...
+        int seps = 0
+        start = 2
+        while start < n && seps < 2 {
+            if is_sep(p[start]) { seps += 1 }
+            start += 1
+        }
+    }
+    bool going = true
+    int i = start + 1
+    while going && i <= n {
+        if i == n || is_sep(p[i]) {
+            u8 saved = p[i]
+            p[i] = cast<u8>(0)
+            if !is_directory(cast<string>(p)) && _mkdir(cast<string>(p)) != 0 && !is_directory(cast<string>(p)) { going = false }
+            p[i] = saved
+        }
+        i += 1
+    }
+    return is_directory(cast<string>(p))
+}
+
+export bool strata_write_bytes(string path, ArrayRep* b) {
+    u8* f = fopen(path, "wb")
+    if f == null { return false }
+    int w = 0
+    if b.len > 0 { w = fwrite(b.data, 1, b.len, f) }
+    fclose(f)
+    return w == b.len
+}
+
+export u8[dynamic] strata_read_bytes(string path) {
+    u8[dynamic] a = []
+    u8* f = fopen(path, "rb")
+    if f == null { return a }
+    fseek(f, 0, 2)
+    i32 size = ftell(f)
+    fseek(f, 0, 0)
+    if size > 0 {
+        ArrayRep* r = cast<ArrayRep*>(&a)
+        r.data = malloc(cast<int>(size))
+        r.cap = cast<int>(size)
+        r.len = fread(r.data, 1, cast<int>(size), f)
+    }
+    fclose(f)
+    return a
+}
+
+export string strata_bytes_cstr(ArrayRep* b, int at, int max) {
+    int n = 0
+    while n < max && at + n < b.len && b.data[at + n] != cast<u8>(0) { n += 1 }
+    u8* r = pool_alloc(&strs, n + 1)
+    if n > 0 { memcpy(r, &b.data[at], n) }
+    return cast<string>(r)
+}
+
+// A decimal literal's IEEE bits, correctly rounded (ties to even), as an assembler's
+// .float / .double stores them. (msvcrt's strtod isn't exact: subnormals come out wrong.)
+// value = digits * 10^e10, as N / D with big integers; then the mantissa by long division.
+global u64* pf_n
+global u64* pf_d
+global u64* pf_t
+
+// limbs: 16,384 bits - 800 digits (any tie between two doubles has at most 767), any
+// exponent that isn't plainly 0 or infinity
+int PF() { return 512 }
+
+int digit_of(u8 c) { return cast<int>(c) - cast<int>('0') }
+bool is_digit(u8 c) { return c >= cast<u8>('0') && c <= cast<u8>('9') }
+
+// a = a * k + add
+int big_mul_add(u64* a, int n, u64 k, u64 add) {
+    u64 carry = add
+    for i in 0..n {
+        u64 x = a[i] * k + carry
+        a[i] = x & lo32()
+        carry = x >> cast<u64>(32)
+    }
+    if carry != cast<u64>(0) { a[n] = carry; n += 1 }
+    return n
+}
+
+// width: 64 / 32 bits; mant: mantissa bits (52 / 23); emin / emax: the exponent range
+// (-1022..1023 / -126..127)
+int float_bits(string text, int width, int mant, int emin, int emax) {
+    if pf_n == null { pf_n = cast<u64*>(malloc(8 * PF())); pf_d = cast<u64*>(malloc(8 * PF())); pf_t = cast<u64*>(malloc(8 * PF())) }
+    u8* s = bytes(text)
+    u64 one = cast<u64>(1)
+    int i = 0
+    bool neg = false
+    if s[i] == cast<u8>('-') { neg = true; i += 1 } else if s[i] == cast<u8>('+') { i += 1 }
+    int expbits = width - 1 - mant               // 11 / 8: the exponent field's width
+    u64 signbit = cast<u64>(0)
+    if neg { signbit = one << cast<u64>(width - 1) }
+    // digits (at most 800 kept; a nonzero digit beyond them is a "sticky" bit: since a
+    // tie needs at most 767 digits, the truncated value rounds the same way)
+    int nl = big_set(pf_n, cast<u64>(0))
+    int kept = 0
+    int e10 = 0
+    bool sticky = false
+    bool frac = false
+    bool going = true
+    while going {
+        u8 c = s[i]
+        if is_digit(c) {
+            if kept < 800 {
+                if kept > 0 || c != cast<u8>('0') {      // (leading zeros aren't digits)
+                    nl = big_mul_add(pf_n, nl, cast<u64>(10), cast<u64>(digit_of(c)))
+                    kept += 1
+                }
+                if frac { e10 -= 1 }
+            } else {
+                if c != cast<u8>('0') { sticky = true }
+                if !frac { e10 += 1 }
+            }
+            i += 1
+        } else if c == cast<u8>('.') && !frac {
+            frac = true
+            i += 1
+        } else {
+            going = false
+        }
+    }
+    if s[i] == cast<u8>('e') || s[i] == cast<u8>('E') {
+        i += 1
+        bool eneg = false
+        if s[i] == cast<u8>('-') { eneg = true; i += 1 } else if s[i] == cast<u8>('+') { i += 1 }
+        int ev = 0
+        while is_digit(s[i]) { if ev < 100000 { ev = ev * 10 + digit_of(s[i]) }; i += 1 }
+        if eneg { e10 -= ev } else { e10 += ev }
+    }
+    u64 infbits = ((one << cast<u64>(expbits)) - one) << cast<u64>(mant)
+    if kept == 0 { return cast<int>(signbit) }                       // zero
+    if e10 + kept > 400 { return cast<int>(signbit | infbits) }      // overflows
+    if e10 + kept < 0 - 400 { return cast<int>(signbit) }            // underflows to zero
+    int dl = big_set(pf_d, one)
+    if e10 >= 0 { nl = big_pow10(pf_n, nl, e10) } else { dl = big_pow10(pf_d, dl, 0 - e10) }
+    // e = floor(log2(N / D)), from the bit lengths (then corrected)
+    int e = big_bits(pf_n, nl) - big_bits(pf_d, dl)
+    if !big_ge_shifted(pf_n, nl, pf_d, dl, e) { e -= 1 }
+    if e < emin { e = emin }                                         // subnormal
+    // q = floor(N / D * 2^(mant - e)): mant + 1 bits (or fewer, subnormal)
+    int shift = mant - e
+    if shift >= 0 { nl = big_shl(pf_n, nl, shift) } else { dl = big_shl(pf_d, dl, 0 - shift) }
+    u64 q = cast<u64>(0)
+    int b = mant + 1
+    while b >= 0 {
+        for k in 0..dl { pf_t[k] = pf_d[k] }
+        int tl = big_shl(pf_t, dl, b)
+        if big_cmp(pf_n, nl, pf_t, tl) >= 0 {
+            nl = big_sub(pf_n, nl, pf_t, tl)
+            q = q | (one << cast<u64>(b))
+        }
+        b -= 1
+    }
+    // round: the remainder times 2 against D; a tie goes to even (or up, if sticky)
+    nl = big_shl(pf_n, nl, 1)
+    int c = big_cmp(pf_n, nl, pf_d, dl)
+    if c > 0 || (c == 0 && (sticky || (q & one) == one)) { q = q + one }
+    if q == (one << cast<u64>(mant + 1)) { q = q >> one; e += 1 }
+    if e > emax { return cast<int>(signbit | infbits) }
+    u64 hidden = one << cast<u64>(mant)
+    if q < hidden { return cast<int>(signbit | q) }                  // subnormal: exponent field 0
+    u64 field = cast<u64>(e - emin + 1)
+    return cast<int>(signbit | (field << cast<u64>(mant)) | (q - hidden))
+}
+
+// the number of significant bits of a big integer
+int big_bits(u64* a, int n) {
+    int top = n - 1
+    u64 x = a[top]
+    int bits = 32 * top
+    while x != cast<u64>(0) { bits += 1; x = x >> cast<u64>(1) }
+    return bits
+}
+
+// N >= D * 2^e ? (e may be negative: then N * 2^-e >= D)
+bool big_ge_shifted(u64* n, int nl, u64* d, int dl, int e) {
+    u64* t = pf_t
+    if e >= 0 {
+        for k in 0..dl { t[k] = d[k] }
+        int tl = big_shl(t, dl, e)
+        return big_cmp(n, nl, t, tl) >= 0
+    }
+    for k in 0..nl { t[k] = n[k] }
+    int tl = big_shl(t, nl, 0 - e)
+    return big_cmp(t, tl, d, dl) >= 0
+}
+
+export int strata_f32_bits(string text) { return float_bits(text, 32, 23, 0 - 126, 127) }
+export int strata_f64_bits(string text) { return float_bits(text, 64, 52, 0 - 1022, 1023) }
+
+// ---- memory
+
+export void strata_array_free(u8* array) {
+    ArrayRep* a = cast<ArrayRep*>(array)
+    if a.data != null { free(a.data) }
+    a.data = null
+    a.len = 0
+    a.cap = 0
+}
+
+export void strata_host_reset() {
+    if len_cap > 0 { memset(cast<u8*>(len_keys), 0, 8 * len_cap) }
+    len_count = 0
+    srt_arena_free(&strs)
+    srt_arena_free(&heap)
+}
+
+// ---- running programs
+// msvcrt's _spawnvp joins argv into one command line WITHOUT quoting, and the program
+// splits it again; so quote each argument the way the C runtime parses them back.
+
+string quote_arg(string a) {
+    int n = strlen(a)
+    u8* s = bytes(a)
+    bool needs = n == 0
+    for i in 0..n {
+        u8 c = s[i]
+        if c == cast<u8>(' ') || c == cast<u8>(9) || c == cast<u8>(10) || c == cast<u8>(11) || c == cast<u8>('"') { needs = true }
+    }
+    if !needs { return a }
+    u8* q = pool_alloc(&strs, n * 2 + 3)
+    int o = 0
+    int slashes = 0
+    q[o] = cast<u8>('"'); o += 1
+    for i in 0..n {
+        u8 c = s[i]
+        if c == cast<u8>('\\') {
+            slashes += 1
+            q[o] = c; o += 1
+        } else {
+            if c == cast<u8>('"') {          // double the backslashes, escape the quote
+                for k in 0..slashes { q[o] = cast<u8>('\\'); o += 1 }
+                q[o] = cast<u8>('\\'); o += 1
+            }
+            slashes = 0
+            q[o] = c; o += 1
+        }
+    }
+    for k in 0..slashes { q[o] = cast<u8>('\\'); o += 1 }    // backslashes before the closing quote
+    q[o] = cast<u8>('"'); o += 1
+    q[o] = cast<u8>(0)
+    return cast<string>(q)
+}
+
+// start argv[0..n) (no wait); 0 if it couldn't be started
+int start_process(string* argv, int n) {
+    if n < 1 { return 0 }
+    string* quoted = cast<string*>(malloc(8 * (n + 1)))
+    for i in 0..n { quoted[i] = quote_arg(argv[i]) }
+    quoted[n] = cast<string>(null)
+    fflush(null)
+    int h = _spawnvp(1, argv[0], quoted)      // _P_NOWAIT
+    free(cast<u8*>(quoted))
+    if h == 0 - 1 { return 0 }
+    return h
+}
+
+int wait_process(int h) {
+    if h == 0 { return 0 - 1 }
+    i32 status = 0
+    if _cwait(&status, h, 0) == 0 - 1 { return 0 - 1 }
+    return cast<int>(status)
+}
+
+void report_no_start(string program) {
+    if program == strata_cc() {
+        strata_report("error: could not start the C compiler '" + program + "' (is it installed and on PATH? STRATA_CC picks another)")
+    } else {
+        strata_report("error: could not start '" + program + "'")
+    }
+}
+
+export int strata_run_argv(ArrayRep* argv) {
+    if argv.len < 1 { return 0 - 1 }
+    string* a = cast<string*>(argv.data)
+    int h = start_process(a, argv.len)
+    if h == 0 { report_no_start(a[0]); return 0 - 1 }
+    return wait_process(h)
+}
+
+// `<cc> @file` for each response file, up to `jobs` at a time; how many failed
+export int strata_run_cc_parallel(ArrayRep* rsp_files, int jobs) {
+    string* f = cast<string*>(rsp_files.data)
+    int n = rsp_files.len
+    if jobs < 1 { jobs = 1 }
+    int* p = cast<int*>(malloc(8 * (n + 1)))
+    int failed = 0
+    int waited = 0
+    bool reported = false
+    string cc = strata_cc()
+    for i in 0..n {
+        while i - waited >= jobs {                 // window full: wait for the oldest
+            if p[waited] == 0 || wait_process(p[waited]) != 0 { failed += 1 }
+            waited += 1
+        }
+        string[dynamic] argv = [cc, "@" + f[i]]
+        p[i] = start_process(cast<string*>(cast<ArrayRep*>(&argv).data), 2)
+        if p[i] == 0 && !reported { report_no_start(cc); reported = true }
+    }
+    while waited < n {
+        if p[waited] == 0 || wait_process(p[waited]) != 0 { failed += 1 }
+        waited += 1
+    }
+    free(cast<u8*>(p))
+    return failed
+}
+
+// ---- the runtime lib/ folder
+
+global string libdir_set
+
+export void strata_host_set_libdir(string dir) { libdir_set = dir }
+
+// The host's choice; else lib/ next to the executable, or one level up (the repo layout:
+// bin/../lib); else "lib".
+export string strata_host_libdir() {
+    if cast<u8*>(libdir_set) != null && libdir_set != "" { return libdir_set }
+    string path = module_path()
+    int cut = 0 - 1
+    u8* b = bytes(path)
+    for i in 0..strlen(path) { if is_sep(b[i]) { cut = i } }
+    if cut >= 0 {
+        string dir = srt_str_sub(path, 0, cut)
+        string probe = dir + "/lib"
+        if strata_file_exists(probe + "/arena.h") { libdir_set = probe; return probe }
+        probe = dir + "/../lib"
+        if strata_file_exists(probe + "/arena.h") { libdir_set = probe; return probe }
+    }
+    return "lib"
 }

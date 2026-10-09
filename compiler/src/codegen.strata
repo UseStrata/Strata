@@ -14,7 +14,7 @@
 
 // AST + Parser (brings lexer/token)
 import parser
-import "strata_host.h"   // strata_join
+import host   // strata_join
 import ast
 
 // Output is collected as a list of pieces and joined once at the end: appending to one
@@ -33,6 +33,7 @@ export struct Codegen {
     int             switch_depth
     int             labels// label numbers handed out
     string          ret_c// the current function's C return type
+    int             temps// temporaries handed out (evaluation order, below)
 }
 
 export Codegen new_codegen() {
@@ -42,7 +43,7 @@ export Codegen new_codegen() {
     int[dynamic] ls = []
     int[dynamic] ll = []
     int[dynamic] lu = []
-    return Codegen{ parts, false, false, regions, lr, ls, ll, lu, 0, 0, "void" }
+    return Codegen{ parts, false, false, regions, lr, ls, ll, lu, 0, 0, "void", 0 }
 }
 
 // C to free the regions opened since `from` (innermost first).
@@ -221,7 +222,88 @@ string  cg_dynarr_elem(TypeNode* t)  { if (cg_is_dynarr_rt(t) && t.elem != null)
 
 // ---- expressions -------------------------------------------------------
 
+// ---- evaluation order ----------------------------------------------------------
+// Strata evaluates call arguments, struct literal fields and the two operands of a binary
+// operator left to right (as the native backend does); C leaves that order open. So when
+// a later one calls a function, the earlier ones that aren't constants are computed into
+// temporaries first, in order (`(({ __auto_type t = a; ... f(t, b()); }))`).
+
+bool cg_pure_call(Expr* e) {
+    if e.a.kind != ExName { return false }
+    string n = e.a.text
+    return cg_is_vec_name(n) || n == "dot" || n == "cross" || n == "length" || n == "normalize" ||
+           n == "min" || n == "max" || n == "clamp" || n == "lerp" || n == "cstr"
+}
+
+// Does evaluating e call a function (which might change things)?
+bool cg_calls(Expr* e) {
+    while e != null && e.kind == ExBinary {      // chains nest down their left side
+        if cg_calls(e.b) { return true }
+        e = e.a
+    }
+    if e == null || e.kind == ExName { return false }
+    if e.kind == ExCall && !cg_pure_call(e) { return true }
+    if e.kind != ExCall && cg_calls(e.a) { return true }
+    if cg_calls(e.b) { return true }
+    for i in 0..e.items.len { if cg_calls(e.items[i]) { return true } }
+    return false
+}
+
+// A value that's the same whenever it's computed (a literal, null, a constant)?
+bool cg_constant(Expr* e) {
+    if e.kind == ExIntLit || e.kind == ExFloatLit || e.kind == ExStringLit || e.kind == ExCharLit || e.kind == ExBoolLit { return true }
+    if e.kind == ExName && (e.text == "null" || e.text == "PI" || e.b != null) { return true }
+    if e.kind == ExUnary && e.text == "-" { return cg_constant(e.a) }
+    return false
+}
+
+// How many of `items` must go into temporaries: through the last one that calls a
+// function, if anything before it isn't constant (0: none).
+int cg_hoist_count(Expr*[dynamic] items) {
+    int last = 0 - 1
+    for i in 0..items.len { if cg_calls(items[i]) { last = i } }
+    bool varying = false
+    for i in 0..last { if !cg_constant(items[i]) { varying = true } }
+    if varying { return last + 1 }
+    return 0
+}
+
+string cg_temp(Codegen* cg) {
+    cg.temps += 1
+    return "strata_t" + int_to_str(cg.temps) + "_"
+}
+
+// `e` (a call or struct literal) with its first n items computed into temporaries first
+string cg_ordered(Codegen* cg, Expr* e, int n) {
+    string[dynamic] out = []
+    out.push("(({ ")   // parenthesized like every expression (`if (({ ... }))`)
+    Expr* c = new_expr(e.kind, e.line, e.col)
+    c.a = e.a
+    c.text = e.text
+    c.type_name = e.type_name
+    c.rtype = e.rtype
+    for i in 0..e.items.len {
+        Expr* it = e.items[i]
+        if i < n && !cg_constant(it) {
+            string t = cg_temp(cg)
+            out.push("__auto_type " + t + " = " + gen_expr(cg, it) + "; ")
+            Expr* r = new_expr(ExName, it.line, it.col)
+            r.text = t
+            r.rtype = it.rtype
+            c.items.push(r)
+        } else {
+            c.items.push(it)
+        }
+    }
+    out.push(gen_expr(cg, c))
+    out.push("; }))")
+    return strata_join(&out)
+}
+
 string gen_call(Codegen* cg, Expr* e) {
+    int hoist = cg_hoist_count(e.items)
+    if hoist > 0 { return cg_ordered(cg, e, hoist) }
+
     // arena() -> a fresh arena
     if (e.a.kind == ExName && e.a.text == "arena" && e.items.len == 0) { return "arena_make()"; }
 
@@ -372,11 +454,30 @@ string gen_expr(Codegen* cg, Expr* e) {
                 string inner = gen_expr(cg, x)
                 string[dynamic] pre = []
                 string[dynamic] post = []
+                bool left_const = cg_constant(x)
                 int k = spine.len - 1
                 while k >= 0 {
-                    BinParts bp = gen_binary(cg, spine[k], gen_expr(cg, spine[k].b))
-                    pre.push(bp.pre)
-                    post.push(bp.post)
+                    Expr* right = spine[k].b
+                    // (&& and || are sequenced in C already, and must not evaluate their right side early)
+                    if !left_const && cg_calls(right) && spine[k].text != "&&" && spine[k].text != "||" {
+                        // left to right: the left side's value first, into a temporary
+                        string[dynamic] whole = []
+                        int q = pre.len - 1
+                        while q >= 0 { whole.push(pre[q]); q -= 1 }
+                        whole.push(inner)
+                        for i in 0..post.len { whole.push(post[i]) }
+                        string lt = cg_temp(cg)
+                        string rt = cg_temp(cg)
+                        BinParts op = gen_binary(cg, spine[k], rt)
+                        inner = "(({ __auto_type " + lt + " = " + strata_join(&whole) + "; __auto_type " + rt + " = " + gen_expr(cg, right) + "; " + op.pre + lt + op.post + "; }))"
+                        pre = []
+                        post = []
+                    } else {
+                        BinParts bp = gen_binary(cg, spine[k], gen_expr(cg, right))
+                        pre.push(bp.pre)
+                        post.push(bp.post)
+                    }
+                    left_const = left_const && cg_constant(right)
                     k -= 1
                 }
                 string[dynamic] out = []
@@ -429,6 +530,8 @@ string gen_expr(Codegen* cg, Expr* e) {
             }
         case ExStructLit:
             {
+                int hoist = cg_hoist_count(e.items)
+                if hoist > 0 { return cg_ordered(cg, e, hoist) }
                 string s = "(" + cname(e.type_name) + "){"
                 string[dynamic] a = []
                 for i in 0..e.items.len { a.push(gen_expr(cg, e.items[i])) }

@@ -21,7 +21,7 @@ import token
 import lexer
 import ast
 import parser
-import "strata_host.h"   // strata_report: where messages go (see strata_host.h)
+import host   // strata_report: where messages go (see strata_host.h)
 
 // ---- paths ---------------------------------------------------------------
 
@@ -90,7 +90,7 @@ int ld_module(Loader* ld, string path, string file, string name, bool is_root) {
     if is_root && ld.has_text { src = substr(ld.root_text, 0, ld.root_text.len) } else { src = read_file(path) }
     Parser p = new_parser(lex(src))
     Program part = parse_program(&p)
-    strata_array_free(&p.toks)   // the AST keeps what it needs; the tokens are done
+    strata_array_free(cast<u8*>(&p.toks))   // the AST keeps what it needs; the tokens are done
     if p.had_error {
         strata_report(file + ":" + int_to_str(p.err_line) + ":" + int_to_str(p.err_col) + ": parse error: " + p.err_msg)
         ld.had_error = true

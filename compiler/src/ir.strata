@@ -20,7 +20,7 @@
 // A vreg may be assigned more than once (a local variable, the result of `&&`); the
 // optimizer only rewrites vregs that have exactly one definition.
 
-import "strata_host.h"   // strata_join
+import host   // strata_join
 
 // ---- scalar types ---------------------------------------------------------------
 export enum IrTy { KVoid, KI8, KI16, KI32, KI64, KU8, KU16, KU32, KU64, KF32, KF64 }

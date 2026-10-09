@@ -25,8 +25,8 @@ int main(int strata_argc_, char** strata_argv_) {
     Array balls = arr_make(sizeof(Ball));
     for (int64_t i = 0; i < 60; i++) {
         Ball b;
-        b.pos = (vec2){GetRandomValue(40, 760), GetRandomValue(40, 410)};
-        b.vel = (vec2){GetRandomValue((-200), 200), GetRandomValue((-200), 200)};
+        b.pos = (({ __auto_type strata_t1_ = GetRandomValue(40, 760); __auto_type strata_t2_ = GetRandomValue(40, 410); (vec2){strata_t1_, strata_t2_}; }));
+        b.vel = (({ __auto_type strata_t3_ = GetRandomValue((-200), 200); __auto_type strata_t4_ = GetRandomValue((-200), 200); (vec2){strata_t3_, strata_t4_}; }));
         ({ Ball _e = b; arr_push(&(balls), &_e); });
     }
     while (!WindowShouldClose()) {

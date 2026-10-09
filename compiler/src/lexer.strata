@@ -19,7 +19,7 @@
 // TokKind + Token
 import token
 import hashidx                  // NameIdx, for interning
-import "strata_host.h"         // strata_array_free
+import host   // strata_array_free
 
 struct Lexer {
     string  src
@@ -343,9 +343,9 @@ export Token[dynamic] lex(string src) {
     }
     tokens.push(Token{ TkEof, "", lx.line, lx.col })
     // the intern table itself is done (the strings it handed out live on in the tokens)
-    strata_array_free(&lx.names)
-    strata_array_free(&lx.names_idx.head)
-    strata_array_free(&lx.names_idx.next)
+    strata_array_free(cast<u8*>(&lx.names))
+    strata_array_free(cast<u8*>(&lx.names_idx.head))
+    strata_array_free(cast<u8*>(&lx.names_idx.next))
     return tokens
 }
 

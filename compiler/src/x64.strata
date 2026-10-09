@@ -30,7 +30,7 @@
 
 import ir
 import opt     // RegSet
-import "strata_host.h"   // strata_join
+import host   // strata_join
 
 export struct X64 {
     string[dynamic] out

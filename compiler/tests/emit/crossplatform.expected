@@ -20,7 +20,7 @@ int main(int strata_argc_, char** strata_argv_) {
     while (PlatformPollEvents() == 1) {
         frames += 1;
         if ((frames % 60) == 0) {
-            PlatformSetWindowTitle(str_concat(str_concat(str_concat("Strata window - ", str_from_int(PlatformGetWindowWidth())), " x "), str_from_int(PlatformGetWindowHeight())));
+            PlatformSetWindowTitle((({ __auto_type strata_t1_ = str_concat(str_concat("Strata window - ", str_from_int(PlatformGetWindowWidth())), " x "); __auto_type strata_t2_ = str_from_int(PlatformGetWindowHeight()); str_concat(strata_t1_, strata_t2_); })));
         }
     }
     printf("%s\n", str_concat(str_concat("window closed after ", str_from_int(frames)), " frames"));

@@ -20,7 +20,7 @@
 
 import core
 import project
-import "strata_host.h"   // strata_report, strata_cc, strata_run_argv, ... (see strata_host.h)
+import host   // strata_report, strata_cc, strata_run_argv, ... (see strata_host.h)
 
 export struct BuildSpec {
     string entry            // the root .strata file

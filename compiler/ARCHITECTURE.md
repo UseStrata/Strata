@@ -51,8 +51,10 @@ ever reaches backward or sideways.**
 **The compiler is written in Strata** (since v1.0.0; it was originally written in D--, removed in
 2.0 and still in git history). `build.ps1` (Windows) / `build.sh` (macOS, Linux) bootstraps it: stage0 (a
 pinned `stratac` release, see `bootstrap.txt`; on macOS / Linux the C seed in `seed/`)
-compiles `src/` (stage1), stage1 compiles `src/` again (stage2), and the two must emit
-identical C (the fixpoint).
+compiles `src/` (stage1), stage1 compiles `src/` again (stage2). On Windows every stage is
+built by the native backend (no C compiler) and stage2 builds stage3, which must be
+byte-identical to stage2 (the fixpoint); on macOS / Linux the stages go through C and must
+emit identical C.
 
 ```
 compiler/
@@ -81,7 +83,9 @@ compiler/
 │  │  ── the build system (on top of the core) ──
 │  ├─ project.strata    reads strata.toml into a Project
 │  ├─ build.strata      the build pipeline (native or C -> exe/dll) + the build cache
-│  ├─ strata_host.h     C the compiler imports: messages, memory, and the OS (via lib/crossplatform.h)
+│  ├─ host.strata       what the compiler needs from its host (messages, memory, the OS), as a
+│  │                    foreign block: from strata_host.h on the C backend, from lib/srt.strata natively
+│  ├─ strata_host.h     those functions in C (the OS through lib/crossplatform.h)
 │  │  ── shared front-end utility ──
 │  ├─ dump.strata       renders core data (tokens/AST) to text
 │  │  ── front-ends (thin; each has top-level code = its main) ──
@@ -361,7 +365,7 @@ only the *installed toolchain* is monolithic. Built by `build.ps1`, deployed by
 
 ```
 %LOCALAPPDATA%\Programs\strata\   (per-user; -System → %ProgramFiles%\strata; -Prefix to override)
-├─ stratac.exe         the compiler CLI (stage2 of the bootstrap)
+├─ stratac.exe         the compiler CLI (stage3 of the bootstrap)
 ├─ console.exe        the explorer front-end
 ├─ libstrata.dll      the core as a shared library (for embedders)
 └─ lib\               the runtime the OUTPUT links against (driver passes -I <home>\lib)

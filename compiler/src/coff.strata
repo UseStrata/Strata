@@ -14,7 +14,7 @@
 // .text, IMAGE_REL_AMD64_ADDR64 in .data.
 
 import x64asm
-import "strata_host.h"   // strata_write_bytes
+import host   // strata_write_bytes
 
 struct Out { u8[dynamic] b; u8[dynamic] strtab }
 

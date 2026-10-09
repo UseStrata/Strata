@@ -18,7 +18,7 @@
 import core
 import build
 import version
-import "strata_host.h"
+import host
 
 export string strata_version() { return stratac_version() }
 

@@ -7,7 +7,7 @@
 //
 //   stratac tokens <file.strata>   print the token stream
 //   stratac ast    <file.strata>   parse and print the AST
-//   stratac emit   <file.strata>   print the generated C
+//   stratac emit   <file.strata> [out.c]   print (or write) the generated C
 //   stratac build  <file.strata>   compile to a native executable
 //   stratac run    <file.strata>   compile and run
 
@@ -16,8 +16,8 @@ import dump   // print_tokens / print_program
 import project   // strata.toml
 import build     // the build pipeline + cache, targets
 import version   // stratac_version
-import <stdlib.h>   // exit()  (C header, passed through to the generated C)
-import "strata_host.h"   // strata_exe_path, strata_make_dirs, strata_run_argv
+foreign <stdlib.h> { void exit(i32 code) }
+import host   // strata_exe_path, strata_make_dirs, strata_run_argv
 
 
 // ---- paths -------------------------------------------------------------
@@ -73,7 +73,8 @@ int cmd_check(string path) {
     return 0
 }
 
-int cmd_emit(string path) {
+// (`out`: write it to that file instead, byte for byte)
+int cmd_emit(string path, string out_file) {
     LoadResult lr = load_program(path)
     if (!lr.ok) { return 1; }
     Program prog = lr.prog
@@ -83,7 +84,11 @@ int cmd_emit(string path) {
     Codegen cg = new_codegen()
     string out = generate(&cg, prog)
     if (cg.had_error) { print("codegen: program uses features not supported yet"); return 1; }
-    printf(cstr("%s"), cstr(out))// verbatim, like fputs
+    if out_file != "" {
+        if !write_file(out_file, out) { print("error: can't write " + out_file); return 1 }
+        return 0
+    }
+    strata_print_raw(out)   // verbatim, no newline added
     return 0
 }
 
@@ -97,7 +102,7 @@ int cmd_native(string path, bool show_ir, bool opt) {
     if (ck.had_error) { return 1; }
     NativeResult nr = native_compile(prog, true, opt)
     if !nr.ok { print(basename_of(path) + ": error: can't compile natively: " + nr.why); return 1 }
-    if show_ir { printf(cstr("%s"), cstr(nr.ir)) } else { printf(cstr("%s"), cstr(nr.asm_text)) }
+    if show_ir { strata_print_raw(nr.ir) } else { strata_print_raw(nr.asm_text) }
     return 0
 }
 
@@ -203,7 +208,7 @@ int usage() {
     print("  stratac run    [target] [--release] [--force] [--backend b] [-- args]   build and run")
     print("  stratac build  [target] [--release] [--force] [--backend b]             build an exe or dll")
     print("  stratac check  [target]          type-check only")
-    print("  stratac emit   [target]          print the generated C")
+    print("  stratac emit   [target] [out.c]  print (or write) the generated C")
     print("  stratac asm    [target] [--release]   print the generated assembly (native backend)")
     print("  stratac ir     [target] [--release]   print the native backend's IR")
     print("  stratac assemble <file.s> [out.o]     assemble x86-64 (AT&T) into an object file")
@@ -279,7 +284,11 @@ int dmm_main(string[dynamic] args) {
     Target t = resolve_target(target)
     if !t.ok { return 1 }
     if cmd == "check" { return cmd_check(t.file) }
-    if cmd == "emit"  { return cmd_emit(t.file) }
+    if cmd == "emit"  {
+        string out = ""
+        if prog_args.len > 0 { out = prog_args[0] }
+        return cmd_emit(t.file, out)
+    }
     if cmd == "asm"   { return cmd_native(t.file, false, release) }
     if cmd == "ir"    { return cmd_native(t.file, true, release) }
     if cmd == "build" { return cmd_build(t, libdir, release, force, backend) }
@@ -287,5 +296,4 @@ int dmm_main(string[dynamic] args) {
 }
 
 // entry point (translated from D--'s `int main(str[] args)`)
-import <stdlib.h>
 exit(dmm_main(args()))

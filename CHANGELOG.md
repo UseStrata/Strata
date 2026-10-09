@@ -4,6 +4,40 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
+## [Unreleased]
+**The compiler compiles itself natively.** `stratac` is built by Strata's own backend,
+assembler and linker; building Strata on Windows needs no C compiler.
+
+### Added
+- **The compiler, built natively**: `build.ps1` bootstraps stage0 (2.3.0) -> stage1 ->
+  stage2 -> stage3 with the native backend, and stage2 and stage3 must be byte-identical
+  executables (a stronger fixpoint than identical C). A full bootstrap takes about 9 s.
+  gcc is needed only for libstrata.dll (a dll goes through C).
+- `src/host.strata`: what the compiler needs from its host (messages, the OS, raw bytes,
+  memory resets), declared once as a foreign block - from `strata_host.h` on the C
+  backend, from the native runtime (`lib/srt.strata`, in Strata over msvcrt / kernel32)
+  natively. Compiler modules `import host` instead of `import "strata_host.h"`.
+- **Evaluation order is left to right** (DESIGN.md §8b): call arguments, struct literal
+  fields and binary operands, on both backends. The C backend computes earlier operands
+  into temporaries when a later one calls a function (the native backend always did).
+- The native runtime remembers long strings' lengths (as `lib/sstr.h` does), so `.len` /
+  `substr` on them are O(1): checking a 4,000-function file natively went from 10.3 s to
+  0.04 s.
+- Exact decimal -> binary conversion for float literals in Strata's assembler, natively
+  (msvcrt's `strtod` rounds subnormals wrongly): checked against exact arithmetic on
+  5,000 literals (ties, near-ties, subnormal / overflow edges, 750-digit literals).
+- `stratac emit <target> [out.c]`: write the generated C to a file (the seed uses it).
+- Tests (72): `order` (evaluation order, both backends), and, with no C compiler, the
+  compiler building itself (and the result building hello).
+
+### Changed
+- `bootstrap.txt`: 2.3.0 (the compiler's source uses foreign blocks).
+- Native executables reserve an 8 MB stack (was 2 MB): the native compiler's frames are
+  larger than gcc's (it doesn't share stack slots yet), and 1,000-deep nesting must stay
+  a clean error.
+- The emitted C of calls with several side-effecting arguments changed (the temporaries
+  above); emit goldens updated.
+
 ## [2.3.0] - 2026-10-09
 **raylib without C headers - or a C compiler.** A `foreign` block can now declare a C
 library's structs and constants as well as its functions, and Strata's linker links

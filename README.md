@@ -75,13 +75,16 @@ Strata.md   the founding project plan
 **Using Strata on x86-64 Windows needs no C compiler**: Strata compiles, assembles and
 links programs itself (the native backend). A C compiler — `gcc` (MinGW) on Windows,
 `cc` (clang or gcc) on macOS and Linux, or `STRATA_CC` — is needed for the C backend:
-programs that import C headers, and other platforms. *Building* Strata from source needs
-`gcc` too. To just *use* Strata, grab a release, or run the installer below.
+programs that import C headers, and other platforms. *Building* Strata from source on
+Windows needs no C compiler either (only the embedding library, libstrata.dll, is built
+with `gcc`). To just *use* Strata, grab a release, or run the installer below.
 
 The compiler is written in Strata, so the build bootstraps it. On **Windows** it downloads
 a pinned `stratac` release once (see `compiler/bootstrap.txt`). On **macOS / Linux** it
 compiles the C seed in `compiler/seed/` (a `stratac` compiled to portable C, see its
-README). Either way: stage0 → stage1 → stage2, and stage1 and stage2 must agree.
+README). On Windows every stage is built by Strata's own native backend: stage0 → stage1
+→ stage2 → stage3, and stage2 and stage3 must be byte-identical; on macOS / Linux, stage0
+→ stage1 → stage2 through C, and stage1 and stage2 must emit the same C.
 
 ```powershell
 # Windows: build stratac.exe, console.exe, libstrata.dll into compiler\bin\

@@ -38,5 +38,5 @@ int dmm_main(string[dynamic] args) {
 }
 
 // entry point (translated from D--'s `int main(str[] args)`)
-import <stdlib.h>
+foreign <stdlib.h> { void exit(i32 code) }
 exit(dmm_main(args()))

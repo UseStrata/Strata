@@ -1,0 +1,34 @@
+// order.strata - evaluation order: left to right
+// Call arguments, struct literal fields and the operands of a binary operator are
+// evaluated left to right, on every backend (C itself leaves this open).
+
+global int counter = 0
+global string trail = ""
+
+int next(string tag) {
+    counter += 1
+    trail = trail + tag
+    return counter
+}
+
+int pair(int a, int b) { return a * 10 + b }
+
+struct P { int x; int y }
+
+print(pair(next("a"), next("b")))      // 12
+print(next("c") - next("d"))           // -1
+P p = P{ next("e"), next("f") }
+print(p.x * 10 + p.y)                  // 56
+vec2 v = vec2(next("g"), next("h"))
+print(v.y - v.x)                       // 1
+
+// a variable read before a call that changes it keeps the earlier value
+int n = counter
+print(counter + next("i"))             // 8 + 9 = 17
+print(pair(counter, next("j")))        // 9 * 10 + 10 = 100
+print(n)                               // 8
+print(trail)                           // abcdefghij
+
+// && and || still skip their right side when the left decides
+bool t = counter > 100 && next("k") > 0
+print(trail)                           // abcdefghij

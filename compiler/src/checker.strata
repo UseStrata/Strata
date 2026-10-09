@@ -16,7 +16,7 @@
 
 import ast
 import hashidx   // NameIdx: hash indexes for the name tables
-import "strata_host.h"   // strata_report: where messages go (see strata_host.h)
+import host   // strata_report: where messages go (see strata_host.h)
 
 // ---- checker types -----------------------------------------------------
 

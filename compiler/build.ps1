@@ -9,9 +9,12 @@
 #   stage0  a PINNED released stratac (bootstrap.txt), downloaded once and cached
 #   stage1  stage0 builds src/stratac.strata
 #   stage2  stage1 builds src/stratac.strata  (the compiler, built by itself)
+#   stage3  stage2 builds it again
 #
-# Fixpoint check: stage1 and stage2 must emit byte-identical C for the compiler; if they
-# don't, the build fails. stage2 is what ships. Run from anywhere:
+# Every stage is built natively (Strata's own backend, assembler and linker: no C
+# compiler; gcc is needed only for libstrata.dll). Fixpoint check: stage2 and stage3 must
+# be byte-identical executables; if they aren't, the build fails. stage3 ships. Run from
+# anywhere:
 #     powershell -ExecutionPolicy Bypass -File compiler\build.ps1
 #     ... -Bootstrap C:\path\to\stratac.exe     use a specific stage0 instead
 #     ... -WriteSeed                            also refresh seed/ (the portable C seed
@@ -60,39 +63,73 @@ Write-Host "stage0: $(& $stage0 version)" -ForegroundColor Cyan
 
 $compilerSrc = Join-Path $src "stratac.strata"
 $builtExe    = Join-Path $src "stratac.exe"    # `stratac build` writes next to the source
+$srtSrc      = Join-Path $lib "srt.strata"
+$srtObj      = Join-Path $lib "srt.o"
 
-# Build src/stratac.strata with compiler $with; copy the result to $to.
+# The compiler is built by Strata's own native backend, assembler and linker: no C
+# compiler. Native programs link the runtime lib/srt.o (lib/srt.strata, which also has the
+# compiler's host functions, src/host.strata), so each stage first compiles the runtime.
+
+# Build src/stratac.strata natively with compiler $with; copy the result to $to.
 # (Each stage runs from its own copy, so it never overwrites the exe that is running.)
 function Build-Stage([string]$name, [string]$with, [string]$to) {
     Write-Host "building $name ..." -ForegroundColor Cyan
-    & $with build $compilerSrc | Out-Null
+    & $with build $compilerSrc --backend native --force | Out-Null
     if (-not $?) { throw "$name build failed" }
     Copy-Item $builtExe $to -Force
 }
+# Compile lib/srt.strata with compiler $with into $to.
+function Build-Runtime([string]$with, [string]$to) {
+    & $with object $srtSrc $to
+    if ($LASTEXITCODE -ne 0) { throw "lib\srt.o build failed ($with)" }
+}
 
-# --- stage1, stage2: the compiler, built by stage0 and then by itself --------
+# --- stage1: built by stage0, against today's runtime -----------------------------
+# stage0 links the runtime from its own lib/, so it gets this one (compiled by stage0).
+$stage0Lib = Join-Path (Split-Path -Parent $stage0) "lib"
+if ($Bootstrap -or -not ($stage0 -like "$boot*")) {
+    # someone else's stratac (-Bootstrap, or the installed one): run a copy beside a lib/
+    # of our own, so its own lib/srt.o isn't touched
+    $s0dir = Join-Path $boot "stage0"
+    if (Test-Path $s0dir) { Remove-Item -Recurse -Force $s0dir }
+    New-Item -ItemType Directory -Path (Join-Path $s0dir "lib") | Out-Null
+    Copy-Item (Join-Path $lib "*.h") (Join-Path $s0dir "lib")
+    Copy-Item $stage0 (Join-Path $s0dir "stratac.exe")
+    $stage0 = Join-Path $s0dir "stratac.exe"
+    $stage0Lib = Join-Path $s0dir "lib"
+}
+Build-Runtime $stage0 (Join-Path $stage0Lib "srt.o")
 $stage1 = Join-Path $boot "stage1.exe"
 $stage2 = Join-Path $boot "stage2.exe"
+$stage3 = Join-Path $boot "stage3.exe"
 Build-Stage "stage1 (built by stage0)" $stage0 $stage1
+
+# --- stage2, stage3: the compiler built by itself, twice ---------------------------
+Build-Runtime $stage1 $srtObj
 Build-Stage "stage2 (built by stage1)" $stage1 $stage2
+$srt2 = Join-Path $boot "srt2.o"
+Copy-Item $srtObj $srt2 -Force
+Build-Runtime $stage2 $srtObj
+Build-Stage "stage3 (built by stage2)" $stage2 $stage3
 
-# --- fixpoint: stage1 and stage2 must generate the same compiler -------------
-$c1 = (& $stage1 emit $compilerSrc) -join "`n"
-$c2 = (& $stage2 emit $compilerSrc) -join "`n"
-if ($c1 -ne $c2) { throw "fixpoint check FAILED: stage1 and stage2 emit different C for the compiler" }
-Write-Host "fixpoint ok: stage1 and stage2 emit identical C" -ForegroundColor Green
+# --- fixpoint: stage2 and stage3 must be the same program, byte for byte -------------
+# (and the runtime they compiled the same object file)
+if ((Get-FileHash $srt2).Hash -ne (Get-FileHash $srtObj).Hash) { throw "fixpoint check FAILED: stage1 and stage2 compile lib\srt.strata differently" }
+if ((Get-FileHash $stage2).Hash -ne (Get-FileHash $stage3).Hash) { throw "fixpoint check FAILED: stage2 and stage3 differ" }
+Write-Host "fixpoint ok: stage2 and stage3 are identical" -ForegroundColor Green
 
-Copy-Item $stage2 (Join-Path $bin "stratac.exe") -Force
+Copy-Item $stage3 (Join-Path $bin "stratac.exe") -Force
 $stratac = Join-Path $bin "stratac.exe"
 
 # --- the seed: this compiler as portable C, for bootstrapping other platforms ----
-# src\stratac.c is stage1's output for the compiler (= stage2's, by the fixpoint), written
-# by stratac itself (LF, byte-exact). Kept with the headers it was generated against, so
-# build.sh can compile it however src/ and lib/ change later. See seed/README.md.
+# The C the compiler generates for itself, written by stratac (LF, byte-exact). Kept with
+# the headers it was generated against, so build.sh can compile it however src/ and lib/
+# change later. See seed/README.md.
 if ($WriteSeed) {
     $seed = Join-Path $here "seed"
     foreach ($d in $seed, (Join-Path $seed "src"), (Join-Path $seed "lib")) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null } }
-    Copy-Item (Join-Path $src "stratac.c") (Join-Path $seed "stratac.c") -Force
+    & $stratac emit $compilerSrc (Join-Path $seed "stratac.c")
+    if ($LASTEXITCODE -ne 0) { throw "writing the seed failed" }
     Copy-Item (Join-Path $src "strata_host.h") (Join-Path $seed "src\strata_host.h") -Force
     Remove-Item (Join-Path $seed "lib\*.h") -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $lib "*.h") (Join-Path $seed "lib") -Force
@@ -110,16 +147,14 @@ Copy-Item (Join-Path $src "console.exe") (Join-Path $bin "console.exe") -Force
 # --- libstrata.dll: the compiler as a library (api/strata.toml -> bin/) -----
 # Its public API is src/libstrata.strata (documented for C in api/strata.h). The build
 # also writes bin/libstrata.dll.a (import library) and bin/libstrata.h (generated header).
-Write-Host "building libstrata.dll ..." -ForegroundColor Cyan
-& $stratac build (Join-Path $here "api") | Out-Null
-if (-not $?) { throw "libstrata.dll build failed" }
-
-# --- lib/srt.o: the native backend's runtime ----------------------------------
-# Written in Strata (lib/srt.strata) and compiled by the compiler just built, with its own
-# native backend; Strata's linker (src/pelink.strata) links it into native programs.
-Write-Host "building lib\srt.o ..." -ForegroundColor Cyan
-& $stratac object (Join-Path $lib "srt.strata") (Join-Path $lib "srt.o")
-if ($LASTEXITCODE -ne 0) { throw "lib\srt.o build failed" }
+# A dll is built through C (the native backend makes exes), so this one needs gcc.
+if (Get-Command gcc -ErrorAction SilentlyContinue) {
+    Write-Host "building libstrata.dll ..." -ForegroundColor Cyan
+    & $stratac build (Join-Path $here "api") | Out-Null
+    if (-not $?) { throw "libstrata.dll build failed" }
+} else {
+    Write-Host "skipping libstrata.dll (it's built through C: no gcc on PATH)" -ForegroundColor Yellow
+}
 
 Write-Host ""
 Write-Host "artifacts in compiler\bin\ :" -ForegroundColor Green

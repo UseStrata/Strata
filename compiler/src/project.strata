@@ -32,7 +32,7 @@
 // Unknown sections and keys are errors, so a typo can't silently do nothing.
 
 import modules   // dirname_of
-import "strata_host.h"   // strata_report: where messages go; strata_host_os (see strata_host.h)
+import host   // strata_report: where messages go; strata_host_os (see strata_host.h)
 
 export struct Project {
     bool   ok
