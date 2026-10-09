@@ -1,3 +1,8 @@
 // exported functions a host (e.g. an engine) can call
 export int lib_add(int a, int b) { return a + b }
 export float lib_lerp(float a, float b, float t) { return a + (b - a) * t }
+
+// a pointer in the dll's data (to the string): Windows must adjust it if it loads the dll
+// somewhere else than where it asked (embed/host_reloc.c makes it)
+global string title = "mathlib, written in Strata"
+export string lib_name() { return title }

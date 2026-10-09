@@ -78,6 +78,8 @@ export struct Linker {
     int              iat_size
     int              idt_at
     int              idt_size
+    bool             dll          // linking a dll (relocatable: fix64 lists its absolute addresses)
+    int[dynamic]     fix64
 }
 
 void lk_fail(Linker* l, string msg) {
@@ -108,13 +110,14 @@ export Linker* new_linker() {
     u8[dynamic] t = []
     u8[dynamic] r = []
     u8[dynamic] dt = []
+    int[dynamic] fx = []
     string sys = system_dir()
     dl.push("msvcrt.dll")
     dp.push(sys + "\\msvcrt.dll")
     dl.push("kernel32.dll")
     dp.push(sys + "\\kernel32.dll")
     return alloc(Linker{ true, "", o, s, gn, gs, gv, new_idx(4096), im, id, new_idx(1024), dl, dp, en, ed, new_idx(8192), false,
-                         a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0 })
+                         a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0, false, fx })
 }
 
 // Which output section an input section goes to (-1: dropped).
@@ -332,7 +335,7 @@ void find_imports(Linker* l) {
             for r in 0..n {
                 int symi = rd32(o.b, at + 10 * r + 4)
                 LSym y = o.syms[symi]
-                if y.section == 0 && find_global(l, y.name) < 0 {
+                if y.section == 0 && find_global(l, y.name) < 0 && y.name != "__ImageBase" {
                     string base = import_base(y.name)
                     if find_import(l, base) < 0 {
                         int d = dll_of(l, base)
@@ -417,6 +420,7 @@ int symbol_rva(Linker* l, ImpLayout il, int oi, int symi) {
             LSec s = l.secs[l.gsec[g]]
             return l.orva[s.out] + s.at + l.gval[g]
         }
+        if y.name == "__ImageBase" { return 0 }    // the image's first byte (as MSVC / GNU ld define it)
         int i = find_import(l, import_base(y.name))
         if i < 0 { lk_fail(l, "undefined symbol '" + y.name + "'"); return 0 }
         if import_base(y.name) != y.name { return iat_slot(l, il, i) }
@@ -445,7 +449,12 @@ int get64(u8[dynamic] b, int at) {
     return cast<int>(lo | (hi << cast<u64>(32)))
 }
 
-int image_base() { return 5368709120 }   // 0x140000000
+// where the image wants to load: an exe at a fixed 0x140000000 (no relocations), a dll
+// at 0x180000000, relocatable (the loader moves it if that's taken: see `fix64`)
+int image_base(Linker* l) {
+    if l.dll { return 6442450944 }
+    return 5368709120
+}
 
 void apply_relocs(Linker* l, ImpLayout il, int si, u8[dynamic]* out) {
     LSec s = l.secs[si]
@@ -462,11 +471,13 @@ void apply_relocs(Linker* l, ImpLayout il, int si, u8[dynamic]* out) {
         if typ >= 4 && typ <= 9 {
             put32(out, p, rd32(out[0], p) + sv - (prva + 4 + (typ - 4)))
         } else if typ == 1 {
-            put64(out, p, get64(out[0], p) + image_base() + sv)
+            put64(out, p, get64(out[0], p) + image_base(l) + sv)
+            if l.dll { l.fix64.push(prva) }      // an absolute address: the loader adjusts it
         } else if typ == 3 {
             put32(out, p, rd32(out[0], p) + sv)
         } else if typ == 2 {
-            put32(out, p, rd32(out[0], p) + image_base() + sv)
+            if l.dll { lk_fail(l, "a 32-bit absolute address in " + o.name + " (a dll can't be relocated with it)") }
+            put32(out, p, rd32(out[0], p) + image_base(l) + sv)
         } else if typ != 0 {
             lk_fail(l, "unsupported relocation type " + int_to_str(typ) + " in " + o.name)
         }
@@ -497,17 +508,75 @@ string startup_asm() {
 
 // Link everything added so far into the executable `path`. False (with l.err) on failure.
 export bool link_exe(Linker* l, string path) {
-    // the startup code is just another object
-    ObjFile st = assemble_x64(startup_asm())
-    if !st.ok { lk_fail(l, "startup: " + st.err); return false }
-    link_add(l, "startup", coff_bytes(&st))
+    string[dynamic] none = []
+    return link_image(l, path, false, none)
+}
+
+// Link everything added so far into the dll `path`, exporting the functions `exports`
+// (by name). False (with l.err) on failure.
+export bool link_dll(Linker* l, string path, string[dynamic] exports) {
+    return link_image(l, path, true, exports)
+}
+
+// "a" < "b" by bytes (the order a dll's export names must be in)
+bool name_less(string a, string b) {
+    int n = a.len
+    if b.len < n { n = b.len }
+    for i in 0..n { if a[i] != b[i] { return cast<int>(a[i]) < cast<int>(b[i]) } }
+    return a.len < b.len
+}
+
+// the 4,096-byte pages of the fixups, as a .reloc section's blocks
+u8[dynamic] reloc_blocks(int[dynamic] fix) {
+    // sort (insertion: fixups mostly arrive in order)
+    int[dynamic] f = []
+    for i in 0..fix.len {
+        f.push(fix[i])
+        int k = f.len - 1
+        while k > 0 && f[k - 1] > f[k] { int t = f[k]; f[k] = f[k - 1]; f[k - 1] = t; k -= 1 }
+    }
+    u8[dynamic] ob = []
+    PeOut o = PeOut{ ob }
+    int i = 0
+    while i < f.len {
+        int page = f[i] - (f[i] % 4096)
+        int j = i
+        while j < f.len && f[j] - (f[j] % 4096) == page { j += 1 }
+        int count = j - i
+        int pad = count % 2                       // blocks are 4-byte multiples
+        p32(&o, page)
+        p32(&o, 8 + 2 * (count + pad))
+        for k in i..j { p16(&o, 40960 | (f[k] - page)) }   // IMAGE_REL_BASED_DIR64 (10) << 12
+        if pad == 1 { p16(&o, 0) }
+        i = j
+    }
+    return o.b
+}
+
+bool link_image(Linker* l, string path, bool dll, string[dynamic] exports) {
+    l.dll = dll
+    if !dll {
+        // the startup code is just another object
+        ObjFile st = assemble_x64(startup_asm())
+        if !st.ok { lk_fail(l, "startup: " + st.err); return false }
+        link_add(l, "startup", coff_bytes(&st))
+        if !l.ok { return false }
+        if find_global(l, "main") < 0 { lk_fail(l, "no main"); return false }
+    }
     if !l.ok { return false }
-    if find_global(l, "main") < 0 { lk_fail(l, "no main"); return false }
+    // exports: each must be defined; sorted by name
+    string[dynamic] ex = []
+    for i in 0..exports.len {
+        if find_global(l, exports[i]) < 0 { lk_fail(l, "exported function '" + exports[i] + "' isn't defined") }
+        ex.push(exports[i])
+        int k = ex.len - 1
+        while k > 0 && name_less(ex[k], ex[k - 1]) { string t = ex[k]; ex[k] = ex[k - 1]; ex[k - 1] = t; k -= 1 }
+    }
     find_imports(l)
     if !l.ok { return false }
 
     // place the input sections
-    for o in 0..4 { l.osize.push(0); l.orva.push(0); l.ofile.push(0); l.oraw.push(0) }
+    for o in 0..5 { l.osize.push(0); l.orva.push(0); l.ofile.push(0); l.oraw.push(0) }
     for si in 0..l.secs.len {
         int out = l.secs[si].out
         if out >= 0 {
@@ -516,16 +585,41 @@ export bool link_exe(Linker* l, string path) {
             l.osize[out] = at + l.secs[si].size
         }
     }
-    // import stubs after the code, import tables after the read-only data
+    // import stubs after the code, import tables after the read-only data, then (a dll)
+    // the export directory
     l.thunks_at = align_up(l.osize[0], 16)
     l.osize[0] = l.thunks_at + 8 * l.imp.len
     l.imports_at = align_up(l.osize[1], 16)
     ImpLayout il = import_layout(l, l.imports_at)
     if l.imp.len > 0 { l.osize[1] = il.end }
+    string dllname = path
+    for i in 0..path.len { if path[i] == '/' || path[i] == '\\' { dllname = substr(path, i + 1, path.len - i - 1) } }
+    int exp_at = align_up(l.osize[1], 4)
+    int exp_funcs = exp_at + 40
+    int exp_names = exp_funcs + 4 * ex.len
+    int exp_ords = exp_names + 4 * ex.len
+    int exp_strs = exp_ords + 2 * ex.len
+    int exp_end = exp_strs + dllname.len + 1
+    for i in 0..ex.len { exp_end = exp_end + ex[i].len + 1 }
+    if dll { l.osize[1] = exp_end }
+    // a dll's base relocations (one per 64-bit absolute address) go in a .reloc section,
+    // last; count them now (the section count fixes the header size)
+    bool has_reloc = false
+    if dll {
+        for si in 0..l.secs.len {
+            LSec s = l.secs[si]
+            if s.out >= 0 && s.out != 3 {
+                int n = reloc_count(l, s)
+                int at = reloc_first(s)
+                for r in 0..n { if rd16(l.objs[s.obj].b, at + 10 * r + 8) == 1 { has_reloc = true } }
+            }
+        }
+    }
 
     // addresses: headers, then each section page-aligned in memory, 512-aligned in the file
     int nout = 0
     for o in 0..4 { if l.osize[o] > 0 { nout += 1 } }
+    if has_reloc { nout += 1 }
     int headers = align_up(64 + 4 + 20 + 240 + 40 * nout, 512)
     int rva = 4096
     int fp = headers
@@ -540,7 +634,6 @@ export bool link_exe(Linker* l, string path) {
             }
         }
     }
-    int image_size = rva
 
     // the section contents
     u8[dynamic] text = []
@@ -568,6 +661,17 @@ export bool link_exe(Linker* l, string path) {
         else if out == 3 && reloc_count(l, l.secs[si]) > 0 { lk_fail(l, "relocations in .bss") }
     }
     if !l.ok { return false }
+    u8[dynamic] reloc = []
+    if has_reloc {
+        reloc = reloc_blocks(l.fix64)
+        l.osize[4] = reloc.len
+        l.orva[4] = rva
+        rva = align_up(rva + reloc.len, 4096)
+        l.ofile[4] = fp
+        l.oraw[4] = align_up(reloc.len, 512)
+        fp = fp + l.oraw[4]
+    }
+    int image_size = rva
 
     // import stubs: jmp *slot(%rip)
     for i in 0..l.imp.len {
@@ -622,11 +726,42 @@ export bool link_exe(Linker* l, string path) {
         iat_rva = base + il.iat
         iat_size = il.names - il.iat
     }
+    // the export directory: the dll's name, then each export's address, name and ordinal
+    int edir_rva = 0
+    int edir_size = 0
+    if dll {
+        int base = l.orva[1]
+        int sp = exp_strs
+        for c in 0..dllname.len { rdata[sp + c] = cast<u8>(cast<int>(dllname[c])) }
+        put32(&rdata, exp_at + 12, base + sp)            // Name
+        sp = sp + dllname.len + 1
+        put32(&rdata, exp_at + 16, 1)                    // ordinal base
+        put32(&rdata, exp_at + 20, ex.len)               // functions
+        put32(&rdata, exp_at + 24, ex.len)               // names
+        put32(&rdata, exp_at + 28, base + exp_funcs)
+        put32(&rdata, exp_at + 32, base + exp_names)
+        put32(&rdata, exp_at + 36, base + exp_ords)
+        for i in 0..ex.len {
+            int g = find_global(l, ex[i])
+            LSec gs = l.secs[l.gsec[g]]
+            put32(&rdata, exp_funcs + 4 * i, l.orva[gs.out] + gs.at + l.gval[g])
+            put32(&rdata, exp_names + 4 * i, base + sp)
+            rdata[exp_ords + 2 * i] = cast<u8>(i & 255)
+            rdata[exp_ords + 2 * i + 1] = cast<u8>((i >> 8) & 255)
+            for c in 0..ex[i].len { rdata[sp + c] = cast<u8>(cast<int>(ex[i][c])) }
+            sp = sp + ex[i].len + 1
+        }
+        edir_rva = base + exp_at
+        edir_size = exp_end - exp_at
+    }
 
-    // the entry point
-    int g = find_global(l, "_strata_start")
-    LSec es = l.secs[l.gsec[g]]
-    int entry = l.orva[es.out] + es.at + l.gval[g]
+    // the entry point (a dll: none)
+    int entry = 0
+    if !dll {
+        int g = find_global(l, "_strata_start")
+        LSec es = l.secs[l.gsec[g]]
+        entry = l.orva[es.out] + es.at + l.gval[g]
+    }
 
     // the file
     u8[dynamic] ob = []
@@ -641,17 +776,18 @@ export bool link_exe(Linker* l, string path) {
     p32(&o, 0)
     p32(&o, 0)
     p16(&o, 240)                   // optional header size
-    p16(&o, 35)                    // relocs stripped | executable | large address aware
+    if dll { p16(&o, 8226) }       // dll | executable | large address aware
+    else { p16(&o, 35) }           // relocs stripped | executable | large address aware
     p16(&o, 523)                   // PE32+
     p8(&o, 2)
     p8(&o, 0)
     p32(&o, l.oraw[0])             // size of code
-    p32(&o, l.oraw[1] + l.oraw[2]) // initialized data
+    p32(&o, l.oraw[1] + l.oraw[2] + l.oraw[4]) // initialized data
     p32(&o, align_up(l.osize[3], 512))
     p32(&o, entry)
     p32(&o, l.orva[0])             // base of code
-    p32(&o, 1073741824)            // image base 0x140000000 (low, high)
-    p32(&o, 1)
+    p32(&o, image_base(l) & 4294967295)   // image base (low, high)
+    p32(&o, image_base(l) >> 32)
     p32(&o, 4096)                  // section alignment
     p32(&o, 512)                   // file alignment
     p16(&o, 6)
@@ -665,7 +801,8 @@ export bool link_exe(Linker* l, string path) {
     p32(&o, headers)
     p32(&o, 0)                     // checksum
     p16(&o, 3)                     // console subsystem
-    p16(&o, 33024)                 // NX compatible, terminal-server aware (no ASLR: a fixed base)
+    if dll { p16(&o, 352) }        // NX compatible, relocatable (high-entropy ASLR)
+    else { p16(&o, 33024) }        // NX compatible, terminal-server aware (no ASLR: a fixed base)
     p32(&o, 8388608)               // stack reserve 8 MB (committed as it grows)
     p32(&o, 0)
     p32(&o, 4096)                  // stack commit
@@ -677,13 +814,15 @@ export bool link_exe(Linker* l, string path) {
     p32(&o, 0)                     // loader flags
     p32(&o, 16)
     for d in 0..16 {
-        if d == 1 { p32(&o, idt_rva); p32(&o, idt_size) }
+        if d == 0 { p32(&o, edir_rva); p32(&o, edir_size) }
+        else if d == 1 { p32(&o, idt_rva); p32(&o, idt_size) }
+        else if d == 5 && has_reloc { p32(&o, l.orva[4]); p32(&o, l.osize[4]) }
         else if d == 12 { p32(&o, iat_rva); p32(&o, iat_size) }
         else { p32(&o, 0); p32(&o, 0) }
     }
-    string[dynamic] names = [".text", ".rdata", ".data", ".bss"]
-    int[dynamic] flags = [1610612768, 1073741888, 3221225536, 3221225600]   // code / rdata / data / bss
-    for s in 0..4 {
+    string[dynamic] names = [".text", ".rdata", ".data", ".bss", ".reloc"]
+    int[dynamic] flags = [1610612768, 1073741888, 3221225536, 3221225600, 1107296320]   // code / rdata / data / bss / reloc (discardable)
+    for s in 0..5 {
         if l.osize[s] > 0 {
             pname(&o, names[s])
             p32(&o, l.osize[s])
@@ -698,10 +837,10 @@ export bool link_exe(Linker* l, string path) {
         }
     }
     while o.b.len < headers { p8(&o, 0) }
-    for s in 0..3 {
-        if l.osize[s] > 0 {
+    for s in 0..5 {
+        if l.osize[s] > 0 && s != 3 {
             u8[dynamic] src = text
-            if s == 1 { src = rdata } else if s == 2 { src = data }
+            if s == 1 { src = rdata } else if s == 2 { src = data } else if s == 4 { src = reloc }
             for i in 0..src.len { o.b.push(src[i]) }
             while o.b.len < l.ofile[s] + l.oraw[s] { p8(&o, 0) }
         }

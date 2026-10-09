@@ -12,7 +12,7 @@
 #   stage3  stage2 builds it again
 #
 # Every stage is built natively (Strata's own backend, assembler and linker: no C
-# compiler; gcc is needed only for libstrata.dll). Fixpoint check: stage2 and stage3 must
+# compiler, not even for libstrata.dll). Fixpoint check: stage2 and stage3 must
 # be byte-identical executables; if they aren't, the build fails. stage3 ships. Run from
 # anywhere:
 #     powershell -ExecutionPolicy Bypass -File compiler\build.ps1
@@ -145,16 +145,12 @@ if (-not $?) { throw "console.exe build failed" }
 Copy-Item (Join-Path $src "console.exe") (Join-Path $bin "console.exe") -Force
 
 # --- libstrata.dll: the compiler as a library (api/strata.toml -> bin/) -----
-# Its public API is src/libstrata.strata (documented for C in api/strata.h). The build
-# also writes bin/libstrata.dll.a (import library) and bin/libstrata.h (generated header).
-# A dll is built through C (the native backend makes exes), so this one needs gcc.
-if (Get-Command gcc -ErrorAction SilentlyContinue) {
-    Write-Host "building libstrata.dll ..." -ForegroundColor Cyan
-    & $stratac build (Join-Path $here "api") | Out-Null
-    if (-not $?) { throw "libstrata.dll build failed" }
-} else {
-    Write-Host "skipping libstrata.dll (it's built through C: no gcc on PATH)" -ForegroundColor Yellow
-}
+# Its public API is src/libstrata.strata (documented for C in api/strata.h). Built natively;
+# the build also writes bin/libstrata.dll.a and bin/libstrata.lib (import libraries for GNU
+# ld and MSVC) and bin/libstrata.h (generated header).
+Write-Host "building libstrata.dll ..." -ForegroundColor Cyan
+& $stratac build (Join-Path $here "api") --backend native --force | Out-Null
+if (-not $?) { throw "libstrata.dll build failed" }
 
 Write-Host ""
 Write-Host "artifacts in compiler\bin\ :" -ForegroundColor Green

@@ -1,2 +1,3 @@
 lib_add(2, 3) = 5
 lib_lerp(0, 10, 0.25) = 2.5
+lib_name() = mathlib, written in Strata

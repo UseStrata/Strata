@@ -8,7 +8,7 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Prefix D:\tools\strata
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 #
-# Installed layout:  <prefix>\stratac.exe  <prefix>\console.exe  <prefix>\libstrata.dll(.a)
+# Installed layout:  <prefix>\stratac.exe  <prefix>\console.exe  <prefix>\libstrata.dll(.a / .lib)
 #                    <prefix>\lib\...       the runtime headers
 #                    <prefix>\include\...   the embedding API (strata.h, strata.hpp, Strata.cs)
 # stratac finds its lib/ next to the exe, so nothing else needs configuring.
@@ -74,7 +74,7 @@ if (-not (Test-Path $exe)) { throw "stratac.exe not found in bin\; run build.ps1
 # --- Copy into the shared location ------------------------------------------
 Write-Host "installing to $Prefix ..."
 New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
-foreach ($a in @('stratac.exe','console.exe','libstrata.dll','libstrata.dll.a')) {
+foreach ($a in @('stratac.exe','console.exe','libstrata.dll','libstrata.dll.a','libstrata.lib')) {
     $srcA = Join-Path $bin $a
     if (Test-Path $srcA) { Copy-Item $srcA (Join-Path $Prefix $a) -Force }
 }

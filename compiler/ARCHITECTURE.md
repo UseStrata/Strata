@@ -83,6 +83,7 @@ compiler/
 │  │  ── the build system (on top of the core) ──
 │  ├─ project.strata    reads strata.toml into a Project
 │  ├─ build.strata      the build pipeline (native or C -> exe/dll) + the build cache
+│  ├─ implib.strata     import libraries for dlls (Microsoft format: <name>.dll.a / <name>.lib)
 │  ├─ host.strata       what the compiler needs from its host (messages, memory, the OS), as a
 │  │                    foreign block: from strata_host.h on the C backend, from lib/srt.strata natively
 │  ├─ strata_host.h     those functions in C (the OS through lib/crossplatform.h)

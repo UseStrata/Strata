@@ -288,6 +288,8 @@ function Test-Host([string]$name, [scriptblock]$compile, [string]$exe, [string]$
 try {
     Test-Host "c-api" { gcc -std=c99 -Wall host_api.c -I $apiDir -L $binDir -lstrata -lpsapi -o build/host_api.exe } "build/host_api.exe" "expected_api.txt"
     Test-Host "strata-dll" { gcc -std=c99 -Wall host_dll.c -I $libProj -L $libProj -lmathlib -o build/host_dll.exe } "build/host_dll.exe" "expected_dll.txt"
+    # the same dll, loaded where it didn't ask to be: its base relocations must be right
+    Test-Host "dll-relocated" { gcc -std=c99 -Wall host_reloc.c -o build/host_reloc.exe } "build/host_reloc.exe" "expected_reloc.txt"
     Test-Host "cpp" { g++ -std=c++17 -Wall host_cpp.cpp -I $apiDir -L $binDir -lstrata -o build/host_cpp.exe } "build/host_cpp.exe" "expected_cpp.txt"
     if (Get-Command dotnet -ErrorAction SilentlyContinue) {
         Test-Host "csharp" { dotnet build csharp -c Release -o build/cs --nologo -v q } "build/cs/Embed.exe" "expected_cs.txt"

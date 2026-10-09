@@ -203,10 +203,9 @@ export bool run_build(BuildSpec s, string libdir) {
     // the native backend, when it can build this (else the C backend below)
     if s.backend != "c" {
         string why = native_target_why(host_os(), host_arch())
-        if why == "" && s.dll { why = "the native backend doesn't build dlls yet" }
         if why == "" && !strata_file_exists(libdir + "/srt.o") { why = "its runtime, lib/srt.o, is missing (build.ps1 makes it from lib/srt.strata)" }
         if why == "" {
-            NativeResult nr = native_compile(prog, true, s.release)
+            NativeResult nr = native_compile(prog, !s.dll, s.release)   // a dll has no main
             if nr.ok {
                 ObjFile ob = assemble_x64(nr.asm_text)   // Strata's own assembler
                 if ob.ok { return native_build(s, libdir, prog, nr.asm_text, &ob) }
@@ -290,6 +289,8 @@ export bool run_build(BuildSpec s, string libdir) {
 // `libs`: x.dll / libx.dll, found in System32, lib_dirs or on PATH). A program with C
 // sources, or a library that's no DLL (a static one), is linked by the C toolchain
 // instead (with the same lib/srt.o).
+// A dll exports its entry module's `export`ed functions, and gets a C header (<name>.h)
+// and an import library (<name>.dll.a for GNU ld, <name>.lib for MSVC) beside it.
 
 bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, ObjFile* ob) {
     string obj_file = stem_of(s.out_c) + ".o"
@@ -308,9 +309,24 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     for i in 0..s.libs.len         { argv.push("-l" + s.libs[i]) }
     string[dynamic] oa = os_link_args(prog, s)
     for i in 0..oa.len             { argv.push(oa[i]) }
+    if s.dll {
+        string[dynamic] da = dll_link_args(s.out_bin, false)
+        for i in 0..da.len { argv.push(da[i]) }
+    }
     argv.push("-o")
     argv.push(s.out_bin)
     string cmd = spaced(argv)
+
+    // a dll: what it exports (the entry module's exported functions), its C header
+    string[dynamic] exports = []
+    if s.dll {
+        for i in 0..prog.decls.len {
+            Decl* d = prog.decls[i]
+            if d.kind == DcFunc && d.module == 0 && d.is_exported && !d.is_foreign { exports.push(d.name) }
+        }
+        string header = generate_header(prog, guard_for(basename_of(stem_of(s.out_bin))), basename_of(s.entry))
+        if read_file(stem_of(s.out_bin) + ".h") != header { write_file(stem_of(s.out_bin) + ".h", header) }
+    }
 
     // Strata's own linker, when the program needs nothing but the runtime (lib/srt.o,
     // made by build.ps1) and DLLs; else the C toolchain links
@@ -348,7 +364,16 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     if own {
         link_add(lk, obj_file, coff_bytes(ob))
         link_add(lk, "srt.o", strata_read_bytes(libdir + "/srt.o"))
-        linked = lk.ok && link_exe(lk, s.out_bin)
+        if s.dll {
+            linked = lk.ok && link_dll(lk, s.out_bin, exports)
+            if linked {
+                u8[dynamic] implib = import_library(basename_of(s.out_bin), exports)
+                strata_write_bytes(stem_of(s.out_bin) + ".dll.a", &implib)
+                strata_write_bytes(stem_of(s.out_bin) + ".lib", &implib)
+            }
+        } else {
+            linked = lk.ok && link_exe(lk, s.out_bin)
+        }
         // --backend native: no C toolchain behind it (e.g. an undefined symbol is an error)
         if !linked && s.backend == "native" {
             strata_report(basename_of(s.entry) + ": error: can't link: " + lk.err)

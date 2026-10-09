@@ -1,0 +1,3 @@
+moved: yes
+lib_name() = mathlib, written in Strata
+lib_add(40, 2) = 42

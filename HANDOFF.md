@@ -54,10 +54,9 @@ plus releases, and approve releases when asked.
    `foreign` blocks~~ done: the raylib examples are native now (`examples/raylib.strata`).
    Next: read C headers automatically into foreign declarations (§12 step 4).
 2. ~~**The compiler itself is compiled through C**~~ — done on Windows: native all the
-   way (see State). Still C: macOS / Linux build the compiler from the C seed with
-   `strata_host.h` + `lib/crossplatform.h`, and libstrata.dll (a dll) goes through C.
-   Those C files can only go once macOS / Linux have native backends (item 5) and the
-   native backend builds dlls.
+   way (see State), libstrata.dll too. Still C: macOS / Linux build the compiler from the
+   C seed with `strata_host.h` + `lib/crossplatform.h`. Those C files can only go once
+   macOS / Linux have native backends (item 5).
 3. **The C runtime headers** `lib/arena.h, sstr.h, sarr.h, sio.h, smath.h, sprelude.h,
    sstate.h` exist only for the C backend (native uses `lib/srt.strata`). They can't go
    while the C backend exists, but once the compiler is native they serve only `--backend c`.
@@ -75,7 +74,8 @@ plus releases, and approve releases when asked.
 (d) ~~the compiler compiled natively~~ done on Windows (2.4.0). Then: (e) ~~stack-slot
 sharing~~ done for vregs (unreleased: dead vregs get no slot, spilled vregs share slots;
 frames -63%); IR slots (struct temporaries / locals) still don't share - that needs escape
-+ loop-lifetime analysis, low priority now; (f) native dlls (then libstrata needs no gcc); (g) ARM64 / ELF /
++ loop-lifetime analysis, low priority now; (f) ~~native dlls~~ done (unreleased: libstrata
+and `output = "dll"` projects build natively, with import libraries); (g) ARM64 / ELF /
 Mach-O targets (what finally retires the C seed); (h) reading C headers into foreign
 blocks. Static `.a` archives in `pelink` were looked at and skipped: MSYS2's libraylib.a
 needs mingw's own static runtime (`__mingw_printf`, `__stack_chk_*`), i.e. the toolchain.
@@ -239,7 +239,8 @@ file.strata → lexer → parser → (module loader) → checker ─┬→ lower
 | `x64` | IR → x86-64 GNU-as assembly, Windows x64 ABI; immediates / folded addresses ("lazy" vregs), cmp+branch fusion, stack probes |
 | `x64asm` | Strata's x86-64 assembler: GNU-as AT&T text (the subset `x64` writes) → bytes, symbols, relocations (`ObjFile`); rel32 jumps always, fixups resolved in one pass |
 | `coff` | writes an `ObjFile` as a Windows x64 COFF object (`.text`, `.rdata`, REL32 relocations) |
-| `pelink` | Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from DLLs' export tables (the system's, and `link "x"`'s found by `link_library`; no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000 |
+| `pelink` | Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from DLLs' export tables (the system's, and `link "x"`'s found by `link_library`; no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000; dlls (`link_dll`): export table, `.reloc` base relocations, base 0x180000000 |
+| `implib` | import libraries for dlls, Microsoft format (`<name>.dll.a` for GNU ld, `<name>.lib` for MSVC): an `ar` archive of short-import members + the descriptor objects |
 | `native` | the native driver (`native_compile`, `native_target_why`) |
 | `core` | umbrella: `export import`s every phase = the compiler as a library (no `main`) |
 | `project`, `build` | the build system: `strata.toml`; pipeline, cache, split builds, dll + header |
@@ -332,7 +333,8 @@ for i in 0..10 { if i % 2 == 0 { continue }; print(i) }
 ## 6. Embedding (engines, editors, tools)
 
 `libstrata.dll` + `compiler/api/strata.h` (C), `strata.hpp` (C++), `Strata.cs` (C#,
-P/Invoke). Installed to `<prefix>/include/` with `libstrata.dll.a`. **Any engine may embed
+P/Invoke). Installed to `<prefix>/include/` with `libstrata.dll.a` (GNU ld) and `libstrata.lib`
+(MSVC), import libraries Strata writes itself (`src/implib.strata`). **Any engine may embed
 it under any license** (`LICENSE-EMBEDDING.md`, the Classpath exception).
 
 API: `strata_check` / `strata_check_source` (unsaved editor text), `strata_emit(_source)`,
@@ -341,7 +343,8 @@ API: `strata_check` / `strata_check_source` (unsaved editor text), `strata_emit(
 memory: engines can recompile indefinitely), `strata_version`. Not thread-safe.
 
 A Strata project with `output = "dll"` exports exactly its entry module's `export`ed
-functions and gets a generated `<name>.h` + `<name>.dll.a` beside the dll.
+functions and gets a generated `<name>.h` + `<name>.dll.a` + `<name>.lib` beside the dll.
+Natively built dlls are relocatable (base 0x180000000, `.reloc` for absolute addresses).
 
 ---
 
@@ -437,7 +440,7 @@ arithmetic, shifts, floats, short-circuiting, pointers).
 - Shared libraries keep the project's name on every OS (`mathlib.so`, not
   `libmathlib.so`), so C hosts on macOS / Linux link them by path, not `-lmathlib`.
 - `embed/csharp` is skipped by `run.sh` (Strata.cs not set up for macOS / Linux yet).
-- **The native backend** targets x86-64 Windows only, builds exes (not dlls), and can't
+- **The native backend** targets x86-64 Windows only (exes and dlls), and can't
   read C headers (programs `import`ing one use the C backend; `foreign` declarations
   work). Executables
   have a fixed base (no ASLR relocations yet) and no unwind tables. No debug info yet (no
@@ -453,7 +456,8 @@ arithmetic, shifts, floats, short-circuiting, pointers).
 - **Build cache** doesn't track C headers your program `import`s — use `--force` after
   editing one.
 - **`link "x"`** only produces `-lx`; library paths / flags / frameworks need a `strata.toml`.
-- **MSVC-based engines** can load `libstrata.dll` at runtime but not link it (no `.lib` yet).
+- **MSVC:** `libstrata.lib` is generated (Microsoft import-library format) but hasn't been
+  linked by MSVC's own `link.exe` yet (no MSVC on this machine); GNU ld links it fine.
 - **libstrata** is single-threaded.
 - **Strings** are NUL-terminated C strings: no `\0` inside a string.
 - **`for i in 0..n`** re-evaluates `n` each iteration (a semantics decision is pending).
@@ -494,7 +498,8 @@ Also: debug info (CodeView / DWARF) so native builds can be stepped in a debugge
 
 **Other candidates:**
 1. **Tagged unions + pattern matching** (the next big language feature; pairs with `switch`).
-2. **Commercial-engine integrations** (user: "later"): MSVC `.lib`, Unity / Unreal plugins;
+2. **Commercial-engine integrations** (user: "later"): Unity / Unreal plugins (a `.lib`
+   exists now);
    Godot GDExtension (M6).
 3. `stratac watch` (keep the program in memory, rebuild on save) → an LSP later.
 4. Language sugar: qualified names, module constants/globals, default/named args.

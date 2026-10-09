@@ -6,6 +6,22 @@ and a GitHub Release.
 
 ## [Unreleased]
 
+### Added
+- **Native dlls**: `output = "dll"` builds with Strata's own backend and linker, no C
+  compiler - libstrata.dll included (build.ps1 needs no gcc at all now). The linker writes
+  an export table (the entry module's exported functions), base relocations (a `.reloc`
+  section for every 64-bit absolute address) and a relocatable image base, so a dll loads
+  wherever Windows puts it.
+- **Import libraries**, written by Strata (`src/implib.strata`, the Microsoft format):
+  `<name>.dll.a` for GNU ld and `<name>.lib` for MSVC, beside each dll (libstrata.lib
+  ships in the release: MSVC-based engines can link libstrata now - not yet tried with
+  MSVC itself).
+- The native runtime tracks array buffers (as `lib/sarr.h` does), so a host resetting the
+  compiler frees them: native libstrata keeps flat memory over 300 compile + reset cycles.
+- Tests (73): `embed/dll-relocated` loads a Strata dll where it didn't ask to be (the
+  address taken first) and checks its pointers; the embedding hosts (C, C++, C#) now use
+  the native libstrata.
+
 ### Changed
 - **Smaller native stack frames**: a vreg the optimizer removed no longer gets a stack
   slot, and the vregs left in memory share 8-byte slots when their live intervals don't

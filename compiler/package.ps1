@@ -26,7 +26,7 @@ if (Test-Path $stageRoot) { Remove-Item $stageRoot -Recurse -Force }
 $stage = Join-Path $stageRoot "strata"
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'lib') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'include') | Out-Null
-foreach ($f in 'stratac.exe','console.exe','libstrata.dll','libstrata.dll.a') { Copy-Item (Join-Path $bin $f) (Join-Path $stage $f) }
+foreach ($f in 'stratac.exe','console.exe','libstrata.dll','libstrata.dll.a','libstrata.lib') { Copy-Item (Join-Path $bin $f) (Join-Path $stage $f) }
 Copy-Item (Join-Path $lib '*.h') (Join-Path $stage 'lib')
 Copy-Item (Join-Path $lib 'srt.strata') (Join-Path $stage 'lib')   # the native backend's runtime (Strata)
 Copy-Item (Join-Path $lib 'srt.o') (Join-Path $stage 'lib')   # ... compiled: Strata's linker links it

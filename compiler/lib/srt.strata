@@ -43,6 +43,7 @@ foreign {
 foreign {   // kernel32.dll
     u32 GetFileAttributesA(string path)
     u32 GetModuleFileNameA(u8* module, u8* buf, u32 size)
+    i32 GetModuleHandleExA(u32 flags, u8* address, u8** module)
 }
 
 // ---- arenas -------------------------------------------------------------------------------
@@ -481,11 +482,46 @@ export void srt_set_args(i32 argc, string* argv) {
 
 struct ArrayRep { u8* data; int len; int cap; int elem }
 
+// Every array buffer is tracked (lib/sarr.h does the same): a 16-byte link before its
+// bytes, in one ring, so a host resetting the compiler (strata_host_reset) frees them all.
+struct ArrLink { ArrLink* prev; ArrLink* next }
+
+global ArrLink arr_ring     // the ring's anchor (empty: points at itself; zero: not set up)
+
+void arr_link(ArrLink* h) {
+    if arr_ring.next == null { arr_ring.next = &arr_ring; arr_ring.prev = &arr_ring }
+    h.prev = &arr_ring
+    h.next = arr_ring.next
+    arr_ring.next.prev = h
+    arr_ring.next = h
+}
+
+void arr_unlink(ArrLink* h) {
+    h.prev.next = h.next
+    h.next.prev = h.prev
+}
+
+ArrLink* arr_header(u8* data) { return cast<ArrLink*>(cast<int>(data) - 16) }
+u8* arr_bytes(ArrLink* h) { return cast<u8*>(cast<int>(h) + 16) }
+
+// a tracked buffer of n bytes for an array (its old buffer, if any, moved into it)
+u8* arr_alloc(u8* old, int n) {
+    ArrLink* h = null
+    if old == null { h = cast<ArrLink*>(malloc(16 + n)) }
+    else {
+        ArrLink* o = arr_header(old)
+        arr_unlink(o)
+        h = cast<ArrLink*>(realloc(cast<u8*>(o), 16 + n))
+    }
+    arr_link(h)
+    return arr_bytes(h)
+}
+
 export void srt_arr_push(ArrayRep* a, u8* value) {
     if a.len == a.cap {
         int nc = 8
         if a.cap > 0 { nc = a.cap * 2 }
-        a.data = realloc(a.data, nc * a.elem)
+        a.data = arr_alloc(a.data, nc * a.elem)
         a.cap = nc
     }
     memcpy(&a.data[a.len * a.elem], value, a.elem)
@@ -781,15 +817,15 @@ export string strata_cc() {
     return "gcc"
 }
 
-// a path the OS wrote into a buffer, as a runtime string ("" on failure)
-string module_path() {
+// the path of a loaded module (null: the exe), as a runtime string ("" on failure)
+string module_path(u8* module) {
     u8* buf = pool_alloc(&strs, 4096)
-    u32 n = GetModuleFileNameA(null, buf, cast<u32>(4096))
+    u32 n = GetModuleFileNameA(module, buf, cast<u32>(4096))
     if n == cast<u32>(0) || n >= cast<u32>(4096) { return "" }
     return cast<string>(buf)
 }
 
-export string strata_exe_path() { return module_path() }
+export string strata_exe_path() { return module_path(null) }
 
 export int strata_cpu_count() {
     string n = getenv("NUMBER_OF_PROCESSORS")
@@ -872,7 +908,7 @@ export u8[dynamic] strata_read_bytes(string path) {
     fseek(f, 0, 0)
     if size > 0 {
         ArrayRep* r = cast<ArrayRep*>(&a)
-        r.data = malloc(cast<int>(size))
+        r.data = arr_alloc(null, cast<int>(size))
         r.cap = cast<int>(size)
         r.len = fread(r.data, 1, cast<int>(size), f)
     }
@@ -1028,13 +1064,27 @@ export int strata_f64_bits(string text) { return float_bits(text, 64, 52, 0 - 10
 
 export void strata_array_free(u8* array) {
     ArrayRep* a = cast<ArrayRep*>(array)
-    if a.data != null { free(a.data) }
+    if a.data != null {
+        ArrLink* h = arr_header(a.data)
+        arr_unlink(h)
+        free(cast<u8*>(h))
+    }
     a.data = null
     a.len = 0
     a.cap = 0
 }
 
 export void strata_host_reset() {
+    if arr_ring.next != null {           // every array buffer
+        ArrLink* h = arr_ring.next
+        while h != &arr_ring {
+            ArrLink* n = h.next
+            free(cast<u8*>(h))
+            h = n
+        }
+        arr_ring.next = &arr_ring
+        arr_ring.prev = &arr_ring
+    }
     if len_cap > 0 { memset(cast<u8*>(len_keys), 0, 8 * len_cap) }
     len_count = 0
     srt_arena_free(&strs)
@@ -1147,11 +1197,19 @@ global string libdir_set
 
 export void strata_host_set_libdir(string dir) { libdir_set = dir }
 
-// The host's choice; else lib/ next to the executable, or one level up (the repo layout:
-// bin/../lib); else "lib".
+// the exe or dll this code is in (the one holding this runtime's globals)
+u8* this_module() {
+    u8* m = null
+    // 4 | 2: GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | ..._UNCHANGED_REFCOUNT
+    if GetModuleHandleExA(cast<u32>(6), cast<u8*>(&libdir_set), &m) == 0 { return null }
+    return m
+}
+
+// The host's choice; else lib/ next to the module this code is in (the exe, or libstrata.dll
+// for an engine), or one level up (the repo layout: bin/../lib); else "lib".
 export string strata_host_libdir() {
     if cast<u8*>(libdir_set) != null && libdir_set != "" { return libdir_set }
-    string path = module_path()
+    string path = module_path(this_module())
     int cut = 0 - 1
     u8* b = bytes(path)
     for i in 0..strlen(path) { if is_sep(b[i]) { cut = i } }
