@@ -349,7 +349,13 @@ string gen_expr(Codegen* cg, Expr* e) {
         case ExStringLit: return "\"" + cg_escape(e.text) + "\""
         case ExCharLit:   return "'" + cg_escape(e.text) + "'"
         case ExBoolLit:   if (e.bval) { return "true"; } return "false"
-        case ExName:      if (e.text == "PI") { return "SP_PI"; } if (e.text == "null") { return "0"; } return e.text
+        case ExName:
+            {
+                if (e.text == "PI") { return "SP_PI"; } if (e.text == "null") { return "0"; }
+                // a foreign constant: its value, unless its header defines it
+                if e.b != null && e.field == "" { return gen_expr(cg, e.b) }
+                return e.text
+            }
         case ExUnary:     return "(" + e.text + gen_expr(cg, e.a) + ")"
         case ExBinary:
             {
@@ -668,13 +674,14 @@ void gen_types(Codegen* cg, Program prog) {
     }
 
     // struct tags forward-declared first (so fields can reference any struct), then defined
+    // (a foreign struct with a header: the header defines it)
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
-        if (d.kind == DcStruct) { cg_out(cg, "typedef struct " + d.name + " " + d.name + ";\n"); }
+        if d.kind == DcStruct && !(d.is_foreign && d.path != "") { cg_out(cg, "typedef struct " + d.name + " " + d.name + ";\n") }
     }
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
-        if (d.kind == DcStruct) {
+        if d.kind == DcStruct && !(d.is_foreign && d.path != "") {
             cg_out(cg, "struct " + d.name + " {\n")
             for f in 0..d.fields.len {
                 cg_out(cg, "    " + ty_to_c(d.fields[f].type) + " " + d.fields[f].name + ";\n")

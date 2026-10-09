@@ -51,7 +51,7 @@ int main(int strata_argc_, char** strata_argv_) {
         { Array _arr = balls;
             for (int64_t _i = 0; _i < _arr.len; _i++) {
                 Ball b = ((Ball*)_arr.data)[_i];
-                DrawCircle(b.pos.x, b.pos.y, 8.0, MAROON);
+                DrawCircleV((Vector2){b.pos.x, b.pos.y}, 8.0, MAROON);
             }
         }
         DrawText("bouncing balls, written in Strata", 10, 10, 20, DARKGRAY);

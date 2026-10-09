@@ -576,6 +576,7 @@ LVal lower_expr(Lower* l, Expr* e) {
 }
 
 LVal lower_name(Lower* l, Expr* e) {
+    if e.b != null { return lower_expr(l, e.b) }   // a foreign constant: its value
     int k = find_var(l, e.text)
     if k >= 0 {
         LVar v = l.vars[k]

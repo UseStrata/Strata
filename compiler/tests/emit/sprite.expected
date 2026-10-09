@@ -37,7 +37,7 @@ int main(int strata_argc_, char** strata_argv_) {
         pos = vec2_add(pos, vec2_scale(vec2_scale(dir, speed), dt));
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        DrawCircle(pos.x, pos.y, 20.0, MAROON);
+        DrawCircleV((Vector2){pos.x, pos.y}, 20.0, MAROON);
         DrawText("move with the arrow keys", 10, 10, 20, DARKGRAY);
         EndDrawing();
     }

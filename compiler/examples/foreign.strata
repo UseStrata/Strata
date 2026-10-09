@@ -1,0 +1,42 @@
+// foreign.strata - C structs and constants in foreign blocks
+// A foreign block declares what a C library defines: functions, structs (laid out as C
+// does, passed by value) and constants (the values of its macros / enum constants).
+
+foreign <stdlib.h> {
+    struct div_t  { i32 quot; i32 rem }      // 8 bytes: returned in a register
+    struct ldiv_t { i32 quot; i32 rem }      // (long is 32 bits on Windows)
+    div_t  div(i32 numer, i32 denom)
+    ldiv_t ldiv(i32 numer, i32 denom)
+    const i32 EXIT_SUCCESS = 0
+    const i32 EXIT_FAILURE = 1
+}
+
+// no header: the C backend declares the struct and uses the constant's value
+foreign {
+    struct Tint { u8 r; u8 g; u8 b; u8 a }
+    const Tint GOLD = Tint{ 255, 203, 0, 255 }
+    const MAX_ITEMS = 64
+    const float GRAVITY = 9.81
+    const string NAME = "strata"
+}
+
+div_t q = div(17, 5)
+print(q.quot)                 // 3
+print(q.rem)                  // 2
+ldiv_t r = ldiv(-17, 5)
+print(r.quot)                 // -3
+print(r.rem)                  // -2
+print(EXIT_FAILURE - EXIT_SUCCESS)   // 1
+
+Tint t = GOLD
+t.a = 128
+print(cast<int>(t.r) + cast<int>(t.g))   // 458
+print(t.a)                    // 128
+print(GOLD.a)                 // 255
+print(sizeof(Tint))           // 4
+print(MAX_ITEMS * 2)          // 128
+print(GRAVITY)                // 9.81
+print(NAME)                   // strata
+
+int brighter(Tint c) { return cast<int>(c.g) + 10 }
+print(brighter(GOLD))         // 213

@@ -256,7 +256,10 @@ constants needs real binding work (known friction, per the plan).
 
 ```strata
 foreign "raylib.h" {                 // the C backend #includes the header
-    void InitWindow(int w, int h, string title)
+    struct Color { u8 r; u8 g; u8 b; u8 a }            // C's layout, passed by value
+    const Color RAYWHITE = Color{ 245, 245, 245, 255 } // a macro's / enum constant's value
+    void InitWindow(i32 w, i32 h, string title)        // C's int is i32
+    void ClearBackground(Color color)
 }
 foreign {                            // no header: found when linking (e.g. a system DLL)
     u8* malloc(int size)
@@ -270,7 +273,11 @@ foreign {                            // no header: found when linking (e.g. a sy
   (none given) declares the functions itself. A foreign function keeps its exact name.
 - `string` is a C `const char*`, so it converts to and from a pointer with `cast<T>`
   (e.g. a byte buffer `u8*`).
-- Still to come: `struct` declarations inside a `foreign` block (C structs by value).
+- **Structs and constants (2026-10-09):** a foreign `struct` keeps its exact C name and C's
+  layout; a foreign `const` is a value (number, char, bool, string, null or a struct
+  literal of them) that its uses are replaced by - on the C backend with a header, the
+  header's struct and macro are used instead. Still to come: reading C headers
+  automatically (declarations → a foreign block).
 - Free targets: **any C engine** (raylib, SDL, sokol, Box2D) and **Godot via
   GDExtension** (its C API). **Unreal needs a C++ shim** — stated honestly.
 

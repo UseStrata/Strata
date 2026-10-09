@@ -1,10 +1,6 @@
 // balls.strata - many bouncing balls (milestone 3 + dynamic arrays).
 // a Ball[dynamic] of entities, vec2 physics per ball, drawn with raylib. no GC.
-import <raylib.h>
-link "raylib"
-link "opengl32"
-link "gdi32"
-link "winmm"
+import raylib              // raylib, declared in raylib.strata
 
 struct Ball { vec2 pos; vec2 vel }
 
@@ -31,7 +27,7 @@ while !WindowShouldClose() {
     BeginDrawing()
     ClearBackground(RAYWHITE)
     for b in balls {
-        DrawCircle(b.pos.x, b.pos.y, 8.0, MAROON)
+        DrawCircleV(Vector2{ b.pos.x, b.pos.y }, 8.0, MAROON)
     }
     DrawText("bouncing balls, written in Strata", 10, 10, 20, DARKGRAY)
     EndDrawing()

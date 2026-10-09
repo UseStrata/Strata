@@ -153,11 +153,15 @@ void pr_decl(Decl* d) {
         case DcGlobal:
             pr(0, ex + "Global " + ast_type_str(d.ret) + " " + d.name)
             if d.init != null { pr_expr(1, d.init) }
+        case DcConst:
+            pr(0, ex + "Foreign Const " + ast_type_str(d.ret) + " " + d.name)
+            pr_expr(1, d.init)
         case DcEnum:
             pr(0, ex + "Enum " + d.name)
             for i in 0..d.members.len { pr(1, d.members[i]); }
         case DcStruct:
-            pr(0, ex + "Struct " + d.name)
+            if d.is_foreign { pr(0, ex + "Foreign Struct " + d.name) }
+            else { pr(0, ex + "Struct " + d.name) }
             for i in 0..d.fields.len { pr(1, ast_type_str(d.fields[i].type) + " " + d.fields[i].name); }
         case DcInclude:
             if (d.is_system) { pr(0, "Import <" + d.path + ">"); } else { pr(0, "Import \"" + d.path + "\""); }

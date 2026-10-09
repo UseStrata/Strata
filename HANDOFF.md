@@ -7,7 +7,7 @@
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
 **Current:** stratac **2.2.0** (the runtime in Strata: `foreign` blocks, `global` variables), released 2026-10-09
-· tests **68/68** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
+· tests **71/71** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
 · installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.2.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
@@ -31,14 +31,13 @@ plus releases, and approve releases when asked.
   variables (both user-chosen designs, DESIGN.md §3/§8), exact float printing, 68 tests.
 - Releases: follow §3's steps (including `build.ps1 -WriteSeed`). Ask the user before
   pushing / publishing.
+- **On `main` since 2.2.0 (unreleased):** `struct`s and `const`ants in `foreign` blocks;
+  the raylib examples import `examples/raylib.strata` (a foreign block) and build natively.
 
 **Where C is still used (what "move away from C" means concretely)**
-1. **Programs that `import <x.h>`** (e.g. `examples/window|sprite|balls.strata` with raylib)
-   go through the C backend. The way out is already half built: a `foreign "raylib.h" { }`
-   block makes calls native. Missing: **`struct`s inside `foreign` blocks** (raylib passes
-   `Color`, `Vector2` by value — the Win64 rules are in `lower.strata`'s `abi_*`), and
-   constants/macros (`RAYWHITE`). Then convert the examples; then consider reading C
-   headers automatically (HANDOFF §12 step 4).
+1. **Programs that `import <x.h>`** go through the C backend. ~~Structs / constants in
+   `foreign` blocks~~ done: the raylib examples are native now (`examples/raylib.strata`).
+   Next: read C headers automatically into foreign declarations (§12 step 4).
 2. **The compiler itself is compiled through C** (`stage0` = the 1.1.0 release, a C
    compiler build; `strata_host.h` and `lib/crossplatform.h` are C). Getting the compiler
    built by its own native backend needs: the native backend handling everything the
@@ -56,8 +55,8 @@ plus releases, and approve releases when asked.
    teach `pelink` to read `.a` import libraries or resolve `-l` DLLs from their export
    tables (it already does that for system DLLs) and gcc drops out there too.
 
-**Suggested order:** (a) ~~release 2.2.0~~ done; (b) `struct` (and constant) declarations in
-`foreign` blocks + native raylib examples; (c) `pelink` resolving `link "x"` DLLs itself;
+**Suggested order:** (a) ~~release 2.2.0~~ done; (b) ~~`struct` (and constant) declarations in
+`foreign` blocks + native raylib examples~~ done; (c) `pelink` resolving `link "x"` DLLs itself;
 (d) the compiler compiled natively (the big one), then clean up the C seed / host C.
 
 **Gotchas learned this session** (also in §13): the shell mangles backslashes in heredocs
@@ -282,15 +281,16 @@ for i in 0..10 { if i % 2 == 0 { continue }; print(i) }
   only. Missing/private/unimported/conflicting names get errors that say how to fix them.
 - **Globals:** `global int score = 0`, `export global ...`, `global var x = "s"` — any file,
   private unless exported, constant initial values (zero if none).
-- **C interop:** `foreign { T name(params) }` / `foreign "x.h" { ... }` declares functions
-  defined outside Strata — works on **both** backends (native calls them from the
-  declaration; C #includes the header or declares them). `import <x.h>` / `import "x.h"`
+- **C interop:** `foreign { T name(params) }` / `foreign "x.h" { ... }` declares functions,
+  `struct`s (C layout, by value) and `const`ants (`const Color RAYWHITE = Color{...}`)
+  defined outside Strata — works on **both** backends (native uses the declarations; C
+  #includes the header, or declares them itself). See `examples/raylib.strata`. `import <x.h>` / `import "x.h"`
   (unknown names resolve as C once a header is imported) works on the C backend only.
   `link "lib"`. `cast<T>` converts `string` ↔ pointers. Single-header C libraries can check
   `STRATA_PROGRAM` to compile their implementation (see `lib/crossplatform.h`).
 - **Designed, not built:** tagged unions + pattern matching, expression-bodied functions,
-  default/named arguments, qualified names (`shapes.area`), module-level constants,
-  `struct`s in `foreign` blocks, region-escape checking.
+  default/named arguments, qualified names (`shapes.area`), module-level constants (outside `foreign`
+  blocks), region-escape checking.
 
 ---
 
@@ -335,14 +335,15 @@ exception: `strata_host.h` includes it as `"../lib/crossplatform.h"`, i.e. from 
 `hello` (flagship), `run1`, `arena`, `vectors`, `matrix`, `arrays`, `switch`, `strings`,
 `interop`, `list` (alloc + null), `casts`, `prelude`, `loops` (break/continue),
 `modules` + `greetlib`, `modules2` + `mods/` (the module system), `crossplatform` (a window
-via `lib/crossplatform.h`). Graphical (open a window; build, don't auto-run): `window`,
-`sprite`, `balls`. Error cases: `errors`, `breakerr`, `modvis`, `modload`, `modpriv`.
+via `lib/crossplatform.h`), `foreign` (C structs / constants in foreign blocks).
+Graphical (open a window; build, don't auto-run): `window`, `sprite`, `balls` — raylib
+through the `raylib.strata` module (a foreign block), native. Error cases: `errors`, `breakerr`, `modvis`, `modload`, `modpriv`.
 `abi` (native-backend corners: struct passing, 7-argument calls, narrow / unsigned
 arithmetic, shifts, floats, short-circuiting, pointers).
 
 ---
 
-## 9. Tests (`compiler/tests/run.ps1`: 68 checks; `run.sh`: the same on macOS / Linux, minus the native ones)
+## 9. Tests (`compiler/tests/run.ps1`: 71 checks; `run.sh`: the same on macOS / Linux, minus the native ones)
 
 1. **Bootstrap + fixpoint** (runs `build.ps1`).
 2. **Goldens:** `tests/<stage>/<name>.expected` vs `stratac <stage> examples/<name>.strata`,
@@ -354,8 +355,9 @@ arithmetic, shifts, floats, short-circuiting, pointers).
    files), `badtoml` (project-file errors), `pure` (no C imports: a **native debug build**,
    unoptimized, of a multi-module program).
 4. **Incremental:** editing one function body in a copy of `multi` recompiles one C file.
-   **No C compiler:** with gcc off PATH, four examples and `projects/pure` build natively
-   and print their goldens.
+   **No C compiler:** with gcc off PATH, five examples and `projects/pure` build natively
+   and print their goldens. **raylib:** `window`, `sprite`, `balls` build through both
+   backends (skipped without raylib).
    **Backends:** every run golden again with `--backend native` (all but `interop`, which
    imports C headers) and with `--backend c`; **the assembler**: ten examples (debug +
    optimized) must disassemble (objdump) to the same instructions as GNU as's object of
@@ -433,7 +435,7 @@ runtime in Strata (`foreign` blocks, `global` variables).**
    `puts`. Next level: straight to kernel32 (`VirtualAlloc` / `WriteFile`) / syscalls.
 4. **C header import** (declarations → Strata; a small C shim for inline functions /
    code macros): raylib & engines natively. `foreign` blocks already let a program
-   declare what it uses by hand; next: `struct`s in them (C structs by value).
+   declare what it uses by hand (functions, structs, constants): raylib works that way.
 5. **More targets**: ARM64 (the user's Apple Silicon Mac), Linux / macOS x86-64 — the IR
    is shared; each is a new `x64.strata`-like file + ABI rules.
 6. **Self-compiling natively** (the compiler built by its own native backend; the C seed

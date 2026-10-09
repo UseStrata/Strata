@@ -1,0 +1,34 @@
+// raylib.strata - the part of raylib (5.x) the window / sprite / balls examples use,
+// declared in a foreign block: no C header needed, so they build with the native backend.
+// (C's `int` is i32; `bool` is one byte, as in Strata.)
+link "raylib"
+link "opengl32"
+link "gdi32"
+link "winmm"
+
+export foreign <raylib.h> {
+    struct Color   { u8 r; u8 g; u8 b; u8 a }
+    struct Vector2 { float x; float y }
+
+    const Color RAYWHITE = Color{ 245, 245, 245, 255 }
+    const Color DARKGRAY = Color{ 80, 80, 80, 255 }
+    const Color MAROON   = Color{ 190, 33, 55, 255 }
+    const i32 KEY_RIGHT = 262
+    const i32 KEY_LEFT  = 263
+    const i32 KEY_DOWN  = 264
+    const i32 KEY_UP    = 265
+
+    void  InitWindow(i32 width, i32 height, string title)
+    void  CloseWindow()
+    bool  WindowShouldClose()
+    void  SetTargetFPS(i32 fps)
+    float GetFrameTime()
+    i32   GetRandomValue(i32 min, i32 max)
+    bool  IsKeyDown(i32 key)
+    void  BeginDrawing()
+    void  EndDrawing()
+    void  ClearBackground(Color color)
+    void  DrawText(string text, i32 x, i32 y, i32 font_size, Color color)
+    void  DrawCircle(i32 center_x, i32 center_y, float radius, Color color)
+    void  DrawCircleV(Vector2 center, float radius, Color color)
+}

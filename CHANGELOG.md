@@ -4,6 +4,36 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
+## [Unreleased]
+**raylib without C headers.** A `foreign` block can now declare a C library's structs and
+constants as well as its functions, so the raylib examples build with Strata's own
+backend.
+
+### Added
+- **`struct`s and constants in `foreign` blocks:**
+  ```strata
+  foreign "raylib.h" {
+      struct Color { u8 r; u8 g; u8 b; u8 a }          // C's layout, passed by value
+      const Color RAYWHITE = Color{ 245, 245, 245, 255 } // a macro's value
+      const i32 KEY_RIGHT = 262                          // an enum constant's
+      void ClearBackground(Color color)
+  }
+  ```
+  A foreign struct keeps its exact C name; the native backend lays it out as C does and
+  passes it by the Windows x64 rules. A constant (`const T NAME = value`, or `const NAME =
+  value`) is a number, char, bool, string, null or a struct literal of them; it can't be
+  assigned or have its address taken. Uses become its value - except on the C backend
+  when the block names a header, where the header's own struct and macro are used.
+- `examples/raylib.strata`: the raylib functions, structs and constants the graphical
+  examples use, as a foreign block. `window`, `sprite` and `balls` import it instead of
+  `raylib.h`, so they build natively (gcc still links raylib).
+- Tests (71): `foreign` (run on both backends, and with no C compiler; and its AST), and
+  the raylib examples built through both backends (when raylib is installed).
+
+### Changed
+- A foreign block's header no longer makes unknown names resolve as C (only
+  `import <x.h>` does): the block declares what the program uses.
+
 ## [2.2.0] - 2026-10-09
 **The native runtime is written in Strata.** Native programs are now Strata code (and the
 OS) all the way down: their runtime, `lib/srt.strata`, is compiled by Strata's own native

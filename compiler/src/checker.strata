@@ -93,7 +93,9 @@ struct StructInfo{ string name; FieldInfo[dynamic] fields; int module; bool expo
 struct FuncInfo  { string name; Type*[dynamic] params; Type* ret; int module; bool exported; string cname; }
 struct EnumInfo  { string name; int module; bool exported; string cname; }
 struct EnumMember{ string member; string enum_name; int module; bool exported; string cname; }   // enum_name: the enum's C name
-struct GlobalInfo{ string name; Type* type; int module; bool exported; string cname; }
+// a foreign constant is a GlobalInfo with a `value` (its uses become the value) and the
+// header that defines it ("": none)
+struct GlobalInfo{ string name; Type* type; int module; bool exported; string cname; Expr* value; string header; }
 // One entry per top-level name (all kinds), for the module-level name checks.
 struct NameEntry { string name; int module; bool exported; int line; int col; }
 
@@ -331,6 +333,18 @@ bool ck_is_constant(Expr* e) {
     if e.kind == ExUnary && e.text == "-" && (e.a.kind == ExIntLit || e.a.kind == ExFloatLit) { return true }
     return false
 }
+// A constant's value: a global's constant, or a struct literal of them.
+bool ck_is_const_value(Expr* e) {
+    if ck_is_constant(e) { return true }
+    if e.kind != ExStructLit { return false }
+    for i in 0..e.items.len { if !ck_is_const_value(e.items[i]) { return false } }
+    return true
+}
+// Is `name` (not a local) a constant?
+bool ck_names_const(Checker* c, string name) {
+    int gi = ck_global_index(c, name)
+    return gi >= 0 && c.globals[gi].value != null
+}
 
 bool ck_assignable(Type* target, Type* value) {
     if (target.cat == TcUnknown || value.cat == TcUnknown) { return true; }
@@ -411,6 +425,7 @@ LvalueResult ck_lvalue(Checker* c, Expr* e) {
                 LookupResult v = ck_lookup(c, e.text)
                 bool cst = false
                 if (v.found) { cst = v.is_const; }
+                else if ck_names_const(c, e.text) { return LvalueResult{ false, true } }   // a value, not a variable
                 return LvalueResult{ true, cst }
             }
         case ExField: return ck_lvalue(c, e.a)
@@ -551,6 +566,8 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 int gi = ck_global_index(c, e.text)
                 if gi >= 0 {
                     e.text = c.globals[gi].cname
+                    // a constant: the backends use its value (e.b), or the header's name (e.field)
+                    if c.globals[gi].value != null { e.b = c.globals[gi].value; e.field = c.globals[gi].header }
                     return c.globals[gi].type
                 }
                 int mi = ck_member_index(c, e.text)
@@ -1046,7 +1063,8 @@ void ck_stmt(Checker* c, Stmt* s) {
         case StAssign:
             {
                 LvalueResult lv = ck_lvalue(c, s.target)
-                if (!lv.ok) { ck_error(c, s.line, s.col, "left side of '" + s.op + "' is not assignable"); }
+                if !lv.ok && lv.is_const { ck_error(c, s.line, s.col, "a constant can't be assigned to") }
+                else if (!lv.ok) { ck_error(c, s.line, s.col, "left side of '" + s.op + "' is not assignable"); }
                 else if (lv.is_const) { ck_error(c, s.line, s.col, "cannot assign to a const variable"); }
                 Type* tt = ck_expr(c, s.target)
                 Type* vt = ck_expr_as(c, s.value, tt)
@@ -1266,7 +1284,8 @@ export bool ck_check(Checker* c, Program prog) {
     ck_visibility(c)
 
     // pass 0: note whether any C header is imported (enables external C calls)
-    for i in 0..prog.decls.len { if (prog.decls[i].kind == DcInclude) { c.has_foreign = true; } }
+    // (a foreign block's header doesn't count: its block declares what it provides)
+    for i in 0..prog.decls.len { if prog.decls[i].kind == DcInclude && !prog.decls[i].is_foreign { c.has_foreign = true } }
 
     // size the name indexes (so they never need to grow)
     int n_all = 0
@@ -1302,10 +1321,12 @@ export bool ck_check(Checker* c, Program prog) {
             idx_add(&c.struct_idx, d.name, c.structs.len)
             c.structs.push(StructInfo{ d.name, ff, d.module, d.is_exported, d.name })
             ck_note_name(c, d.name, d.module, d.is_exported, d.line, d.col)
-        } else if d.kind == DcGlobal {
-            if ck_own_global(c, d.name, d.module) >= 0 { ck_error(c, d.line, d.col, "global '" + d.name + "' is already defined") }
+        } else if d.kind == DcGlobal || d.kind == DcConst {
+            if ck_own_global(c, d.name, d.module) >= 0 { ck_error(c, d.line, d.col, "'" + d.name + "' is already defined") }
             idx_add(&c.global_idx, d.name, c.globals.len)
-            c.globals.push(GlobalInfo{ d.name, c.t_unknown, d.module, d.is_exported, d.name })
+            Expr* value = null
+            if d.kind == DcConst { value = d.init }
+            c.globals.push(GlobalInfo{ d.name, c.t_unknown, d.module, d.is_exported, d.name, value, d.path })
             ck_note_name(c, d.name, d.module, d.is_exported, d.line, d.col)
         } else if d.kind == DcFunc {
             if ck_own_func(c, d.name, d.module) >= 0 { ck_error(c, d.line, d.col, "function '" + d.name + "' is already defined") }
@@ -1325,15 +1346,17 @@ export bool ck_check(Checker* c, Program prog) {
         c.enum_members[i].enum_name = c.enums[ck_own_enum(c, m.enum_name, m.module)].cname
     }
     for i in 0..c.structs.len { c.structs[i].cname = ck_cname(c, c.structs[i].name, c.structs[i].module, c.structs[i].exported) }
-    c.cname_idx = new_idx(c.structs.len)
-    for i in 0..c.structs.len { idx_add(&c.cname_idx, c.structs[i].cname, i) }
     for i in 0..c.funcs.len { c.funcs[i].cname = ck_cname(c, c.funcs[i].name, c.funcs[i].module, c.funcs[i].exported) }
     for i in 0..c.globals.len { c.globals[i].cname = ck_cname(c, c.globals[i].name, c.globals[i].module, c.globals[i].exported) }
-    // a foreign function is the symbol it names: never renamed
+    // what a foreign block declares is the C name it names: never renamed
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
         if d.kind == DcFunc && d.is_foreign { c.funcs[ck_own_func(c, d.name, d.module)].cname = d.name }
+        if d.kind == DcStruct && d.is_foreign { c.structs[ck_own_struct(c, d.name, d.module)].cname = d.name }
+        if d.kind == DcConst { c.globals[ck_own_global(c, d.name, d.module)].cname = d.name }
     }
+    c.cname_idx = new_idx(c.structs.len)
+    for i in 0..c.structs.len { idx_add(&c.cname_idx, c.structs[i].cname, i) }
     ck_name_conflicts(c)
 
     // pass 1c: struct fields
@@ -1357,16 +1380,17 @@ export bool ck_check(Checker* c, Program prog) {
             c.funcs[fi].ret = ck_type(c, d.ret)
         }
     }
-    // pass 1e: globals - their types and constant initializers
+    // pass 1e: globals and constants - their types and constant initializers
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
-        if d.kind == DcGlobal {
+        if d.kind == DcGlobal || d.kind == DcConst {
             c.cur = d.module
             int gi = ck_own_global(c, d.name, d.module)
             Type* declared = c.t_unknown
             if d.ret != null { declared = ck_type(c, d.ret) }
             if d.init != null {
-                if !ck_is_constant(d.init) { ck_error(c, d.line, d.col, "a global's initial value must be a constant (a number, char, bool, string or null)") }
+                if d.kind == DcGlobal && !ck_is_constant(d.init) { ck_error(c, d.line, d.col, "a global's initial value must be a constant (a number, char, bool, string or null)") }
+                if d.kind == DcConst && !ck_is_const_value(d.init) { ck_error(c, d.line, d.col, "a constant's value must be a number, char, bool, string, null or a struct literal of them") }
                 Type* vt = ck_expr_as(c, d.init, declared)
                 if d.ret == null { declared = vt; d.ret = type_to_node(vt) }
                 else if !ck_assignable(declared, vt) { ck_error(c, d.line, d.col, "cannot initialize global '" + d.name + "' of type " + t_str(declared) + " with a value of type " + t_str(vt)) }
@@ -1395,7 +1419,7 @@ export bool ck_check(Checker* c, Program prog) {
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
         if d.kind == DcFunc   { d.name = c.funcs[ck_own_func(c, d.name, d.module)].cname }
-        if d.kind == DcGlobal { d.name = c.globals[ck_own_global(c, d.name, d.module)].cname }
+        if d.kind == DcGlobal || d.kind == DcConst { d.name = c.globals[ck_own_global(c, d.name, d.module)].cname }
         if d.kind == DcStruct { d.name = c.structs[ck_own_struct(c, d.name, d.module)].cname }
         if d.kind == DcEnum {
             for m in 0..d.members.len { d.members[m] = c.enum_members[ck_own_member(c, d.members[m], d.module)].cname }

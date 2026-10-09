@@ -262,6 +262,39 @@ bool at_global(Parser* p) {
     return i >= 0 && p.toks[i].kind == TkIdent
 }
 
+// A prototype in a foreign block: `T name(params)`
+Decl* foreign_func(Parser* p) {
+    Token ft = p_peek(p)
+    Decl* fd = new_decl(DcFunc, ft.line, ft.col)
+    fd.ret = parse_type(p)
+    fd.name = p_expect(p, TkIdent).text
+    p_expect(p, TkLParen)
+    skip_newlines(p)
+    if !p_check(p, TkRParen) {
+        bool more = true
+        while more {
+            TypeNode* pty = parse_type(p)
+            string pnm = p_expect(p, TkIdent).text
+            fd.params.push(Param{ pnm, pty })
+            more = p_match(p, TkComma)
+            skip_newlines(p)
+        }
+    }
+    p_expect(p, TkRParen)
+    return fd
+}
+
+// `const NAME = value` / `const T NAME = value` (in a foreign block)
+Decl* foreign_const(Parser* p) {
+    Token kw = p_advance(p)
+    Decl* d = new_decl(DcConst, kw.line, kw.col)
+    if !(p_check(p, TkIdent) && p.toks[p.pos + 1].kind == TkAssign) { d.ret = parse_type(p) }
+    d.name = p_expect(p, TkIdent).text
+    p_expect(p, TkAssign)
+    d.init = expression(p)
+    return d
+}
+
 // Is the parser at `foreign {` / `foreign "header.h" {` / `foreign <header.h> {`?
 bool at_foreign(Parser* p) {
     if !p_check(p, TkIdent) || p_peek(p).text != "foreign" { return false }
@@ -269,9 +302,11 @@ bool at_foreign(Parser* p) {
     return k == TkLBrace || k == TkString || k == TkLt
 }
 
-// `foreign ["header.h" | <header.h>] { prototypes }`: functions defined outside Strata
-// (C libraries, the OS). With a header, the C backend #includes it; without one, the
-// symbols are found when linking. Adds the header (if any) and each prototype to decls.
+// `foreign ["header.h" | <header.h>] { ... }`: what a C library (or the OS) defines -
+// function prototypes, `struct`s (C layout) and `const`ants (`const T NAME = value`, the
+// value of a macro / enum constant). With a header, the C backend #includes it and takes
+// the structs and constants from it; without one, it declares them itself and the
+// functions are found when linking. Adds the header (if any) and each declaration to decls.
 void foreign_block(Parser* p, Decl*[dynamic]* decls, bool exported) {
     Token kw = p_advance(p)
     string header = ""
@@ -293,27 +328,14 @@ void foreign_block(Parser* p, Decl*[dynamic]* decls, bool exported) {
     p_expect(p, TkLBrace)
     skip_newlines(p)
     while !p_check(p, TkRBrace) && !p_at_end(p) && !p.had_error {
-        Token ft = p_peek(p)
-        Decl* fd = new_decl(DcFunc, ft.line, ft.col)
-        fd.is_foreign = true
-        fd.is_exported = exported
-        fd.path = header        // its header ("": none - the C backend declares it)
-        fd.ret = parse_type(p)
-        fd.name = p_expect(p, TkIdent).text
-        p_expect(p, TkLParen)
-        skip_newlines(p)
-        if !p_check(p, TkRParen) {
-            bool more = true
-            while more {
-                TypeNode* pty = parse_type(p)
-                string pnm = p_expect(p, TkIdent).text
-                fd.params.push(Param{ pnm, pty })
-                more = p_match(p, TkComma)
-                skip_newlines(p)
-            }
-        }
-        p_expect(p, TkRParen)
-        decls[0].push(fd)
+        Decl* d = null
+        if p_check(p, TkKwStruct)     { d = struct_decl(p) }
+        else if p_check(p, TkKwConst) { d = foreign_const(p) }
+        else                          { d = foreign_func(p) }
+        d.is_foreign = true
+        d.is_exported = exported
+        d.path = header         // its header ("": none - the C backend declares it)
+        decls[0].push(d)
         p_match(p, TkSemicolon)
         skip_newlines(p)
     }

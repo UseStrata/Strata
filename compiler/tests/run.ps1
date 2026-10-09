@@ -111,6 +111,21 @@ foreach ($backend in @("native", "c")) {
     if ($bad.Count -eq 0) { Write-Host "PASS  backend/$backend (every run golden)" -ForegroundColor Green; $pass++ }
     else { Write-Host "FAIL  backend/$backend ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
 }
+# The raylib examples (graphical: built, not run) declare raylib in a foreign block
+# (examples/raylib.strata), so they build natively; and through C, with raylib.h.
+if ((& gcc -print-file-name=libraylib.a) -ne "libraylib.a") {
+    $bad = @()
+    foreach ($name in @("window", "sprite", "balls")) {
+        foreach ($backend in @("native", "c")) {
+            $out = (& $strata build (Join-Path $examples "$name.strata") --backend $backend --force) -join " "
+            if ($LASTEXITCODE -ne 0 -or $out -notmatch "built") { $bad += "$name/$backend" }
+        }
+    }
+    if ($bad.Count -eq 0) { Write-Host "PASS  backend/raylib (window, sprite, balls: native and C)" -ForegroundColor Green; $pass++ }
+    else { Write-Host "FAIL  backend/raylib ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
+} else {
+    Write-Host "SKIP  backend/raylib (raylib not installed)" -ForegroundColor Yellow
+}
 # Strata's assembler: for each example (debug and optimized), its object file must
 # disassemble to exactly the instructions GNU as makes of the same assembly (jump targets,
 # padding and objdump's address comments aside: GNU as picks short jumps).
@@ -152,7 +167,7 @@ $savedPath = $env:Path
 $env:Path = "$env:SystemRoot\System32;$env:SystemRoot"
 $noCc = @()
 try {
-    foreach ($name in @("hello", "abi", "loops", "matrix")) {
+    foreach ($name in @("hello", "abi", "loops", "matrix", "foreign")) {
         $out  = ((& $strata run (Join-Path $examples "$name.strata") --backend native) -join "`n") -replace "`r",""
         $want = ((Get-Content (Join-Path $here "run\$name.expected") -Raw) -replace "`r","").TrimEnd("`n")
         if ($out.TrimEnd("`n") -ne $want) { $noCc += $name }
