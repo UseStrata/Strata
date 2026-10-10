@@ -23,6 +23,7 @@ for f in stratac console libstrata.dylib libstrata.so libstrata.h; do
 done
 cp "$here"/lib/*.h "$here"/lib/srt.strata "$here"/lib/CrossPlatform.strata "$stage/lib/"
 cp -R "$here"/lib/CrossPlatform "$here"/lib/srt "$stage/lib/"
+for o in "$here"/lib/srt-*.o; do [ -f "$o" ] && cp "$o" "$stage/lib/"; done   # the native backend's runtime (built by build.sh)
 for f in strata.h strata.hpp Strata.cs; do cp "$here/api/$f" "$stage/include/"; done
 for f in LICENSE LICENSE-RUNTIME.md LICENSE-EMBEDDING.md README.md CHANGELOG.md; do
     if [ -f "$repo/$f" ]; then cp "$repo/$f" "$stage/"; fi

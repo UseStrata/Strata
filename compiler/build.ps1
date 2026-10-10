@@ -113,8 +113,9 @@ Write-Host "fixpoint ok: stage2 and stage3 are identical" -ForegroundColor Green
 Copy-Item $stage3 (Join-Path $bin "stratac.exe") -Force
 $stratac = Join-Path $bin "stratac.exe"
 
-# --- the runtime for the other native targets (cross-compiling: --target linux-x64) ---
+# --- the runtime for the other native targets (cross-compiling: --target linux-x64 / macos-arm64) ---
 Build-Runtime-For $stratac "linux-x64" (Join-Path $lib "srt-linux-x64.o")
+Build-Runtime-For $stratac "macos-arm64" (Join-Path $lib "srt-macos-arm64.o")
 
 # --- the seed: this compiler as portable C, for bootstrapping other platforms ----
 # The C the compiler generates for itself, written by stratac (LF, byte-exact). Kept with

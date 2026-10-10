@@ -34,6 +34,7 @@ Copy-Item (Join-Path $lib 'CrossPlatform') (Join-Path $stage 'lib') -Recurse
 Copy-Item (Join-Path $lib 'srt') (Join-Path $stage 'lib') -Recurse   # the runtime's OS layers
 Copy-Item (Join-Path $lib 'srt.o') (Join-Path $stage 'lib')   # ... compiled: Strata's linker links it
 Copy-Item (Join-Path $lib 'srt-linux-x64.o') (Join-Path $stage 'lib')   # the Linux runtime (cross-compiling: --target linux-x64)
+Copy-Item (Join-Path $lib 'srt-macos-arm64.o') (Join-Path $stage 'lib')   # the macOS runtime (--target macos-arm64)
 # the embedding API: C header, C++ wrapper, C# bindings
 foreach ($f in 'strata.h','strata.hpp','Strata.cs') { Copy-Item (Join-Path $here "api\$f") (Join-Path $stage "include\$f") }
 foreach ($f in 'LICENSE','LICENSE-RUNTIME.md','LICENSE-EMBEDDING.md','README.md','CHANGELOG.md') {

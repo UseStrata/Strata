@@ -66,6 +66,23 @@ plus releases, and approve releases when asked.
   DT_SONAME, DT_FINI_ARRAY -> srt_os_flush; no srt_os_init, so getenv is null there).
   CI's Linux job runs every run golden natively. On Linux, `auto` uses C only for projects
   with C sources; the compiler itself still builds through C there (build.sh `--backend c`).
+- **On `main` (unreleased): native macOS ARM64** (step 4 of the agreed order):
+  `src/arch/arm64.strata` (one file: the code generator - IR -> LLVM-syntax ARM64 text,
+  then assembled; x19-x28 / d8-d15 allocated, x13-x15 / d18-d23 for values not living
+  across calls, x9-x12 / d16-d17 scratch, x16 / x17 address temps, locals addressed from
+  sp - and the encoder, byte-identical to clang: run.ps1's backend/arm64-assembler
+  checks every example when LLVM clang is installed), the Apple ARM64 convention in
+  `lower.strata` (`aapcs()`; `aapcs_spec`: 64 + 8 * f64 + count for an HFA, 1-2 integer
+  registers, 0 by address; arg_bytes -2 = x8, 100000 + size = an HFA copied to the stack),
+  `src/os/macos.strata` (Mach-O objects with `_` names; the linker: __PAGEZERO / __TEXT /
+  __DATA / __LINKEDIT on 16 KB pages, 12-byte stubs + __got bound by dyld bind opcodes -
+  ordinal 1 with only libSystem, flat lookup with more - rebase opcodes for data
+  pointers, LC_MAIN -> a start stub doing atexit(srt_os_flush), main, exit; dylibs: id
+  `@rpath/<file>`, export trie, a __mod_init_func doing the atexit; an ad-hoc,
+  linker-signed CodeDirectory), `lib/srt/macos.strata` (libSystem; stdout buffered
+  here). macOS CI builds lib/srt-macos-arm64.o and runs every golden natively, and `auto`
+  is native there now. Cross-check locally with LLVM (C:\Program Files\LLVM\bin:
+  llvm-objdump --macho, ld64.lld against a hand-written libSystem .tbd).
 - **On `main` (unreleased): the CrossPlatform library in Strata** (user's idea and
   naming): `import CrossPlatform` → `lib/CrossPlatform.strata` (the API, same on every OS)
   + `lib/CrossPlatform/windows.strata` (user32 / kernel32 / msvcrt), which the main file
@@ -269,10 +286,13 @@ file.strata → lexer → parser → (module loader) → checker ─┬→ lower
 | `lower` | typed AST → IR: C's arithmetic conversions (results match the C backend), vector math inline, `srt_*` runtime calls, regions, the Windows x64 struct-passing rules (`abi_*`); refuses C headers (→ C backend) |
 | `opt` | fold, slot forwarding + dead stores, CSE, copy propagation, DCE, flow cleanup, LICM, coalescing; `alloc_regs` (liveness + linear scan over a target `RegSet`) |
 | `asm` | **the** assembler (any CPU): GNU-as text → bytes, symbols, relocations (`ObjFile`); sections, directives, labels, fixups; `assemble(text, arch)` hands each instruction to `arch/<arch>` |
+| `arch/arm64` | **everything ARM64**: IR → LLVM-syntax assembly text (Apple's convention; locals from sp; lazy vregs; cmp+branch fusion; long-form branches in functions over 20k IR instructions), assembled by `asm`; the encoder (`arm64_instruction`, `arm64_fixup`: b / bl / b.cond / cbz resolved in `.text`, adrp / @PAGEOFF always relocations), byte-identical to clang |
 | `arch/x64` | **everything x86-64** (one file per CPU): IR → instructions as `Opnd`s, encoded straight to machine code (`ins2` → `x64_encode`; printed as GNU-as AT&T text only for `stratac asm`), Windows x64 ABI; immediates / folded addresses ("lazy" vregs), cmp+branch fusion, stack probes; the encoder (`x64_instruction`, `x64_fixup`, rel32 jumps always) |
 | `linker` | **the** linker entry (any OS): `write_object`, `new_link` / `link_object` / `link_lib` / `link_program`, handed to `os/<os>` |
 | `os/windows` | **everything Windows** (one file per OS): COFF objects; Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from DLLs' export tables (the system's, and `link "x"`'s found by `link_library`; no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000; dlls (`link_dll`): export table, `.reloc` base relocations, base 0x180000000; import libraries, Microsoft format (`<name>.dll.a` for GNU ld, `<name>.lib` for MSVC) |
-| `native` | the native driver (`native_compile`, `native_target_why`) |
+| `os/linux` | **everything Linux**: ELF objects; the ELF linker (static, or dynamic with libc / any `link "x"`; `.so` output), `_start` / `srt_syscall` stubs |
+| `os/macos` | **everything macOS**: Mach-O objects; the Mach-O linker (executables and dylibs for dyld: stubs, __got, bind / rebase opcodes, export trie), SHA-256, the ad-hoc code signature |
+| `native` | the native driver (`native_compile`, `native_target_why`; `native_arm64` for ARM64) |
 | `core` | umbrella: `export import`s every phase = the compiler as a library (no `main`) |
 | `project`, `build` | the build system: `strata.toml`; pipeline, cache, split builds, dll + header |
 | `libstrata` | the public embedding API (`strata_*` exports) |

@@ -7,6 +7,19 @@ and a GitHub Release.
 ## [Unreleased]
 
 ### Added
+- **Native macOS ARM64**: Strata builds Mac programs with its own backend, assembler and
+  linker - on a Mac, or cross-compiled from Windows (`--target macos-arm64`). No C
+  compiler, no Xcode tools: `src/arch/arm64.strata` turns the IR into ARM64 machine code
+  (its assembler matches clang's byte for byte on every example), `lower.strata` follows
+  Apple's ARM64 calling convention (structs of up to 16 bytes in registers, floats-only
+  structs - vec2/3/4 - in float registers, bigger ones by address and through x8), and
+  `src/os/macos.strata` writes Mach-O objects and links them into position-independent
+  executables and dylibs that dyld loads - libSystem (and any `link "x"` dylib) bound
+  through stubs and a pointer table, data addresses slid with rebase opcodes, dylib
+  exports in an export trie - with the ad-hoc code signature (SHA-256 of every page)
+  ARM64 macOS insists on. The runtime's macOS layer, `lib/srt/macos.strata`, is libSystem.
+  Every run golden passes natively on macOS (CI), and so does a C program calling a
+  Strata-built `.dylib`.
 - **Native Linux x86-64**: Strata builds Linux programs with its own backend, assembler
   and linker - on Linux, or cross-compiled from Windows (`--target linux-x64`). No C
   compiler and no C library: `src/os/linux.strata` writes ELF objects and links static

@@ -221,6 +221,76 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path $xExe)) {
 if ($xOk) { Write-Host "PASS  backend/cross-linux (hello built for linux-x64: an x86-64 ELF executable)" -ForegroundColor Green; $pass++ }
 else { Write-Host "FAIL  backend/cross-linux: $xOut" -ForegroundColor Red; $fail++ }
 
+# Cross-compiling for macOS ARM64: hello as a signed Mach-O executable (runs on CI's Mac)
+$mOut = (& $strata build (Join-Path $examples "hello.strata") --target macos-arm64 --force) -join " "
+$mOk = $false
+if ($LASTEXITCODE -eq 0 -and (Test-Path $xExe)) {
+    $h = [IO.File]::ReadAllBytes($xExe)
+    # MH_MAGIC_64, CPU_TYPE_ARM64, MH_EXECUTE, and an LC_CODE_SIGNATURE among the load commands
+    $mOk = $h.Length -gt 64 -and [BitConverter]::ToUInt32($h, 0) -eq 4277009103 -and [BitConverter]::ToUInt32($h, 4) -eq 0x0100000C -and [BitConverter]::ToUInt32($h, 12) -eq 2
+    $signed = $false
+    $at = 32
+    for ($c = 0; $mOk -and $c -lt [BitConverter]::ToUInt32($h, 16); $c++) {
+        if ([BitConverter]::ToUInt32($h, $at) -eq 0x1D) { $signed = $true }
+        $at += [BitConverter]::ToUInt32($h, $at + 4)
+    }
+    $mOk = $mOk -and $signed
+    Remove-Item $xExe -ErrorAction SilentlyContinue
+}
+if ($mOk) { Write-Host "PASS  backend/cross-macos (hello built for macos-arm64: a signed ARM64 Mach-O executable)" -ForegroundColor Green; $pass++ }
+else { Write-Host "FAIL  backend/cross-macos: $mOut" -ForegroundColor Red; $fail++ }
+
+# The ARM64 assembler: every example's ARM64 assembly, assembled by Strata and by clang,
+# must give the same __text bytes (when an LLVM clang that targets ARM64 is installed)
+$clang = $null
+if (Get-Command clang -ErrorAction SilentlyContinue) { $clang = (Get-Command clang).Source }
+elseif (Test-Path "C:\Program Files\LLVM\bin\clang.exe") { $clang = "C:\Program Files\LLVM\bin\clang.exe" }
+function Get-MachText([string]$path) {
+    $b = [IO.File]::ReadAllBytes($path)
+    $at = 32
+    for ($c = 0; $c -lt [BitConverter]::ToUInt32($b, 16); $c++) {
+        if ([BitConverter]::ToUInt32($b, $at) -eq 0x19) {
+            for ($k = 0; $k -lt [BitConverter]::ToUInt32($b, $at + 64); $k++) {
+                $s = $at + 72 + 80 * $k
+                if ([Text.Encoding]::ASCII.GetString($b, $s, 6) -eq "__text") {
+                    $size = [BitConverter]::ToUInt64($b, $s + 40); $off = [BitConverter]::ToUInt32($b, $s + 48)
+                    return [BitConverter]::ToString($b, $off, $size)
+                }
+            }
+        }
+        $at += [BitConverter]::ToUInt32($b, $at + 4)
+    }
+    return ""
+}
+if ($clang) {
+    $tmp = Join-Path $compiler "build"
+    $count = 0
+    $bad = @()
+    $savedPref = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    foreach ($ex in (Get-ChildItem (Join-Path $examples "*.strata"))) {
+        foreach ($mode in @("", "--release")) {
+            $asmArgs = @("asm", $ex.FullName, "--target", "macos-arm64")
+            if ($mode) { $asmArgs += $mode }
+            $text = (& $strata @asmArgs 2>$null) -join "`n"
+            if ($LASTEXITCODE -ne 0) { continue }
+            $sOurs = Join-Path $tmp "a64check.s"; $sClang = Join-Path $tmp "a64check_clang.s"
+            $oOurs = Join-Path $tmp "a64check_ours.o"; $oClang = Join-Path $tmp "a64check_clang.o"
+            [IO.File]::WriteAllText($sOurs, $text + "`n")
+            [IO.File]::WriteAllText($sClang, ($text -replace '\.section \.rdata,"dr"', '.section __TEXT,__const') + "`n")
+            $null = & $strata assemble $sOurs $oOurs --target macos-arm64 2>&1
+            $null = & $clang -target arm64-apple-macos11 -c $sClang -o $oClang 2>&1
+            $count++
+            if ((Get-MachText $oOurs) -ne (Get-MachText $oClang)) { $bad += "$($ex.BaseName)$mode" }
+        }
+    }
+    $ErrorActionPreference = $savedPref
+    if ($bad.Count -eq 0 -and $count -gt 0) { Write-Host "PASS  backend/arm64-assembler ($count programs: the same code as clang's assembler)" -ForegroundColor Green; $pass++ }
+    else { Write-Host "FAIL  backend/arm64-assembler ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
+} else {
+    Write-Host "SKIP  backend/arm64-assembler (no LLVM clang)" -ForegroundColor Yellow
+}
+
 # No C compiler at all: with gcc off PATH, native programs still build and run (Strata
 # compiles, assembles and links them; the runtime is the prebuilt lib/srt.o).
 $savedPath = $env:Path
