@@ -70,9 +70,14 @@ plus releases, and approve releases when asked.
   naming): `import CrossPlatform` → `lib/CrossPlatform.strata` (the API, same on every OS)
   + `lib/CrossPlatform/windows.strata` (user32 / kernel32 / msvcrt), which the main file
   imports with `when target_os == "windows" { import CrossPlatform.windows }` (the user's
-  `when` design, DESIGN.md §8c). Window, system, files, programs; works natively and
-  through C. Imports now fall back to Strata's `lib/`.
-  Next: its linux / macos parts (macOS's window needs Cocoa through `objc_msgSend`, which
+  `when` design, DESIGN.md §8c), + `lib/CrossPlatform/linux.strata` (X11 via `link
+  "X11"`, libc: sysconf, readlink, stat, mkdir, fork + execvp with a CLOEXEC pipe so a
+  program that can't run gives -1; the runtime's `fflush` flushes srt's stdout buffer).
+  Window, system, files, programs; native on both (Linux golden: tests/run/
+  platform.expected.linux; run.sh opens/closes the window on Xvfb with xdotool). Programs
+  importing CrossPlatform on Linux need libX11.so.6 at run time (no dead-function
+  removal yet: every os_* function is compiled in). Imports fall back to Strata's `lib/`.
+  Next: its macos part (macOS's window needs Cocoa through `objc_msgSend`, which
   needs function-pointer-style casts Strata doesn't have yet), then port the compiler's
   own OS code onto it. No window drawing yet (only the window itself).
 
@@ -388,7 +393,7 @@ Natively built dlls are relocatable (base 0x180000000, `.reloc` for absolute add
 | `smath.h` / `sprelude.h` | vectors, matrices, quaternions / min, max, clamp, lerp, PI |
 | `sstate.h` | `STRATA_STATE`: runtime state is `static`, or shared across a split build's files |
 | `crossplatform.h` | single-header platform layer: Window, System (OS name, CPU arch, cores, exe / module path), Files (exists, is-dir, mkdir -p), Process (start / wait, no shell); per-section opt-outs, `STRATA_CROSSPLATFORM_STATIC`. **The compiler's only OS code** |
-| `CrossPlatform.strata` (+ `CrossPlatform/windows.strata`) | **the CrossPlatform library, in Strata**: `import CrossPlatform` — window, system, files, programs; one OS part per file (only Windows so far). The native successor of `crossplatform.h` |
+| `CrossPlatform.strata` (+ `CrossPlatform/windows.strata`) | **the CrossPlatform library, in Strata**: `import CrossPlatform` — window, system, files, programs; one OS part per file (Windows, Linux). The native successor of `crossplatform.h` |
 | `srt.strata` | the native backend's runtime, **in Strata** (`srt_print_*`, arenas, strings with remembered lengths, arrays, files, args, `srt_mat4_*` / `srt_quat_*`; exact float digits and exact float parsing with small big integers), plus the compiler's host functions (`strata_*`). Calls msvcrt / kernel32 via `foreign` blocks. `build.ps1` compiles it with `stratac object` to `srt.o` (gitignored, shipped in releases) |
 
 **Rule:** on the C path (macOS / Linux, from the seed) the compiler is compiled against

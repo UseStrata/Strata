@@ -67,8 +67,8 @@ jobs:
         with:
           name: seed
           path: compiler/seed/
-      - name: X11 headers (crossplatform.h's Window section, test projects)
+      - name: X11 (crossplatform.h's Window section, test projects; Xvfb + xdotool for CrossPlatform's window)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev xvfb xdotool
       - name: bootstrap from the seed + tests
         run: sh compiler/tests/run.sh

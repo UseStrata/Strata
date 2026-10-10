@@ -23,9 +23,12 @@ and a GitHub Release.
   `height`, `close_window`), the system (`os_name`, `cpu_arch`, `cpu_count`, `exe_path`,
   `exe_file` / `library_file`: game -> game.exe / game.dll, libgame.so, libgame.dylib),
   files (`path_exists`, `is_directory`, `make_directories`) and other programs
-  (`run_program`, `start_program` / `wait_program`). Same code on every OS; its Windows
-  part (user32 / kernel32) is all there is so far - it works natively and through C. The
+  (`run_program`, `start_program` / `wait_program`). Same code on every OS: its Windows
+  part is on user32 / kernel32, its Linux part (`lib/CrossPlatform/linux.strata`) on X11
+  and the C library, both native (CI opens and closes the Linux window on Xvfb). The
   native successor of `lib/crossplatform.h`.
+- Linux executables and shared libraries made by Strata's linker have section headers
+  (so a C linker can link against a Strata `.so`, and readelf / gdb see the sections).
 - **Strata's libraries are importable**: a module not found in the project folder is
   looked for in Strata's `lib/` (`import CrossPlatform` is `<lib>/CrossPlatform.strata`).
 - **`when`: code for one target only**, decided while compiling (the user's design):

@@ -7,7 +7,7 @@
 //     while poll_events() { ... }
 //
 // The functions below are the same on every OS. The OS calls behind them are in
-// CrossPlatform/<os>.strata (windows.strata so far), each exporting the same os_*
+// CrossPlatform/<os>.strata (windows.strata, linux.strata), each exporting the same os_*
 // functions; `when` imports just the one for the OS being built for. Adding an OS =
 // adding its file and its line here.
 //
@@ -15,7 +15,8 @@
 // (see ../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
 
 when target_os == "windows" { import CrossPlatform.windows }
-// (linux.strata, macos.strata: not written yet)
+when target_os == "linux" { import CrossPlatform.linux }
+// (macos.strata: not written yet)
 
 // ---- the window ------------------------------------------------------------------------------
 // One window per program. Sizes are of its drawing area (without the title bar / borders).

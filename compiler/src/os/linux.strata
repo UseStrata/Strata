@@ -556,6 +556,14 @@ int count_abs(ElfLinker* l) {
     return n
 }
 
+// elf_link's section headers, 10 ints each (the last unused)
+struct SecTab { int[dynamic] h }
+
+void sec_add(SecTab* t, int name, int typ, int flags, int off, int size, int lnk, int info, int align, int entsize) {
+    t.h.push(name); t.h.push(typ); t.h.push(flags); t.h.push(off); t.h.push(size)
+    t.h.push(lnk); t.h.push(info); t.h.push(align); t.h.push(entsize); t.h.push(0)
+}
+
 // An executable (static, or dynamic when it calls shared libraries) or, `shared`, a
 // shared library at base 0 that exports `exports` and is relocated by the loader.
 bool elf_link(ElfLinker* l, string path, bool shared, string[dynamic] exports) {
@@ -768,12 +776,47 @@ bool elf_link(ElfLinker* l, string path, bool shared, string[dynamic] exports) {
         entry = l.oaddr[es.out] + es.at + l.gval[g]
     }
 
+    // section headers, after everything (what tools read: a C linker finds a shared
+    // library's functions through them): name, type, flags, file offset, size, link, info,
+    // alignment, entry size
+    u8[dynamic] shb = []
+    StrTab shstr = StrTab{ shb }
+    shstr.b.push(cast<u8>(0))
+    int[dynamic] shh = []
+    SecTab sh = SecTab{ shh }
+    if dynamic {
+        int dynsym_idx = 2
+        if !shared {
+            dynsym_idx = 3
+            sec_add(&sh, strtab_add(&shstr, ".interp"), 1, 2, interp_off, interp.len + 1, 0, 0, 1, 0)
+        }
+        sec_add(&sh, strtab_add(&shstr, ".hash"), 5, 2, hash_off, 4 * (2 + nbucket + nsym), dynsym_idx, 0, 8, 4)
+        sec_add(&sh, strtab_add(&shstr, ".dynsym"), 11, 2, dynsym_off, 24 * nsym, dynsym_idx + 1, 1, 8, 24)
+        sec_add(&sh, strtab_add(&shstr, ".dynstr"), 3, 2, dynstr_off, dynstr.b.len, 0, 0, 1, 0)
+        sec_add(&sh, strtab_add(&shstr, ".rela.dyn"), 4, 2, rela_off, 24 * nrel, dynsym_idx, 0, 8, 24)
+    }
+    int text_idx = sh.h.len / 10 + 1
+    sec_add(&sh, strtab_add(&shstr, ".text"), 1, 6, text_off, l.osize[0], 0, 0, 16, 0)
+    sec_add(&sh, strtab_add(&shstr, ".rodata"), 1, 2, ro_off, l.osize[1], 0, 0, 16, 0)
+    if dynamic {
+        sec_add(&sh, strtab_add(&shstr, ".data"), 1, 3, data_off, dyn_at, 0, 0, 16, 0)
+        sec_add(&sh, strtab_add(&shstr, ".dynamic"), 6, 3, data_off + dyn_at, 16 * ndyn, text_idx - 2, 0, 8, 16)
+    } else {
+        sec_add(&sh, strtab_add(&shstr, ".data"), 1, 3, data_off, data_size, 0, 0, 16, 0)
+    }
+    sec_add(&sh, strtab_add(&shstr, ".bss"), 8, 3, data_off + bss_at, l.osize[3], 0, 0, 16, 0)
+    int shstr_idx = sh.h.len / 10 + 1
+    int shstr_off = data_off + data_size
+    sec_add(&sh, strtab_add(&shstr, ".shstrtab"), 3, 0, shstr_off, 0, 0, 0, 1, 0)
+    sh.h[sh.h.len - 6] = shstr.b.len
+    int shoff = ealign(shstr_off + shstr.b.len, 8)
+
     // the file
     u8[dynamic] fb = []
     EOut o = EOut{ fb }
     int etype = 2
     if shared { etype = 3 }
-    elf_header(&o, etype, entry, 64, nph, 0, 0, 0)
+    elf_header(&o, etype, entry, 64, nph, shoff, shstr_idx + 1, shstr_idx)
     // program headers: type, flags, offset, vaddr, paddr, filesz, memsz, align
     if dynamic && !shared {
         e32(&o, 6); e32(&o, 4); e64(&o, 64); e64(&o, base + 64); e64(&o, base + 64)                                   // PT_PHDR
@@ -821,7 +864,7 @@ bool elf_link(ElfLinker* l, string path, bool shared, string[dynamic] exports) {
         for i in 0..ne {
             int g = find_eglobal(l, exports[i])
             ESec gs = l.secs[l.gsec[g]]
-            e32(&o, name_off[ni + i]); e8(&o, 18); e8(&o, 0); e16(&o, 1)                                // GLOBAL FUNC, defined
+            e32(&o, name_off[ni + i]); e8(&o, 18); e8(&o, 0); e16(&o, text_idx)                         // GLOBAL FUNC, defined
             e64(&o, l.oaddr[gs.out] + gs.at + l.gval[g]); e64(&o, 0)
         }
         ebytes(&o, dynstr.b)
@@ -835,6 +878,16 @@ bool elf_link(ElfLinker* l, string path, bool shared, string[dynamic] exports) {
     ebytes(&o, ro)
     while o.b.len < data_off { e8(&o, 0) }
     ebytes(&o, data)
+    ebytes(&o, shstr.b)
+    while o.b.len < shoff { e8(&o, 0) }
+    ezero(&o, 64)
+    for i in 0..sh.h.len / 10 {
+        int k = 10 * i
+        int addr = 0
+        if (sh.h[k + 2] & 2) != 0 { addr = base + sh.h[k + 3] }   // (SHF_ALLOC: in memory)
+        e32(&o, sh.h[k]); e32(&o, sh.h[k + 1]); e64(&o, sh.h[k + 2]); e64(&o, addr); e64(&o, sh.h[k + 3])
+        e64(&o, sh.h[k + 4]); e32(&o, sh.h[k + 5]); e32(&o, sh.h[k + 6]); e64(&o, sh.h[k + 7]); e64(&o, sh.h[k + 8])
+    }
     if !strata_write_bytes(path, &o.b) { ek_fail(l, "cannot write " + path); return false }
     // runnable (on a Linux / macOS machine: building on Windows, it's copied there)
     if strata_host_os() != "windows" && !shared {

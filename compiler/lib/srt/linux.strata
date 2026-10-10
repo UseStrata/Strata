@@ -195,6 +195,10 @@ export i32 puts(string s) {
 
 export void srt_os_print_raw(u8* text, int n) { out_bytes(text, n) }
 
+// (stdout is buffered here, not in a FILE: fflush of anything writes it out - before a
+// program is started, say)
+export i32 fflush(u8* f) { flush_out(); return cast<i32>(0) }
+
 // ---- files: a FILE is its descriptor --------------------------------------------------------
 
 export u8* fopen(string path, string mode) {

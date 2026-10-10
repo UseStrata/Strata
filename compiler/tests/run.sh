@@ -56,7 +56,7 @@ for dir in "$here"/*/; do
         name=$(basename "$exp" .expected)
         source=$examples/$name.strata
         if [ ! -f "$source" ]; then skip "$stage/$name  (no examples/$name.strata)"; continue; fi
-        if grep -q "^import CrossPlatform" "$source"; then skip "$stage/$name  (CrossPlatform has no $(uname -s) part yet)"; continue; fi
+        if grep -q "^import CrossPlatform" "$source"; then skip "$stage/$name  (CrossPlatform: in the native pass, on Linux x86-64)"; continue; fi
         actual=$("$strata" "$stage" "$source" | norm)   # stdout only, like run.ps1
         expected=$(norm < "$exp")
         if [ "$actual" = "$expected" ]; then ok "$stage/$name"; else bad "$stage/$name"; fi
@@ -71,12 +71,41 @@ if [ -f "$compiler/lib/srt-linux-x64.o" ]; then
     for exp in "$here"/run/*.expected; do
         name=$(basename "$exp" .expected)
         source=$examples/$name.strata
-        # (C headers, CrossPlatform: not on Linux yet)
-        if grep -q '^import [<"]' "$source" || grep -q "^import CrossPlatform" "$source"; then continue; fi
+        # (C headers: not natively; what differs by OS: its .expected.linux)
+        if grep -q '^import [<"]' "$source"; then continue; fi
+        want=$exp
+        [ -f "$exp.linux" ] && want=$exp.linux
         actual=$("$strata" run "$source" --backend native --force 2>&1 | norm)
-        [ "$actual" = "$(norm < "$exp")" ] || badn="$badn $name"
+        [ "$actual" = "$(norm < "$want")" ] || badn="$badn $name"
     done
     if [ -z "$badn" ]; then ok "backend/native (every run golden, Linux x86-64)"; else bad "backend/native:$badn"; fi
+fi
+
+# --- the CrossPlatform library's window (lib/CrossPlatform/linux.strata: X11), natively ---
+# On a virtual X server: open it, close it from outside (xdotool), and the program must
+# notice and end.
+if [ -f "$compiler/lib/srt-linux-x64.o" ] && command -v Xvfb >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1; then
+    winok=0
+    winout=$(mktemp)
+    if "$strata" build "$examples/platform_window.strata" --backend native --force >/dev/null 2>&1; then
+        Xvfb :87 >/dev/null 2>&1 &
+        xvfb=$!
+        sleep 1
+        DISPLAY=:87 timeout 15 "$examples/platform_window" > "$winout" 2>&1 &
+        prog=$!
+        win=""
+        for t in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+            win=$(DISPLAY=:87 xdotool search --name "Strata" 2>/dev/null | head -1)
+            [ -n "$win" ] && break
+            sleep 0.25
+        done
+        [ -n "$win" ] && DISPLAY=:87 xdotool windowclose "$win" >/dev/null 2>&1
+        wait $prog
+        [ "$(norm < "$winout")" = "window closed" ] && winok=1
+        kill $xvfb 2>/dev/null
+        rm -f "$examples/platform_window" "$winout"
+    fi
+    if [ $winok -eq 1 ]; then ok "library/CrossPlatform-window (X11, natively: opened, closed from outside)"; else bad "library/CrossPlatform-window"; fi
 fi
 
 # --- projects (strata.toml): the build system ---------------------------------

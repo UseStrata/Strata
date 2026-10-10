@@ -1,13 +1,13 @@
 // platform.strata - the CrossPlatform library: the system, files and other programs
 // (the window: see platform_window.strata). Same code on every OS; the library loads its
-// part for the one you build for (Windows so far).
+// part for the one you build for (Windows, Linux).
 
 import CrossPlatform
 
-print(os_name())                                      // windows
+print(os_name())                                      // windows (linux, ...)
 print(cpu_arch())                                     // x86_64
 print(cpu_count() > 0)                                // 1 (true)
-print(exe_file("game") + ", " + library_file("game"))  // game.exe, game.dll
+print(exe_file("game") + ", " + library_file("game"))  // game.exe, game.dll (game, libgame.so)
 print(path_exists(exe_path()))                        // 1: this program's own file
 
 // folders: make one with its parents (next to this program), then look
@@ -20,7 +20,8 @@ print(is_directory(dir))                              // 1
 print(is_directory(substr(here, 0, cut) + "/platform-test/nope"))   // 0
 
 // other programs: run one and get its exit code
-string[dynamic] seven = ["cmd", "/c", "exit", "7"]
+string[dynamic] seven = ["sh", "-c", "exit 7"]
+when target_os == "windows" { seven = ["cmd", "/c", "exit", "7"] }
 print(run_program(seven))                             // 7
 string[dynamic] none = ["no-such-program-anywhere"]
 print(run_program(none))                              // -1: it couldn't start

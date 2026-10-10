@@ -1,0 +1,214 @@
+// Copyright © 2026 Connor Rutberg
+// lib/CrossPlatform/linux.strata - CrossPlatform's Linux part: the os_* functions
+// CrossPlatform.strata calls, on top of X11 (libX11, the window) and the C library
+// (files, other programs). CrossPlatform imports it when building for Linux
+// (`when target_os == "linux" { import CrossPlatform.linux }`).
+//
+// Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
+// (see ../../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
+
+link "X11"
+
+// (C's int is i32; long, pointers and X11's XIDs - Window, Atom - are 64 bits)
+foreign {   // libX11.so.6
+    u8* XOpenDisplay(u8* name)
+    i32 XCloseDisplay(u8* display)
+    i32 XDefaultScreen(u8* display)
+    int XRootWindow(u8* display, i32 screen)
+    int XBlackPixel(u8* display, i32 screen)
+    int XWhitePixel(u8* display, i32 screen)
+    int XCreateSimpleWindow(u8* display, int parent, i32 x, i32 y, u32 width, u32 height,
+                            u32 border_width, int border, int background)
+    i32 XStoreName(u8* display, int window, string name)
+    i32 XSelectInput(u8* display, int window, int mask)
+    int XInternAtom(u8* display, string name, i32 only_if_exists)
+    i32 XSetWMProtocols(u8* display, int window, int* protocols, i32 count)
+    i32 XMapWindow(u8* display, int window)
+    i32 XResizeWindow(u8* display, int window, u32 width, u32 height)
+    i32 XDestroyWindow(u8* display, int window)
+    i32 XPending(u8* display)
+    i32 XNextEvent(u8* display, u8* event)
+    i32 XFlush(u8* display)
+}
+
+foreign {   // libc.so.6
+    int sysconf(i32 name)
+    int readlink(string path, u8* buf, int size)
+    i32 stat(string path, u8* buf)
+    i32 mkdir(string path, u32 mode)
+    i32 fork()
+    i32 execvp(string file, string* argv)
+    void _exit(i32 code)
+    i32 pipe2(i32* fds, i32 flags)
+    int read(i32 fd, u8* buf, int n)
+    int write(i32 fd, u8* buf, int n)
+    i32 close(i32 fd)
+    i32 waitpid(i32 pid, i32* status, i32 options)
+    i32 fflush(u8* file)
+}
+
+// ---- the window ------------------------------------------------------------------------------
+
+global u8* display         // the connection to the X server (null: none)
+global int window          // the window (0: none)
+global int wm_delete       // the WM_DELETE_WINDOW atom: the close button's message
+global int width_now       // its size, as the last ConfigureNotify said
+global int height_now
+
+// an XEvent (a 192-byte union): its fields by offset
+int field32(u8[dynamic] ev, int at) {
+    i32* p = cast<i32*>(&ev[at])
+    return cast<int>(p[0])
+}
+int field64(u8[dynamic] ev, int at) {
+    int* p = cast<int*>(&ev[at])
+    return p[0]
+}
+
+export bool os_create_window(int width, int height, string title) {
+    if window != 0 { return true }
+    if display == null { display = XOpenDisplay(null) }   // ($DISPLAY)
+    if display == null { return false }
+    i32 screen = XDefaultScreen(display)
+    window = XCreateSimpleWindow(display, XRootWindow(display, screen), 0, 0, cast<u32>(width), cast<u32>(height),
+                                 cast<u32>(0), XBlackPixel(display, screen), XWhitePixel(display, screen))
+    if window == 0 { return false }
+    width_now = width
+    height_now = height
+    XStoreName(display, window, title)
+    XSelectInput(display, window, 163841)                  // KeyPress | Exposure | StructureNotify
+    wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", 0)
+    XSetWMProtocols(display, window, &wm_delete, 1)        // the close button: a message, not a kill
+    XMapWindow(display, window)
+    XFlush(display)
+    return true
+}
+
+export bool os_poll_events() {
+    if window == 0 { return false }
+    u8[dynamic] ev = []
+    for i in 0..192 { ev.push(cast<u8>(0)) }
+    while window != 0 && XPending(display) > 0 {
+        XNextEvent(display, &ev[0])
+        int kind = field32(ev, 0)
+        if kind == 22 {                                    // ConfigureNotify: the new size
+            width_now = field32(ev, 56)
+            height_now = field32(ev, 60)
+        } else if kind == 33 && field64(ev, 56) == wm_delete {   // ClientMessage: the close button
+            os_close_window()
+        } else if kind == 17 {                             // DestroyNotify
+            window = 0
+        }
+    }
+    return window != 0
+}
+
+export void os_set_window_title(string title) {
+    if window == 0 { return }
+    XStoreName(display, window, title)
+    XFlush(display)
+}
+
+export void os_set_window_size(int width, int height) {
+    if window == 0 { return }
+    XResizeWindow(display, window, cast<u32>(width), cast<u32>(height))
+    XFlush(display)
+}
+
+export int os_window_width() {
+    if window == 0 { return 0 }
+    return width_now
+}
+
+export int os_window_height() {
+    if window == 0 { return 0 }
+    return height_now
+}
+
+export void os_close_window() {
+    if window != 0 {
+        XDestroyWindow(display, window)
+        XFlush(display)
+    }
+    window = 0
+}
+
+// ---- the system ------------------------------------------------------------------------------
+
+export string os_system_name() { return "linux" }
+export string os_cpu_arch() { return "x86_64" }
+
+export int os_cpu_count() {
+    int n = sysconf(84)                                    // _SC_NPROCESSORS_ONLN
+    if n < 1 { return 1 }
+    return n
+}
+
+export string os_exe_path() {
+    u8[dynamic] buf = []
+    for i in 0..4096 { buf.push(cast<u8>(0)) }
+    int n = readlink("/proc/self/exe", &buf[0], 4095)
+    if n <= 0 { return "" }
+    return substr(cast<string>(&buf[0]), 0, n)
+}
+
+// ---- files -----------------------------------------------------------------------------------
+
+// 0: nothing there, 1: a file, 2: a folder
+int path_kind(string path) {
+    if path == "" { return 0 }
+    u8[dynamic] st = []
+    for i in 0..144 { st.push(cast<u8>(0)) }                    // a struct stat
+    if stat(path, &st[0]) != 0 { return 0 }
+    if (field32(st, 24) & 61440) == 16384 { return 2 }          // st_mode: S_IFDIR
+    return 1
+}
+
+export bool os_path_exists(string path) { return path_kind(path) != 0 }
+export bool os_is_directory(string path) { return path_kind(path) == 2 }
+export void os_make_directory(string path) { mkdir(path, cast<u32>(511)) }   // 0777 (less the umask)
+export int os_path_root_length(string path) { return 0 }       // ("/" is where folders start)
+
+// ---- other programs ---------------------------------------------------------------------------
+// fork, then execvp (which searches PATH). So a program that can't be run shows up as one
+// that didn't start, the child reports a failed execvp through a pipe that closes by
+// itself when execvp works (O_CLOEXEC).
+
+export int os_start_program(string[dynamic] argv) {
+    if argv.len == 0 { return 0 }
+    string[dynamic] args = []
+    for i in 0..argv.len { args.push(argv[i]) }
+    args.push(cast<string>(null))
+    i32[dynamic] fds = [0, 0]
+    if pipe2(&fds[0], 524288) != 0 { return 0 }               // O_CLOEXEC
+    fflush(null)
+    i32 pid = fork()
+    if pid == 0 {
+        // the child
+        close(fds[0])
+        execvp(args[0], &args[0])
+        u8 failed = cast<u8>(1)
+        write(fds[1], &failed, 1)
+        _exit(127)
+    }
+    close(fds[1])
+    if pid < 0 { close(fds[0]); return 0 }
+    u8 got = cast<u8>(0)
+    int n = read(fds[0], &got, 1)                              // 0: execvp worked (the pipe closed)
+    close(fds[0])
+    if n > 0 {
+        i32 status = 0
+        waitpid(pid, &status, 0)
+        return 0
+    }
+    return cast<int>(pid)
+}
+
+// its exit code (128 + the signal if one ended it), -1 if waiting failed
+export int os_wait_program(int handle) {
+    i32 status = 0
+    if waitpid(cast<i32>(handle), &status, 0) < 0 { return 0 - 1 }
+    int s = cast<int>(status)
+    if (s & 127) == 0 { return (s >> 8) & 255 }
+    return 128 + (s & 127)
+}
