@@ -73,7 +73,7 @@ say "stage0: $("$stage0" version)"
 # its own copy, so it never overwrites the exe that is running.)
 build_stage() {
     say "building $1 ..."
-    "$2" build "$src/stratac.strata" >/dev/null || fail "$1 build failed"
+    "$2" build "$src/stratac.strata" --backend c >/dev/null || fail "$1 build failed"   # (through C: natively only on Windows so far)
     cp "$src/stratac" "$3"
 }
 
@@ -95,12 +95,18 @@ stratac=$bin/stratac
 
 # --- console: built by the shipped compiler ------------------------------------
 say "building console ..."
-"$stratac" build "$src/console.strata" >/dev/null || fail "console build failed"
+"$stratac" build "$src/console.strata" --backend c >/dev/null || fail "console build failed"
 cp "$src/console" "$bin/console"
 
 # --- libstrata: the compiler as a library (api/strata.toml -> bin/) -------------
 say "building libstrata ..."
-"$stratac" build "$here/api" >/dev/null || fail "libstrata build failed"
+"$stratac" build "$here/api" --backend c >/dev/null || fail "libstrata build failed"
+
+# --- the native backend's runtime, where it builds programs (Linux x86-64) ------------
+if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
+    say "building lib/srt-linux-x64.o ..."
+    "$stratac" object "$lib/srt.strata" "$lib/srt-linux-x64.o" || fail "lib/srt-linux-x64.o build failed"
+fi
 
 # --- the seed: this compiler as portable C, for the next bootstrap ----------------
 version=$(sed -n 's/.*return "\([0-9][0-9.]*\).*/\1/p' "$src/version.strata")   # "1.6.0 (codename)" -> 1.6.0

@@ -31,6 +31,7 @@ compiler/examples/*
 compiler/bin/
 # the native backend's runtime object, compiled by build.ps1 from compiler/lib/srt.strata
 compiler/lib/srt.o
+compiler/lib/srt-*.o
 # bootstrap: the cached pinned release + stage1/2 compilers (see compiler/build.ps1)
 compiler/build/
 

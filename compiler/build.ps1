@@ -83,6 +83,10 @@ function Build-Runtime([string]$with, [string]$to) {
     & $with object $srtSrc $to
     if ($LASTEXITCODE -ne 0) { throw "lib\srt.o build failed ($with)" }
 }
+function Build-Runtime-For([string]$with, [string]$target, [string]$to) {
+    & $with object $srtSrc $to --target $target
+    if ($LASTEXITCODE -ne 0) { throw "the $target runtime build failed" }
+}
 
 # --- stage1: built by stage0, with stage0's own runtime ---------------------------
 # (the pinned release's lib/srt.o: it has everything the compiler's source calls, so
@@ -108,6 +112,9 @@ Write-Host "fixpoint ok: stage2 and stage3 are identical" -ForegroundColor Green
 
 Copy-Item $stage3 (Join-Path $bin "stratac.exe") -Force
 $stratac = Join-Path $bin "stratac.exe"
+
+# --- the runtime for the other native targets (cross-compiling: --target linux-x64) ---
+Build-Runtime-For $stratac "linux-x64" (Join-Path $lib "srt-linux-x64.o")
 
 # --- the seed: this compiler as portable C, for bootstrapping other platforms ----
 # The C the compiler generates for itself, written by stratac (LF, byte-exact). Kept with

@@ -63,6 +63,21 @@ for dir in "$here"/*/; do
     done
 done
 
+# --- the native backend, where it builds programs (Linux x86-64) --------------------
+# Every run golden again, forced through Strata's own backend, assembler and ELF linker
+# (no C compiler; the runtime is lib/srt-linux-x64.o).
+if [ -f "$compiler/lib/srt-linux-x64.o" ]; then
+    badn=""
+    for exp in "$here"/run/*.expected; do
+        name=$(basename "$exp" .expected)
+        source=$examples/$name.strata
+        if grep -q '^import [<"]' "$source" || grep -q "^import CrossPlatform" "$source"; then continue; fi
+        actual=$("$strata" run "$source" --backend native --force 2>&1 | norm)
+        [ "$actual" = "$(norm < "$exp")" ] || badn="$badn $name"
+    done
+    if [ -z "$badn" ]; then ok "backend/native (every run golden, Linux x86-64)"; else bad "backend/native:$badn"; fi
+fi
+
 # --- projects (strata.toml): the build system ---------------------------------
 # tests/projects/<name>/ is a project. If it has expected.txt, `stratac run <dir> --force`
 # must print exactly that (a failing project's expected.txt holds its errors); otherwise

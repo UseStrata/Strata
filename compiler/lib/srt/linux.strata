@@ -1,0 +1,411 @@
+// Copyright © 2026 Connor Rutberg
+// lib/srt/linux.strata - the native runtime's Linux layer: what lib/srt.strata needs from
+// the OS, on Linux x86-64, with system calls only (no C library).
+//
+//   * the C runtime's names srt.strata calls - malloc / realloc / free (a small size-class
+//     allocator on mmap), memcpy / memset / strlen / strcmp, puts (buffered stdout),
+//     fopen / fread / fwrite / fseek / ftell / fclose, sinf / cosf / tanf, getenv;
+//   * srt_os_*: paths, folders, programs, exit - the same as lib/srt/windows.strata's.
+//
+// System calls go through srt_syscall, a stub Strata's Linux linker adds to every program
+// (src/os/linux.strata), which also calls srt_os_init / srt_os_exit around main.
+//
+// Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
+// (see ../../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
+
+foreign { int srt_syscall(int n, int a, int b, int c, int d, int e, int f) }
+
+int sys1(int n, int a) { return srt_syscall(n, a, 0, 0, 0, 0, 0) }
+int sys2(int n, int a, int b) { return srt_syscall(n, a, b, 0, 0, 0, 0) }
+int sys3(int n, int a, int b, int c) { return srt_syscall(n, a, b, c, 0, 0, 0) }
+int ptr(u8* p) { return cast<int>(p) }
+int sptr(string s) { return cast<int>(cast<u8*>(s)) }
+
+export string srt_os_name() { return "linux" }
+export string srt_os_arch() { return "x86_64" }
+export string srt_os_default_cc() { return "cc" }
+
+// ---- start and exit ---------------------------------------------------------------------------
+
+global string* environ_v    // the environment, after argv on the stack
+
+export void srt_os_init(i32 argc, string* argv) {
+    environ_v = cast<string*>(cast<int>(cast<u8*>(argv)) + 8 * (cast<int>(argc) + 1))
+}
+
+export void srt_os_exit(int code) {
+    flush_out()
+    sys1(231, code)                       // exit_group
+}
+
+// ---- memory ------------------------------------------------------------------------------------
+// Blocks of 16 << c bytes (c = 0..16: 16 B .. 1 MiB) come from 1 MiB chunks and go back to
+// a free list per size; bigger ones are mapped on their own. A block's first 16 bytes say
+// which it is: its size class, or (1000) a mapping of the size in the next 8 bytes.
+
+global u64* free_heads      // per size class: the first free block (0: none)
+global u8* chunk            // the chunk being carved
+global int chunk_left
+
+u8* map_pages(int size) {
+    int r = srt_syscall(9, 0, size, 3, 34, 0 - 1, 0)    // mmap(0, size, READ|WRITE, PRIVATE|ANONYMOUS)
+    if r < 0 && r > 0 - 4096 { return null }
+    return cast<u8*>(r)
+}
+
+int size_class(int need) {
+    int c = 0
+    int s = 16
+    while s < need { s = s * 2; c += 1 }
+    return c
+}
+
+export u8* malloc(int size) {
+    int need = size + 16
+    if free_heads == null { free_heads = cast<u64*>(map_pages(4096)) }
+    if need > 1048576 {
+        int total = (need + 4095) / 4096 * 4096
+        u8* m = map_pages(total)
+        if m == null { return null }
+        u64* h = cast<u64*>(m)
+        h[0] = cast<u64>(1000)
+        h[1] = cast<u64>(total)
+        return cast<u8*>(ptr(m) + 16)
+    }
+    int c = size_class(need)
+    u8* b = cast<u8*>(cast<int>(free_heads[c]))
+    if b != null {
+        u64* fb = cast<u64*>(b)
+        free_heads[c] = fb[1]                  // the next free block
+    } else {
+        int bs = 16
+        for i in 0..c { bs = bs * 2 }
+        if chunk_left < bs {
+            chunk = map_pages(1048576)
+            if chunk == null { return null }
+            chunk_left = 1048576
+        }
+        b = chunk
+        chunk = cast<u8*>(ptr(chunk) + bs)
+        chunk_left = chunk_left - bs
+    }
+    u64* hb = cast<u64*>(b)
+    hb[0] = cast<u64>(c)
+    return cast<u8*>(ptr(b) + 16)
+}
+
+export void free(u8* p) {
+    if p == null { return }
+    u64* h = cast<u64*>(ptr(p) - 16)
+    int c = cast<int>(h[0])
+    if c == 1000 { sys2(11, ptr(cast<u8*>(h)), cast<int>(h[1])); return }   // munmap
+    h[1] = free_heads[c]
+    free_heads[c] = cast<u64>(ptr(cast<u8*>(h)))
+}
+
+// how many bytes p's block holds
+int capacity(u8* p) {
+    u64* h = cast<u64*>(ptr(p) - 16)
+    int c = cast<int>(h[0])
+    if c == 1000 { return cast<int>(h[1]) - 16 }
+    int bs = 16
+    for i in 0..c { bs = bs * 2 }
+    return bs - 16
+}
+
+export u8* realloc(u8* p, int size) {
+    if p == null { return malloc(size) }
+    int have = capacity(p)
+    if size <= have { return p }
+    u8* q = malloc(size)
+    if q == null { return null }
+    memcpy(q, p, have)
+    free(p)
+    return q
+}
+
+export u8* memcpy(u8* dst, u8* src, int n) {
+    int i = 0
+    while i + 8 <= n {
+        u64* d = cast<u64*>(ptr(dst) + i)
+        u64* s = cast<u64*>(ptr(src) + i)
+        d[0] = s[0]
+        i += 8
+    }
+    while i < n { dst[i] = src[i]; i += 1 }
+    return dst
+}
+
+export u8* memset(u8* dst, i32 c, int n) {
+    u8 v = cast<u8>(cast<int>(c) & 255)
+    for i in 0..n { dst[i] = v }
+    return dst
+}
+
+export int strlen(string s) {
+    u8* p = cast<u8*>(s)
+    int n = 0
+    while p[n] != cast<u8>(0) { n += 1 }
+    return n
+}
+
+export i32 strcmp(string a, string b) {
+    u8* x = cast<u8*>(a)
+    u8* y = cast<u8*>(b)
+    int i = 0
+    while x[i] != cast<u8>(0) && x[i] == y[i] { i += 1 }
+    return cast<i32>(cast<int>(x[i]) - cast<int>(y[i]))
+}
+
+// ---- output: stdout, buffered ----------------------------------------------------------------
+
+global u8* out_buf
+global int out_len
+
+void write_all(int fd, u8* p, int n) {
+    int done = 0
+    while done < n {
+        int w = sys3(1, fd, ptr(p) + done, n - done)
+        if w <= 0 { done = n } else { done += w }
+    }
+}
+
+void flush_out() {
+    if out_len > 0 { write_all(1, out_buf, out_len) }
+    out_len = 0
+}
+
+void out_bytes(u8* p, int n) {
+    if out_buf == null { out_buf = malloc(65536) }
+    if out_len + n > 65536 { flush_out() }
+    if n > 65536 { write_all(1, p, n); return }
+    memcpy(cast<u8*>(ptr(out_buf) + out_len), p, n)
+    out_len += n
+}
+
+export i32 puts(string s) {
+    out_bytes(cast<u8*>(s), strlen(s))
+    u8 nl = cast<u8>(10)
+    out_bytes(&nl, 1)
+    return cast<i32>(0)
+}
+
+export void srt_os_print_raw(u8* text, int n) { out_bytes(text, n) }
+
+// ---- files: a FILE is its descriptor --------------------------------------------------------
+
+export u8* fopen(string path, string mode) {
+    int flags = 0                                      // O_RDONLY
+    if cast<u8*>(mode)[0] == cast<u8>('w') { flags = 577 }      // O_WRONLY | O_CREAT | O_TRUNC
+    int fd = sys3(2, sptr(path), flags, 420)          // open(path, flags, 0644)
+    if fd < 0 { return null }
+    int* f = cast<int*>(malloc(8))
+    f[0] = fd
+    return cast<u8*>(f)
+}
+
+export i32 fclose(u8* f) {
+    sys1(3, cast<int*>(f)[0])
+    free(f)
+    return cast<i32>(0)
+}
+
+export i32 fseek(u8* f, i32 offset, i32 whence) {
+    if sys3(8, cast<int*>(f)[0], cast<int>(offset), cast<int>(whence)) < 0 { return cast<i32>(0 - 1) }
+    return cast<i32>(0)
+}
+
+export i32 ftell(u8* f) { return cast<i32>(sys3(8, cast<int*>(f)[0], 0, 1)) }   // lseek(fd, 0, SEEK_CUR)
+
+export int fread(u8* buf, int size, int n, u8* f) {
+    int want = size * n
+    int got = 0
+    bool more = true
+    while more && got < want {
+        int r = sys3(0, cast<int*>(f)[0], ptr(buf) + got, want - got)
+        if r <= 0 { more = false } else { got += r }
+    }
+    if size == 0 { return 0 }
+    return got / size
+}
+
+export int fwrite(u8* buf, int size, int n, u8* f) {
+    write_all(cast<int*>(f)[0], buf, size * n)
+    return n
+}
+
+// ---- sin / cos / tan ---------------------------------------------------------------------------
+// In double precision, then rounded to float: x reduced by multiples of pi/2 (in two parts,
+// so the reduction stays exact for the sizes games use), then Taylor series on |r| <= pi/4.
+
+f64 sin_poly(f64 r) {
+    f64 r2 = r * r
+    return r * (1.0 - r2 / 6.0 * (1.0 - r2 / 20.0 * (1.0 - r2 / 42.0 * (1.0 - r2 / 72.0 * (1.0 - r2 / 110.0 * (1.0 - r2 / 156.0 * (1.0 - r2 / 210.0)))))))
+}
+
+f64 cos_poly(f64 r) {
+    f64 r2 = r * r
+    return 1.0 - r2 / 2.0 * (1.0 - r2 / 12.0 * (1.0 - r2 / 30.0 * (1.0 - r2 / 56.0 * (1.0 - r2 / 90.0 * (1.0 - r2 / 132.0 * (1.0 - r2 / 182.0 * (1.0 - r2 / 240.0)))))))
+}
+
+global int quadrant
+
+// x - k * pi/2 (|result| <= pi/4); the quadrant k mod 4
+f64 reduce(f64 x) {
+    f64 t = x * 0.6366197723675814                    // 2 / pi
+    if t >= 0.0 { t = t + 0.5 } else { t = t - 0.5 }
+    int k = cast<int>(t)
+    f64 kf = cast<f64>(k)
+    quadrant = k & 3
+    return (x - kf * 1.5707963267341256) - kf * 6.077100506506192e-11
+}
+
+export float sinf(float x) {
+    f64 v = cast<f64>(x)
+    if v != v { return x }
+    f64 r = reduce(v)
+    f64 s = 0.0
+    if quadrant == 0 { s = sin_poly(r) } else if quadrant == 1 { s = cos_poly(r) }
+    else if quadrant == 2 { s = 0.0 - sin_poly(r) } else { s = 0.0 - cos_poly(r) }
+    return cast<float>(s)
+}
+
+export float cosf(float x) {
+    f64 v = cast<f64>(x)
+    if v != v { return x }
+    f64 r = reduce(v)
+    f64 c = 0.0
+    if quadrant == 0 { c = cos_poly(r) } else if quadrant == 1 { c = 0.0 - sin_poly(r) }
+    else if quadrant == 2 { c = 0.0 - cos_poly(r) } else { c = sin_poly(r) }
+    return cast<float>(c)
+}
+
+export float tanf(float x) {
+    f64 v = cast<f64>(x)
+    if v != v { return x }
+    f64 r = reduce(v)
+    f64 s = sin_poly(r)
+    f64 c = cos_poly(r)
+    if (quadrant & 1) == 1 { return cast<float>(0.0 - c / s) }
+    return cast<float>(s / c)
+}
+
+// ---- the environment -----------------------------------------------------------------------------
+
+export string getenv(string name) {
+    if environ_v == null { return cast<string>(null) }
+    u8* n = cast<u8*>(name)
+    int nl = strlen(name)
+    int i = 0
+    while cast<u8*>(environ_v[i]) != null {
+        u8* e = cast<u8*>(environ_v[i])
+        int k = 0
+        while k < nl && e[k] == n[k] { k += 1 }
+        if k == nl && e[k] == cast<u8>('=') { return cast<string>(cast<u8*>(ptr(e) + nl + 1)) }
+        i += 1
+    }
+    return cast<string>(null)
+}
+
+// ---- paths -----------------------------------------------------------------------------------
+
+export int srt_os_exe_path(u8* buf, int size) {
+    int n = sys3(89, sptr("/proc/self/exe"), ptr(buf), size - 1)   // readlink
+    if n <= 0 { return 0 }
+    buf[n] = cast<u8>(0)
+    return n
+}
+
+export int srt_os_module_path(u8* buf, int size) { return srt_os_exe_path(buf, size) }   // (one static program)
+
+export int srt_os_cpu_count() {
+    u8[dynamic] mask = []
+    for i in 0..128 { mask.push(cast<u8>(0)) }
+    int n = sys3(204, 0, 128, ptr(&mask[0]))          // sched_getaffinity(0, 128, mask)
+    int count = 0
+    for i in 0..n { for b in 0..8 { if ((cast<int>(mask[i]) >> b) & 1) == 1 { count += 1 } } }
+    if count < 1 { return 1 }
+    return count
+}
+
+// ---- files and folders --------------------------------------------------------------------------
+
+// 0: nothing there, 1: a file, 2: a folder
+export int srt_os_path_kind(string path) {
+    if strlen(path) == 0 { return 0 }
+    u8[dynamic] st = []
+    for i in 0..144 { st.push(cast<u8>(0)) }
+    if sys2(4, sptr(path), ptr(&st[0])) < 0 { return 0 }          // stat
+    int mode = cast<int>(cast<u32*>(ptr(&st[0]) + 24)[0])
+    if (mode & 61440) == 16384 { return 2 }                       // S_IFDIR
+    return 1
+}
+
+export bool srt_os_mkdir(string path) {
+    sys2(83, sptr(path), 493)                                    // mkdir(path, 0755)
+    return srt_os_path_kind(path) == 2
+}
+
+export int srt_os_path_root(string path) { return 0 }            // ("/" is where folders start)
+
+// ---- running programs -------------------------------------------------------------------------
+
+// "dir" + "/" + "name", NUL-terminated, in a malloc'd buffer
+string join_path(u8* dir, int dl, string name) {
+    int nl = strlen(name)
+    u8* r = malloc(dl + nl + 2)
+    memcpy(r, dir, dl)
+    r[dl] = cast<u8>('/')
+    memcpy(cast<u8*>(ptr(r) + dl + 1), cast<u8*>(name), nl)
+    r[dl + 1 + nl] = cast<u8>(0)
+    return cast<string>(r)
+}
+
+// start argv[0..n) without waiting: its process id, 0 if it couldn't be started
+export int srt_os_start(string* argv, int n) {
+    if n < 1 { return 0 }
+    string* args = cast<string*>(malloc(8 * (n + 1)))
+    for i in 0..n { args[i] = argv[i] }
+    args[n] = cast<string>(null)
+    flush_out()
+    int pid = srt_syscall(57, 0, 0, 0, 0, 0, 0)                 // fork
+    if pid < 0 { free(cast<u8*>(args)); return 0 }
+    if pid == 0 {
+        // the child: run it (by its path, or found on PATH); if nothing ran, exit 127
+        u8* name = cast<u8*>(argv[0])
+        bool has_slash = false
+        for i in 0..strlen(argv[0]) { if name[i] == cast<u8>('/') { has_slash = true } }
+        if has_slash { sys3(59, sptr(argv[0]), ptr(cast<u8*>(args)), ptr(cast<u8*>(environ_v))) }
+        else {
+            string path = getenv("PATH")
+            if cast<u8*>(path) == null { path = "/usr/local/bin:/usr/bin:/bin" }
+            u8* p = cast<u8*>(path)
+            int start = 0
+            int i = 0
+            int len = strlen(path)
+            while i <= len {
+                if i == len || p[i] == cast<u8>(':') {
+                    if i > start {
+                        string full = join_path(cast<u8*>(ptr(p) + start), i - start, argv[0])
+                        sys3(59, sptr(full), ptr(cast<u8*>(args)), ptr(cast<u8*>(environ_v)))   // execve: returns only if it failed
+                    }
+                    start = i + 1
+                }
+                i += 1
+            }
+        }
+        sys1(60, 127)                                           // exit: couldn't run it
+    }
+    free(cast<u8*>(args))
+    return pid
+}
+
+// wait for a started program: its exit code (128 + the signal if one ended it), -1 if that failed
+export int srt_os_wait(int pid) {
+    if pid == 0 { return 0 - 1 }
+    i32 status = 0
+    if srt_syscall(61, pid, ptr(cast<u8*>(&status)), 0, 0, 0, 0) < 0 { return 0 - 1 }   // wait4
+    int s = cast<int>(status)
+    if (s & 127) == 0 { return (s >> 8) & 255 }
+    return 128 + (s & 127)
+}

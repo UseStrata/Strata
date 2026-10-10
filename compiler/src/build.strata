@@ -209,6 +209,12 @@ export bool run_build(BuildSpec s, string libdir) {
     if s.backend != "c" {
         string why = native_target_why(target_os(), target_arch())
         if why == "" && !strata_file_exists(runtime_object(libdir)) { why = "its runtime, " + runtime_object(libdir) + ", is missing (build.ps1 makes it from lib/srt.strata)" }
+        if why == "" && target_os() != "windows" {
+            // (natively, only plain programs for now: C sources and libraries need a C toolchain there)
+            bool links = s.c_sources.len > 0 || s.libs.len > 0 || s.frameworks.len > 0
+            for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { links = true } }
+            if links { why = "it links C code or libraries (natively on " + target_os() + ": plain programs only, so far)" }
+        }
         if why == "" {
             NativeResult nr = native_compile(prog, !s.dll, s.release, view_object())   // a dll has no main
             if nr.ok { return native_build(s, libdir, prog, &nr.obj) }
@@ -394,6 +400,12 @@ bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
             strata_report(basename_of(s.entry) + ": error: can't link: " + link_error(&lk))
             return false
         }
+    }
+    if !linked && target_os() != "windows" {
+        // (a C toolchain can't finish these: they use Strata's own startup and calling convention)
+        if own { strata_report(basename_of(s.entry) + ": error: can't link: " + link_error(&lk)) }
+        else { strata_report(basename_of(s.entry) + ": error: libraries and C sources can't be linked into a native " + target_name() + " program yet") }
+        return false
     }
     if !linked && strata_run_argv(&argv) != 0 { return false }
     if s.cache_file != "" { write_file(s.cache_file, key) }

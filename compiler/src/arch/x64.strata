@@ -1177,6 +1177,7 @@ export void x64_encode(Asm* a, string mn, int n, Opnd x, Opnd y) {
     if mn == "ret" { asm_byte(a, 195); return }
     if mn == "leave" { asm_byte(a, 201); return }
     if mn == "cqto" { asm_byte(a, 72); asm_byte(a, 153); return }
+    if mn == "syscall" { asm_byte(a, 15); asm_byte(a, 5); return }   // Linux: into the kernel
 
     // jumps and calls
     if mn == "jmp" { need(a, n, 1); asm_byte(a, 233); rel32(a, x.sym); return }

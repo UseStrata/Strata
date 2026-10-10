@@ -52,6 +52,8 @@ export string srt_os_name() { return "windows" }
 export string srt_os_arch() { return "x86_64" }
 export string srt_os_default_cc() { return "gcc" }      // MinGW's
 
+export void srt_os_init(i32 argc, string* argv) {}           // (msvcrt keeps the environment)
+
 // ---- output -------------------------------------------------------------------------------
 
 // stdout: msvcrt's FILE array, entry 1 (a FILE is 48 bytes)

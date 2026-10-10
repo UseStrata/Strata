@@ -207,6 +207,17 @@ Get-ChildItem -Path $examples -Filter *.strata | ForEach-Object {
 if ($bad.Count -eq 0 -and $count -gt 0) { Write-Host "PASS  backend/direct-encoding ($count examples: the same bytes as through assembly text)" -ForegroundColor Green; $pass++ }
 else { Write-Host "FAIL  backend/direct-encoding ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
 
+# Cross-compiling: a Linux x86-64 program built here (runs on CI's Linux: tests/run.sh)
+$xOut = (& $strata build (Join-Path $examples "hello.strata") --target linux-x64 --force) -join " "
+$xExe = Join-Path $examples "hello"
+$xOk = $false
+if ($LASTEXITCODE -eq 0 -and (Test-Path $xExe)) {
+    $h = [IO.File]::ReadAllBytes($xExe)
+    $xOk = $h.Length -gt 64 -and $h[0] -eq 127 -and $h[1] -eq 69 -and $h[2] -eq 76 -and $h[3] -eq 70 -and $h[16] -eq 2 -and $h[18] -eq 62
+}
+if ($xOk) { Write-Host "PASS  backend/cross-linux (hello built for linux-x64: an x86-64 ELF executable)" -ForegroundColor Green; $pass++ }
+else { Write-Host "FAIL  backend/cross-linux: $xOut" -ForegroundColor Red; $fail++ }
+
 # No C compiler at all: with gcc off PATH, native programs still build and run (Strata
 # compiles, assembles and links them; the runtime is the prebuilt lib/srt.o).
 $savedPath = $env:Path

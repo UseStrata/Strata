@@ -36,8 +36,8 @@ export string arch_name(string host_arch) {
 
 // Can the native backend target this machine? ("" if yes, else why not)
 export string native_target_why(string os, string arch) {
-    if os == "windows" && arch == "x86_64" { return "" }
-    return "the native backend targets x86-64 Windows so far (this is " + arch + " " + os + ")"
+    if (os == "windows" || os == "linux") && arch == "x86_64" { return "" }
+    return "the native backend targets x86-64 Windows and Linux so far (this is " + arch + " " + os + ")"
 }
 
 export NativeResult native_compile(Program prog, bool with_main, bool optimize_code, int view) {

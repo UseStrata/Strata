@@ -5,46 +5,71 @@
 //
 // The one place the rest of the compiler goes to write object files and link: each call
 // hands the work to the target OS's file in os/ (os/windows.strata: COFF objects, the PE
-// linker, import libraries). A Link collects the objects and libraries of one program.
+// linker, import libraries; os/linux.strata: ELF objects, a static ELF linker). A Link
+// collects the objects and libraries of one program.
 
 import asm          // ObjFile
 import host         // strata_write_bytes
 import os.windows
+import os.linux
 
 export struct Link {
-    string  os          // "windows"
-    Linker* win
+    string      os          // "windows", "linux"
+    Linker*     win
+    ElfLinker*  lin
 }
 
-export Link new_link(string os) { return Link{ os, new_linker() } }
+export Link new_link(string os) { return Link{ os, new_linker(), new_elf_linker() } }
 
 // can we link programs for this OS? ("" if yes, else why not)
 export string link_target_why(string os) {
-    if os == "windows" { return "" }
-    return "Strata's linker makes Windows programs so far (this is " + os + ")"
+    if os == "windows" || os == "linux" { return "" }
+    return "Strata's linker makes Windows and Linux programs so far (this is " + os + ")"
 }
 
 // an assembled object, as the OS's object file
-export u8[dynamic] object_bytes(string os, ObjFile* o) { return coff_bytes(o) }
+export u8[dynamic] object_bytes(string os, ObjFile* o) {
+    if os == "linux" { return elf_bytes(o) }
+    return coff_bytes(o)
+}
 
-export bool write_object(string os, string path, ObjFile* o) { return write_coff(path, o) }
+export bool write_object(string os, string path, ObjFile* o) {
+    if os == "linux" { return write_elf(path, o) }
+    return write_coff(path, o)
+}
 
 // add an object file (its bytes) to the program
-export void link_object(Link* k, string name, u8[dynamic] bytes) { link_add(k.win, name, bytes) }
+export void link_object(Link* k, string name, u8[dynamic] bytes) {
+    if k.os == "linux" { elf_add(k.lin, name, bytes) } else { link_add(k.win, name, bytes) }
+}
 
 // the library `name` of a `link "name"` (a shared library the program will load); false
-// if the OS's linker can't use it (then a C toolchain must link)
-export bool link_lib(Link* k, string name, string[dynamic] dirs) { return link_library(k.win, name, dirs) }
+// if the OS's linker can't use it (then a C toolchain must link, on Windows)
+export bool link_lib(Link* k, string name, string[dynamic] dirs) {
+    if k.os == "linux" { return false }            // (no dynamic linking on Linux yet)
+    return link_library(k.win, name, dirs)
+}
 
 // where the libraries added so far were found
 export string[dynamic] link_lib_paths(Link* k) { return k.win.dll_path }
 
-export bool link_failed(Link* k) { return !k.win.ok }
-export string link_error(Link* k) { return k.win.err }
+export bool link_failed(Link* k) {
+    if k.os == "linux" { return !k.lin.ok }
+    return !k.win.ok
+}
+export string link_error(Link* k) {
+    if k.os == "linux" { return k.lin.err }
+    return k.win.err
+}
 
 // Link everything into `out`: an executable, or a shared library exporting `exports`
 // (then also its import libraries beside it). False (see link_error) on failure.
 export bool link_program(Link* k, string out, bool dll, string[dynamic] exports) {
+    if k.os == "linux" {
+        if !k.lin.ok { return false }
+        if dll { k.lin.ok = false; k.lin.err = "Linux shared libraries (.so) aren't made natively yet"; return false }
+        return elf_link_exe(k.lin, out)
+    }
     if !k.win.ok { return false }
     if !dll { return link_exe(k.win, out) }
     if !link_dll(k.win, out, exports) { return false }

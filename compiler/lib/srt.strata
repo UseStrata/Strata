@@ -18,6 +18,7 @@
 // (malloc, memcpy, puts, fopen, ...), and srt_os_* for paths, folders and programs - comes
 // from the OS's file in lib/srt/:
 when target_os == "windows" { import srt.windows }
+when target_os == "linux" { import srt.linux }
 
 // ---- arenas -------------------------------------------------------------------------------
 // The layout of lib/arena.h: an arena is the newest of a chain of blocks; a block is this
@@ -448,6 +449,7 @@ global string* argv_v
 export void srt_set_args(i32 argc, string* argv) {
     argc_v = argc
     argv_v = argv
+    srt_os_init(argc, argv)    // (Linux: where the environment is)
 }
 
 // ---- dynamic arrays -----------------------------------------------------------------------------
