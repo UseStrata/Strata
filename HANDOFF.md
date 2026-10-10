@@ -94,9 +94,14 @@ plus releases, and approve releases when asked.
   platform.expected.linux; run.sh opens/closes the window on Xvfb with xdotool). Programs
   importing CrossPlatform on Linux need libX11.so.6 at run time (no dead-function
   removal yet: every os_* function is compiled in). Imports fall back to Strata's `lib/`.
-  Next: its macos part (macOS's window needs Cocoa through `objc_msgSend`, which
-  needs function-pointer-style casts Strata doesn't have yet), then port the compiler's
-  own OS code onto it. No window drawing yet (only the window itself).
+  + `lib/CrossPlatform/macos.strata` (Cocoa through libobjc: `objc_getClass`,
+  `sel_registerName`, one link-named foreign function per objc_msgSend signature -
+  NSRect / NSSize are HFAs; setReleasedWhenClosed:NO + isVisible polled for the close
+  button; an autorelease pool per poll; NSDefaultRunLoopMode as the string
+  "kCFRunLoopDefaultMode"; posix_spawnp for programs). run.sh opens / runs / closes it on
+  CI's Mac (skipped where there's no window server).
+  Next: port the compiler's own OS code onto it. No window drawing yet (only the window
+  itself).
 
 **Where C is still used (what "move away from C" means concretely)**
 1. **Programs that `import <x.h>`** go through the C backend. ~~Structs / constants in
@@ -111,9 +116,10 @@ plus releases, and approve releases when asked.
    while the C backend exists, but once the compiler is native they serve only `--backend c`.
 4. **`lib/srt.strata` still calls msvcrt.dll** (memory, files, puts, sinf/cosf/tanf) — an
    OS DLL, acceptable per the user's goal; going to kernel32 directly is optional polish.
-5. **macOS** has no native backend (C only); **Linux x86-64** has one for plain programs
-   (static, syscalls; dynamic linking + System V next). ARM64 + Mach-O are
-   the future targets (the user's Mac is Apple Silicon).
+5. ~~**macOS** has no native backend~~ — done (on main): native **macOS ARM64** (Mach-O,
+   dyld, code signing) and **Linux x86-64** (ELF, static or dynamic, `.so`), every golden
+   native on both in CI. What's left there: the compiler itself still builds through C on
+   macOS / Linux (build.sh `--backend c`, from the C seed).
 6. ~~**gcc links** native programs that link C libraries~~ — done for DLLs: `pelink`
    finds `link "x"` as x.dll / libx.dll (System32, lib_dirs, PATH) and reads its exports.
    gcc still links programs with `c_sources` and static-only libraries (`libx.a`, no DLL):
@@ -125,9 +131,8 @@ plus releases, and approve releases when asked.
 sharing~~ done for vregs (2.5.0: dead vregs get no slot, spilled vregs share slots;
 frames -63%); IR slots (struct temporaries / locals) still don't share - that needs escape
 + loop-lifetime analysis, low priority now; (f) ~~native dlls~~ done (2.5.0: libstrata
-and `output = "dll"` projects build natively, with import libraries); (g) ARM64 / ELF /
-Mach-O targets (what finally retires the C seed); (h) reading C headers into foreign
-blocks. Static `.a` archives in `pelink` were looked at and skipped: MSYS2's libraylib.a
+and `output = "dll"` projects build natively, with import libraries); (g) ~~ARM64 / ELF /
+Mach-O targets~~ done (on main); (h) reading C headers into foreign blocks. Static `.a` archives in `pelink` were looked at and skipped: MSYS2's libraylib.a
 needs mingw's own static runtime (`__mingw_printf`, `__stack_chk_*`), i.e. the toolchain.
 
 **Gotchas learned this session** (also in §13): the shell mangles backslashes in heredocs

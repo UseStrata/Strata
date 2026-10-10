@@ -278,6 +278,12 @@ foreign {                            // no header: found when linking (e.g. a sy
   literal of them) that its uses are replaced by - on the C backend with a header, the
   header's struct and macro are used instead. Still to come: reading C headers
   automatically (declarations → a foreign block).
+- **Link names (2026-10-10):** `u8* send_id(u8* obj, u8* sel) = "objc_msgSend"` declares
+  a C function under another name - and so one C function under several signatures, which
+  is how Objective-C's `objc_msgSend` must be called on ARM64 (each method's own C
+  signature). The native backend calls the symbol; the C backend gives the prototype a
+  GCC / Clang asm label. (CrossPlatform's macOS window is Cocoa this way.) Function
+  pointers can come later, when callbacks need them.
 - Free targets: **any C engine** (raylib, SDL, sokol, Box2D) and **Godot via
   GDExtension** (its C API). **Unreal needs a C++ shim** — stated honestly.
 

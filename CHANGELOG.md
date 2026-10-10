@@ -20,6 +20,10 @@ and a GitHub Release.
   ARM64 macOS insists on. The runtime's macOS layer, `lib/srt/macos.strata`, is libSystem.
   Every run golden passes natively on macOS (CI), and so does a C program calling a
   Strata-built `.dylib`.
+- **Foreign functions can name their symbol**: `u8* send_id(u8* obj, u8* sel) =
+  "objc_msgSend"` - one C function declared under several Strata names and signatures
+  (how Objective-C methods are called). `link "AppKit"` / `"Foundation"` / `"objc"`
+  finds the system frameworks and the Objective-C runtime on macOS.
 - **Native Linux x86-64**: Strata builds Linux programs with its own backend, assembler
   and linker - on Linux, or cross-compiled from Windows (`--target linux-x64`). No C
   compiler and no C library: `src/os/linux.strata` writes ELF objects and links static
@@ -38,8 +42,9 @@ and a GitHub Release.
   files (`path_exists`, `is_directory`, `make_directories`) and other programs
   (`run_program`, `start_program` / `wait_program`). Same code on every OS: its Windows
   part is on user32 / kernel32, its Linux part (`lib/CrossPlatform/linux.strata`) on X11
-  and the C library, both native (CI opens and closes the Linux window on Xvfb). The
-  native successor of `lib/crossplatform.h`.
+  and the C library, its macOS part (`lib/CrossPlatform/macos.strata`) on Cocoa (through
+  the Objective-C runtime) and libSystem - all native (CI opens and closes the window on
+  Linux, under Xvfb, and on macOS). The native successor of `lib/crossplatform.h`.
 - Linux executables and shared libraries made by Strata's linker have section headers
   (so a C linker can link against a Strata `.so`, and readelf / gdb see the sections).
 - **Strata's libraries are importable**: a module not found in the project folder is
