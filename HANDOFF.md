@@ -51,8 +51,15 @@ plus releases, and approve releases when asked.
 - **2.5.0** released 2026-10-09: native dlls (libstrata too: build.ps1 needs no gcc at all),
   relocatable, with import libraries Strata writes (`.dll.a`, `.lib`); native stack frames
   63% smaller (spilled vregs share slots). 73 tests.
-- **Next (being discussed with the user):** split the assembler into an architecture-neutral
-  `asm.strata` + per-CPU encoder files, before ARM64 / ELF / Mach-O (step 4).
+- **On `main` (unreleased): the backend's two-axis layout** (the user's design): one
+  assembler (`asm.strata`) + one file per CPU (`arch/x64.strata`), one linker entry
+  (`linker.strata`) + one file per OS (`os/windows.strata`); outputs byte-identical to
+  2.5.0. Grow them only when needed (the ABI rules stay in `lower` until a second
+  convention arrives).
+- **Next (user's idea, agreed): Strata's libraries in Strata**, so programs can `import`
+  them natively: the runtime's OS layer → `lib/os/<os>.strata`; `crossplatform.h`'s
+  window / files / process → a Strata library. Open: an import search path into the
+  installed `lib/`, and naming (e.g. `import std.window`).
 
 **Where C is still used (what "move away from C" means concretely)**
 1. **Programs that `import <x.h>`** go through the C backend. ~~Structs / constants in
@@ -98,7 +105,7 @@ conversions are not correctly rounded (the runtime does its own).
 ## 1. What Strata is
 
 A statically-typed, **compiled** language **for games and real-time software**. It compiles
-to **native code itself** (x86-64 Windows: `lower → opt → x64`), or to **plain C** and then
+to **native code itself** (x86-64 Windows: `lower → opt → arch/x64`), or to **plain C** and then
 gcc/cc (every platform; C interop). Pitch: *"safer than C, simpler than
 Rust: the control C gives games, without the footguns or the borrow-checker fight."*
 
@@ -225,7 +232,7 @@ Project builds are **incremental and parallel** (§4, "Split builds").
 A strict one-way pipeline, one file per phase, phases talking only through data:
 
 ```
-file.strata → lexer → parser → (module loader) → checker ─┬→ lower → opt → x64 → x64asm → coff .o → pelink (+ srt.o) → exe   (native)
+file.strata → lexer → parser → (module loader) → checker ─┬→ lower → opt → arch/x64 → asm → .o → linker (os/windows, + srt.o) → exe / dll   (native)
                                                           └→ codegen → C → gcc/cc → exe / dll       (C)
 ```
 
@@ -241,11 +248,10 @@ file.strata → lexer → parser → (module loader) → checker ─┬→ lower
 | `ir` | the native backend's IR: vregs (scalar types, ints kept sign/zero-extended to 64 bits), stack slots, labels, calls; a printer (`stratac ir`) |
 | `lower` | typed AST → IR: C's arithmetic conversions (results match the C backend), vector math inline, `srt_*` runtime calls, regions, the Windows x64 struct-passing rules (`abi_*`); refuses C headers (→ C backend) |
 | `opt` | fold, slot forwarding + dead stores, CSE, copy propagation, DCE, flow cleanup, LICM, coalescing; `alloc_regs` (liveness + linear scan over a target `RegSet`) |
-| `x64` | IR → x86-64 GNU-as assembly, Windows x64 ABI; immediates / folded addresses ("lazy" vregs), cmp+branch fusion, stack probes |
-| `x64asm` | Strata's x86-64 assembler: GNU-as AT&T text (the subset `x64` writes) → bytes, symbols, relocations (`ObjFile`); rel32 jumps always, fixups resolved in one pass |
-| `coff` | writes an `ObjFile` as a Windows x64 COFF object (`.text`, `.rdata`, REL32 relocations) |
-| `pelink` | Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from DLLs' export tables (the system's, and `link "x"`'s found by `link_library`; no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000; dlls (`link_dll`): export table, `.reloc` base relocations, base 0x180000000 |
-| `implib` | import libraries for dlls, Microsoft format (`<name>.dll.a` for GNU ld, `<name>.lib` for MSVC): an `ar` archive of short-import members + the descriptor objects |
+| `asm` | **the** assembler (any CPU): GNU-as text → bytes, symbols, relocations (`ObjFile`); sections, directives, labels, fixups; `assemble(text, arch)` hands each instruction to `arch/<arch>` |
+| `arch/x64` | **everything x86-64** (one file per CPU): IR → GNU-as AT&T assembly, Windows x64 ABI; immediates / folded addresses ("lazy" vregs), cmp+branch fusion, stack probes; the encoder (`x64_instruction`, `x64_fixup`, rel32 jumps always) |
+| `linker` | **the** linker entry (any OS): `write_object`, `new_link` / `link_object` / `link_lib` / `link_program`, handed to `os/<os>` |
+| `os/windows` | **everything Windows** (one file per OS): COFF objects; Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from DLLs' export tables (the system's, and `link "x"`'s found by `link_library`; no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000; dlls (`link_dll`): export table, `.reloc` base relocations, base 0x180000000; import libraries, Microsoft format (`<name>.dll.a` for GNU ld, `<name>.lib` for MSVC) |
 | `native` | the native driver (`native_compile`, `native_target_why`) |
 | `core` | umbrella: `export import`s every phase = the compiler as a library (no `main`) |
 | `project`, `build` | the build system: `strata.toml`; pipeline, cache, split builds, dll + header |

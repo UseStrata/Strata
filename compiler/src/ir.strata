@@ -4,7 +4,7 @@
 // src/ir.strata - Strata's intermediate representation (IR). CORE (no main).
 //
 // The native backend's middle: lower.strata turns the checked AST into this, opt.strata
-// improves it, and a target (x64.strata) turns it into assembly. Nothing here knows about
+// improves it, and a target (arch/x64.strata) turns it into assembly. Nothing here knows about
 // a CPU or an operating system, so every architecture shares it.
 //
 // Shape: each function is a flat list of instructions over VIRTUAL REGISTERS (vregs:

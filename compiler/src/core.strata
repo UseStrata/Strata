@@ -21,9 +21,7 @@ export import codegen
 export import ir
 export import lower
 export import opt
-export import x64
+export import arch.x64
 export import native
-export import x64asm
-export import coff
-export import pelink
-export import implib
+export import asm
+export import linker

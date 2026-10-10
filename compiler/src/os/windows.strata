@@ -1,10 +1,190 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright © 2026 Connor Rutberg
 //
-// src/pelink.strata - Strata's linker: COFF object files -> a Windows x64 executable (PE).
-// CORE.
+// src/os/windows.strata - everything about making Windows programs. CORE.
 //
-// What it takes: x86-64 COFF objects (Strata's own, from coff.strata, and the runtime's
+// linker.strata calls it for the target OS "windows":
+//   1. COFF object files (.o): an assembled ObjFile (asm.strata) written the way Windows
+//      tools read it - also what the linker below takes;
+//   2. the linker: COFF objects -> a PE executable or dll, imports straight from the
+//      DLLs' export tables;
+//   3. import libraries for dlls (<name>.dll.a for GNU ld, <name>.lib for MSVC).
+
+import asm      // ObjFile, assemble (the startup stub)
+import hashidx
+import host     // strata_read_bytes, strata_write_bytes, strata_getenv
+
+// ======== COFF objects ========================================================================
+// Writes an assembled ObjFile (asm.strata) as a Windows x64 COFF
+// object file (.o / .obj), the format the linker takes.
+//
+// Layout:  file header (20 bytes) | 3 section headers (.text, .rdata, .data; 40 each) |
+//          .text bytes | .rdata bytes | .data bytes | .text and .data relocations (10 each) |
+//          symbol table (18 each) | string table (names longer than 8 bytes)
+//
+// Symbols: the two section symbols first (each with its auxiliary record), then the
+// ObjFile's symbols (functions defined here, and those defined elsewhere). A relocation
+// is IMAGE_REL_AMD64_REL32 (+ how many immediate bytes follow the field: REL32_1..5) in
+// .text, IMAGE_REL_AMD64_ADDR64 in .data.
+
+struct Out { u8[dynamic] b; u8[dynamic] strtab }
+
+void u8put(Out* o, int v) { o.b.push(cast<u8>(v & 255)) }
+void u16put(Out* o, int v) { u8put(o, v); u8put(o, v >> 8) }
+void u32put(Out* o, int v) { u8put(o, v); u8put(o, v >> 8); u8put(o, v >> 16); u8put(o, v >> 24) }
+void zeros(Out* o, int n) { for i in 0..n { u8put(o, 0) } }
+
+// An 8-byte name field: the name itself if it fits, else 0 + its string-table offset.
+void name8(Out* o, string name) {
+    if name.len <= 8 {
+        for i in 0..name.len { u8put(o, cast<int>(name[i])) }
+        zeros(o, 8 - name.len)
+    } else {
+        int off = 4 + o.strtab.len
+        for i in 0..name.len { o.strtab.push(cast<u8>(cast<int>(name[i]) & 255)) }
+        o.strtab.push(cast<u8>(0))
+        u32put(o, 0)
+        u32put(o, off)
+    }
+}
+
+void section_header(Out* o, string name, int size, int data_at, int relocs_at, int nrelocs, int flags) {
+    name8(o, name)
+    u32put(o, 0)            // virtual size
+    u32put(o, 0)            // virtual address
+    u32put(o, size)
+    if size > 0 { u32put(o, data_at) } else { u32put(o, 0) }
+    if nrelocs > 0 { u32put(o, relocs_at) } else { u32put(o, 0) }
+    u32put(o, 0)            // line numbers
+    if nrelocs > 65535 { u16put(o, 65535) } else { u16put(o, nrelocs) }
+    u16put(o, 0)
+    u32put(o, flags)
+}
+
+void symbol(Out* o, string name, int value, int section, int typ, int cls, int naux) {
+    name8(o, name)
+    u32put(o, value)
+    u16put(o, section)
+    u16put(o, typ)
+    u8put(o, cls)
+    u8put(o, naux)
+}
+
+// a section symbol's auxiliary record
+void section_aux(Out* o, int size, int nrelocs) {
+    u32put(o, size)
+    if nrelocs > 65535 { u16put(o, 65535) } else { u16put(o, nrelocs) }
+    u16put(o, 0)
+    u32put(o, 0)
+    u16put(o, 0)
+    u8put(o, 0)
+    zeros(o, 3)
+}
+
+export bool write_coff(string path, ObjFile* f) {
+    u8[dynamic] bytes = coff_bytes(f)
+    return strata_write_bytes(path, &bytes)
+}
+
+// The relocations of one section (1 .text, 3 .data), as COFF records.
+void put_relocs(Out* o, ObjFile* f, int section, int count, bool overflow) {
+    if overflow { u32put(o, count + 1); u32put(o, 0); u16put(o, 0) }
+    for i in 0..f.relocs.len {
+        ObjReloc r = f.relocs[i]
+        if r.section == section {
+            int sym = 6 + r.symbol
+            if r.symbol == 0 - 1 { sym = 0 }
+            if r.symbol == 0 - 2 { sym = 2 }
+            if r.symbol == 0 - 3 { sym = 4 }
+            u32put(o, r.offset)
+            u32put(o, sym)
+            if r.kind == 1 { u16put(o, 1) }           // IMAGE_REL_AMD64_ADDR64
+            else { u16put(o, 4 + r.after) }           // IMAGE_REL_AMD64_REL32 (+ 1..5)
+        }
+    }
+}
+
+int count_relocs(ObjFile* f, int section) {
+    int n = 0
+    for i in 0..f.relocs.len { if f.relocs[i].section == section { n += 1 } }
+    return n
+}
+
+// The object file's bytes.
+export u8[dynamic] coff_bytes(ObjFile* f) {
+    u8[dynamic] b = []
+    u8[dynamic] st = []
+    Out o = Out{ b, st }
+    int text_size = f.text.len
+    int rdata_size = f.rdata.len
+    int data_size = f.data.len
+    int text_at = 20 + 40 * 3
+    int rdata_at = text_at + text_size
+    int data_at = rdata_at + rdata_size
+    int trel_at = data_at + data_size
+    // more than 65535 relocations: the count moves into an extra first record
+    int ntrel = count_relocs(f, 1)
+    int ndrel = count_relocs(f, 3)
+    bool tover = ntrel > 65535
+    bool dover = ndrel > 65535
+    int ntrec = ntrel
+    if tover { ntrec = ntrel + 1 }
+    int ndrec = ndrel
+    if dover { ndrec = ndrel + 1 }
+    int drel_at = trel_at + 10 * ntrec
+    int symtab_at = drel_at + 10 * ndrec
+    int nsyms = 6 + f.symbols.len
+
+    // file header
+    u16put(&o, 34404)       // 0x8664: x86-64
+    u16put(&o, 3)
+    u32put(&o, 0)           // timestamp
+    u32put(&o, symtab_at)
+    u32put(&o, nsyms)
+    u16put(&o, 0)           // no optional header
+    u16put(&o, 0)
+
+    // .text: code, execute, read; .rdata: initialized data, read; .data: + write (16-aligned)
+    int text_flags = 1615855648    // 0x60500020
+    if tover { text_flags = text_flags | 16777216 }   // IMAGE_SCN_LNK_NRELOC_OVFL
+    int data_flags = 3226468416    // 0xC0500040
+    if dover { data_flags = data_flags | 16777216 }
+    section_header(&o, ".text", text_size, text_at, trel_at, ntrec, text_flags)
+    section_header(&o, ".rdata", rdata_size, rdata_at, 0, 0, 1079001152)   // 0x40500040
+    section_header(&o, ".data", data_size, data_at, drel_at, ndrec, data_flags)
+
+    for i in 0..text_size { o.b.push(f.text[i]) }
+    for i in 0..rdata_size { o.b.push(f.rdata[i]) }
+    for i in 0..data_size { o.b.push(f.data[i]) }
+    put_relocs(&o, f, 1, ntrel, tover)
+    put_relocs(&o, f, 3, ndrel, dover)
+
+    // symbols: the sections (static, with aux records), then the program's
+    symbol(&o, ".text", 0, 1, 0, 3, 1)
+    section_aux(&o, text_size, ntrel)
+    symbol(&o, ".rdata", 0, 2, 0, 3, 1)
+    section_aux(&o, rdata_size, 0)
+    symbol(&o, ".data", 0, 3, 0, 3, 1)
+    section_aux(&o, data_size, ndrel)
+    for i in 0..f.symbols.len {
+        ObjSymbol s = f.symbols[i]
+        int cls = 3
+        if s.global { cls = 2 }
+        int typ = 0
+        if s.section == 1 || s.section == 0 { typ = 32 }   // a function
+        symbol(&o, s.name, s.value, s.section, typ, cls, 0)
+    }
+
+    // the string table: its size (including these 4 bytes), then the names
+    u32put(&o, 4 + o.strtab.len)
+    for i in 0..o.strtab.len { o.b.push(o.strtab[i]) }
+    return o.b
+}
+
+// ======== the linker ==========================================================================
+// Strata's linker: COFF object files -> a Windows x64 executable or dll (PE).
+//
+// What it takes: x86-64 COFF objects (Strata's own, from the COFF writer above, and the runtime's
 // lib/srt.o compiled ahead of time). What it does:
 //   * merges their sections into .text / .rdata / .data / .bss (by name, `$` suffixes
 //     grouped; .drectve, debug info and unwind tables are dropped);
@@ -18,11 +198,6 @@
 //     the PE file with its import directory.
 // The entry point is `_strata_start` (see startup_asm): it gets argc / argv from
 // msvcrt's __getmainargs, calls main and exits through msvcrt's exit (flushing stdio).
-
-import x64asm   // ObjFile, assemble_x64 (the startup stub)
-import coff     // coff_bytes
-import hashidx
-import host   // strata_read_bytes, strata_write_bytes, strata_getenv
 
 // ---- the inputs -----------------------------------------------------------------------------
 
@@ -557,7 +732,7 @@ bool link_image(Linker* l, string path, bool dll, string[dynamic] exports) {
     l.dll = dll
     if !dll {
         // the startup code is just another object
-        ObjFile st = assemble_x64(startup_asm())
+        ObjFile st = assemble(startup_asm(), "x64")
         if !st.ok { lk_fail(l, "startup: " + st.err); return false }
         link_add(l, "startup", coff_bytes(&st))
         if !l.ok { return false }
@@ -847,4 +1022,276 @@ bool link_image(Linker* l, string path, bool dll, string[dynamic] exports) {
     }
     if !strata_write_bytes(path, &o.b) { lk_fail(l, "cannot write " + path); return false }
     return true
+}
+
+// ======== import libraries ====================================================================
+// An import library for a dll: what a C / C++ toolchain links against
+// to call the dll's functions.
+//
+// The Microsoft format, which GNU ld reads too: an `ar` archive of
+//   * an import descriptor object (the dll's entry in a program's import table),
+//   * the null import descriptor and the dll's null thunk (the tables' terminators),
+//   * one "short import" member per function (the linker makes `name` and `__imp_name`).
+// build.strata writes it as <name>.dll.a (GNU ld, `-l<name>`) and <name>.lib (MSVC).
+
+struct Bytes { u8[dynamic] b }
+
+void ib8(Bytes* o, int v) { o.b.push(cast<u8>(v & 255)) }
+void ib16(Bytes* o, int v) { ib8(o, v); ib8(o, v >> 8) }
+void ib32(Bytes* o, int v) { ib16(o, v); ib16(o, v >> 16) }
+void ib32be(Bytes* o, int v) { ib8(o, v >> 24); ib8(o, v >> 16); ib8(o, v >> 8); ib8(o, v) }
+void ibstr(Bytes* o, string s) { for i in 0..s.len { ib8(o, cast<int>(s[i])) } }
+void ibzero(Bytes* o, int n) { for i in 0..n { ib8(o, 0) } }
+void ibpad(Bytes* o, string s, int width) {       // s, then spaces to `width`
+    ibstr(o, s)
+    for i in s.len..width { ib8(o, 32) }
+}
+void ibcat(Bytes* o, u8[dynamic] more) { for i in 0..more.len { o.b.push(more[i]) } }
+
+// ---- small COFF objects ------------------------------------------------------------------
+
+struct CSym { string name; int value; int section; int cls }
+struct CSec { string name; u8[dynamic] data; int flags; int[dynamic] rel_at; int[dynamic] rel_sym }
+
+// a symbol or section name: inline (8 bytes at most) or in the string table
+void coff_name(Bytes* o, Bytes* strtab, string name) {
+    if name.len <= 8 { ibstr(o, name); ibzero(o, 8 - name.len) }
+    else {
+        ib32(o, 0)
+        ib32(o, 4 + strtab.b.len)
+        ibstr(strtab, name)
+        ib8(strtab, 0)
+    }
+}
+
+u8[dynamic] coff_object(CSec[dynamic] secs, CSym[dynamic] syms) {
+    u8[dynamic] ob = []
+    Bytes o = Bytes{ ob }
+    u8[dynamic] sb = []
+    Bytes strtab = Bytes{ sb }
+    int at = 20 + 40 * secs.len
+    int[dynamic] raw = []
+    int[dynamic] rel = []
+    for s in 0..secs.len {
+        raw.push(at)
+        at = at + secs[s].data.len
+        rel.push(at)
+        at = at + 10 * secs[s].rel_at.len
+    }
+    ib16(&o, 34404)                // x86-64
+    ib16(&o, secs.len)
+    ib32(&o, 0)
+    ib32(&o, at)                   // the symbol table
+    ib32(&o, syms.len)
+    ib16(&o, 0)
+    ib16(&o, 0)
+    for s in 0..secs.len {
+        coff_name(&o, &strtab, secs[s].name)
+        ib32(&o, 0)
+        ib32(&o, 0)
+        ib32(&o, secs[s].data.len)
+        ib32(&o, raw[s])
+        if secs[s].rel_at.len > 0 { ib32(&o, rel[s]) } else { ib32(&o, 0) }
+        ib32(&o, 0)
+        ib16(&o, secs[s].rel_at.len)
+        ib16(&o, 0)
+        ib32(&o, secs[s].flags)
+    }
+    for s in 0..secs.len {
+        ibcat(&o, secs[s].data)
+        for r in 0..secs[s].rel_at.len {
+            ib32(&o, secs[s].rel_at[r])
+            ib32(&o, secs[s].rel_sym[r])
+            ib16(&o, 3)            // IMAGE_REL_AMD64_ADDR32NB: an RVA
+        }
+    }
+    for k in 0..syms.len {
+        coff_name(&o, &strtab, syms[k].name)
+        ib32(&o, syms[k].value)
+        ib16(&o, syms[k].section)
+        ib16(&o, 0)
+        ib8(&o, syms[k].cls)
+        ib8(&o, 0)
+    }
+    ib32(&o, 4 + strtab.b.len)
+    ibcat(&o, strtab.b)
+    return o.b
+}
+
+int ext() { return 2 }             // IMAGE_SYM_CLASS_EXTERNAL
+int sect() { return 104 }          // IMAGE_SYM_CLASS_SECTION
+int idata_flags(int align_code) { return 3221225536 | (align_code << 20) }   // data, read / write
+
+CSec csec(string name, int size, int align_code) {
+    u8[dynamic] d = []
+    for i in 0..size { d.push(cast<u8>(0)) }
+    int[dynamic] ra = []
+    int[dynamic] rs = []
+    return CSec{ name, d, idata_flags(align_code), ra, rs }
+}
+
+// ---- the archive -------------------------------------------------------------------------
+
+struct Member { string name; u8[dynamic] data }
+
+void ar_header(Bytes* o, string name, int size) {
+    ibpad(o, name, 16)
+    ibpad(o, "0", 12)
+    ibpad(o, "0", 6)
+    ibpad(o, "0", 6)
+    ibpad(o, "0", 8)
+    ibpad(o, int_to_str(size), 10)
+    ib8(o, 96)                     // "`\n"
+    ib8(o, 10)
+}
+
+int even(int n) { return n + (n % 2) }
+
+// The import library for `dll` (its file name, e.g. "mathlib.dll") exporting `names`.
+export u8[dynamic] import_library(string dll, string[dynamic] names) {
+    string lib = dll
+    if lib.len > 4 && substr(lib, lib.len - 4, 4) == ".dll" { lib = substr(lib, 0, lib.len - 4) }
+    Member[dynamic] mem = []
+    string[dynamic] sym_name = []
+    int[dynamic] sym_member = []
+
+    // 1. the import descriptor: .idata$2 (filled in through relocations), .idata$6 (the name)
+    CSec[dynamic] s1 = []
+    CSec d2 = csec(".idata$2", 20, 3)
+    d2.rel_at.push(12)
+    d2.rel_sym.push(2)             // Name -> .idata$6
+    d2.rel_at.push(0)
+    d2.rel_sym.push(3)             // the lookup table -> this dll's .idata$4
+    d2.rel_at.push(16)
+    d2.rel_sym.push(4)             // the address table -> this dll's .idata$5
+    s1.push(d2)
+    CSec d6 = csec(".idata$6", 0, 2)
+    for i in 0..dll.len { d6.data.push(cast<u8>(cast<int>(dll[i]))) }
+    d6.data.push(cast<u8>(0))
+    if d6.data.len % 2 == 1 { d6.data.push(cast<u8>(0)) }
+    s1.push(d6)
+    CSym[dynamic] y1 = []
+    y1.push(CSym{ "__IMPORT_DESCRIPTOR_" + lib, 0, 1, ext() })
+    y1.push(CSym{ ".idata$2", 3221225536, 1, sect() })
+    y1.push(CSym{ ".idata$6", 0, 2, 3 })
+    y1.push(CSym{ ".idata$4", 3221225536, 0, sect() })
+    y1.push(CSym{ ".idata$5", 3221225536, 0, sect() })
+    y1.push(CSym{ "__NULL_IMPORT_DESCRIPTOR", 0, 0, ext() })
+    y1.push(CSym{ lib + "_NULL_THUNK_DATA", 0, 0, ext() })
+    mem.push(Member{ dll, coff_object(s1, y1) })
+    sym_name.push("__IMPORT_DESCRIPTOR_" + lib)
+    sym_member.push(0)
+
+    // 2. the null import descriptor (ends the import table)
+    CSec[dynamic] s2 = []
+    s2.push(csec(".idata$3", 20, 3))
+    CSym[dynamic] y2 = []
+    y2.push(CSym{ "__NULL_IMPORT_DESCRIPTOR", 0, 1, ext() })
+    mem.push(Member{ dll, coff_object(s2, y2) })
+    sym_name.push("__NULL_IMPORT_DESCRIPTOR")
+    sym_member.push(1)
+
+    // 3. the null thunk (ends this dll's lookup and address tables)
+    CSec[dynamic] s3 = []
+    s3.push(csec(".idata$5", 8, 4))
+    s3.push(csec(".idata$4", 8, 4))
+    CSym[dynamic] y3 = []
+    y3.push(CSym{ lib + "_NULL_THUNK_DATA", 0, 1, ext() })
+    mem.push(Member{ dll, coff_object(s3, y3) })
+    sym_name.push(lib + "_NULL_THUNK_DATA")
+    sym_member.push(2)
+
+    // 4. a short import per function: code, imported by name
+    for i in 0..names.len {
+        u8[dynamic] sb = []
+        Bytes s = Bytes{ sb }
+        ib16(&s, 0)
+        ib16(&s, 65535)
+        ib16(&s, 0)
+        ib16(&s, 34404)
+        ib32(&s, 0)
+        ib32(&s, names[i].len + 1 + dll.len + 1)
+        ib16(&s, i)                // hint
+        ib16(&s, 4)                // IMPORT_CODE, IMPORT_NAME
+        ibstr(&s, names[i])
+        ib8(&s, 0)
+        ibstr(&s, dll)
+        ib8(&s, 0)
+        mem.push(Member{ dll, s.b })
+        sym_name.push("__imp_" + names[i])
+        sym_member.push(3 + i)
+        sym_name.push(names[i])
+        sym_member.push(3 + i)
+    }
+
+    // member names: "<dll>/" if it fits in 16 bytes, else "/<offset>" into a longnames member
+    u8[dynamic] lb = []
+    Bytes longnames = Bytes{ lb }
+    string mname = dll + "/"
+    if mname.len > 16 {
+        ibstr(&longnames, dll + "/")
+        ib8(&longnames, 10)
+        mname = "/0"
+    }
+
+    // the two linker members (symbol -> member) come first; lay everything out to know
+    // the members' offsets
+    int nsym = sym_name.len
+    int strs = 0
+    for k in 0..nsym { strs = strs + sym_name[k].len + 1 }
+    int first_size = 4 + 4 * nsym + strs
+    int second_size = 4 + 4 * mem.len + 4 + 2 * nsym + strs
+    int at = 8 + 60 + even(first_size) + 60 + even(second_size)
+    if longnames.b.len > 0 { at = at + 60 + even(longnames.b.len) }
+    int[dynamic] off = []
+    for m in 0..mem.len {
+        off.push(at)
+        at = at + 60 + even(mem[m].data.len)
+    }
+    // the second linker member lists the symbols sorted
+    int[dynamic] order = []
+    for k in 0..nsym {
+        order.push(k)
+        int q = order.len - 1
+        while q > 0 && name_before(sym_name[order[q]], sym_name[order[q - 1]]) {
+            int t = order[q]; order[q] = order[q - 1]; order[q - 1] = t
+            q -= 1
+        }
+    }
+
+    u8[dynamic] ob = []
+    Bytes o = Bytes{ ob }
+    ibstr(&o, "!<arch>")
+    ib8(&o, 10)
+    ar_header(&o, "/", first_size)
+    ib32be(&o, nsym)
+    for k in 0..nsym { ib32be(&o, off[sym_member[k]]) }
+    for k in 0..nsym { ibstr(&o, sym_name[k]); ib8(&o, 0) }
+    if first_size % 2 == 1 { ib8(&o, 10) }
+    ar_header(&o, "/", second_size)
+    ib32(&o, mem.len)
+    for m in 0..mem.len { ib32(&o, off[m]) }
+    ib32(&o, nsym)
+    for k in 0..nsym { ib16(&o, sym_member[order[k]] + 1) }
+    for k in 0..nsym { ibstr(&o, sym_name[order[k]]); ib8(&o, 0) }
+    if second_size % 2 == 1 { ib8(&o, 10) }
+    if longnames.b.len > 0 {
+        ar_header(&o, "//", longnames.b.len)
+        ibcat(&o, longnames.b)
+        if longnames.b.len % 2 == 1 { ib8(&o, 10) }
+    }
+    for m in 0..mem.len {
+        ar_header(&o, mname, mem[m].data.len)
+        ibcat(&o, mem[m].data)
+        if mem[m].data.len % 2 == 1 { ib8(&o, 10) }
+    }
+    return o.b
+}
+
+// "a" before "b" by bytes
+bool name_before(string a, string b) {
+    int n = a.len
+    if b.len < n { n = b.len }
+    for i in 0..n { if a[i] != b[i] { return cast<int>(a[i]) < cast<int>(b[i]) } }
+    return a.len < b.len
 }

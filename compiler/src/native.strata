@@ -3,7 +3,7 @@
 //
 // src/native.strata - the native backend's driver: checked program -> assembly. CORE.
 //
-//     lower.strata (AST -> IR) -> opt.strata (optimize, allocate registers) -> x64.strata
+//     lower.strata (AST -> IR) -> opt.strata (optimize, allocate registers) -> arch/x64.strata
 //
 // Which targets exist: x86-64 Windows so far. Anything else (another OS or CPU, a
 // program the native backend can't handle yet) is the C backend's job; `why` says why.
@@ -12,13 +12,19 @@ import ast
 import ir
 import lower
 import opt
-import x64
+import arch.x64
 
 export struct NativeResult {
     bool   ok
     string why       // when not ok: why the native backend can't build this
     string asm_text  // the assembly
     string ir        // the IR as text (after optimization if `optimize`)
+}
+
+// The CPU's file in arch/ for a host CPU name ("x86_64" -> "x64")
+export string arch_name(string host_arch) {
+    if host_arch == "x86_64" { return "x64" }
+    return host_arch
 }
 
 // Can the native backend target this machine? ("" if yes, else why not)

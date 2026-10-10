@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/linker.strata - from the native backend's objects to a program, for any OS. CORE.
+//
+// The one place the rest of the compiler goes to write object files and link: each call
+// hands the work to the target OS's file in os/ (os/windows.strata: COFF objects, the PE
+// linker, import libraries). A Link collects the objects and libraries of one program.
+
+import asm          // ObjFile
+import host         // strata_write_bytes
+import os.windows
+
+export struct Link {
+    string  os          // "windows"
+    Linker* win
+}
+
+export Link new_link(string os) { return Link{ os, new_linker() } }
+
+// can we link programs for this OS? ("" if yes, else why not)
+export string link_target_why(string os) {
+    if os == "windows" { return "" }
+    return "Strata's linker makes Windows programs so far (this is " + os + ")"
+}
+
+// an assembled object, as the OS's object file
+export u8[dynamic] object_bytes(string os, ObjFile* o) { return coff_bytes(o) }
+
+export bool write_object(string os, string path, ObjFile* o) { return write_coff(path, o) }
+
+// add an object file (its bytes) to the program
+export void link_object(Link* k, string name, u8[dynamic] bytes) { link_add(k.win, name, bytes) }
+
+// the library `name` of a `link "name"` (a shared library the program will load); false
+// if the OS's linker can't use it (then a C toolchain must link)
+export bool link_lib(Link* k, string name, string[dynamic] dirs) { return link_library(k.win, name, dirs) }
+
+// where the libraries added so far were found
+export string[dynamic] link_lib_paths(Link* k) { return k.win.dll_path }
+
+export bool link_failed(Link* k) { return !k.win.ok }
+export string link_error(Link* k) { return k.win.err }
+
+// Link everything into `out`: an executable, or a shared library exporting `exports`
+// (then also its import libraries beside it). False (see link_error) on failure.
+export bool link_program(Link* k, string out, bool dll, string[dynamic] exports) {
+    if !k.win.ok { return false }
+    if !dll { return link_exe(k.win, out) }
+    if !link_dll(k.win, out, exports) { return false }
+    string stem = out
+    if stem.len > 4 && substr(stem, stem.len - 4, 4) == ".dll" { stem = substr(stem, 0, stem.len - 4) }
+    string base = out
+    for i in 0..out.len { if out[i] == '/' || out[i] == '\\' { base = substr(out, i + 1, out.len - i - 1) } }
+    u8[dynamic] implib = import_library(base, exports)
+    strata_write_bytes(stem + ".dll.a", &implib)
+    strata_write_bytes(stem + ".lib", &implib)
+    return true
+}

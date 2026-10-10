@@ -4,6 +4,17 @@ All notable changes to Strata are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/). Each version has a matching `vX.Y.Z` git tag
 and a GitHub Release.
 
+## [Unreleased]
+
+### Changed
+- **The native backend's layout** (internal; outputs byte-identical): one assembler,
+  `src/asm.strata`, hands each instruction to its CPU's file - `src/arch/x64.strata` holds
+  everything x86-64 (IR -> assembly and the encoder); one linker entry,
+  `src/linker.strata`, hands the work to its OS's file - `src/os/windows.strata` holds
+  everything Windows (COFF objects, the PE linker, import libraries). Replaces `x64`,
+  `x64asm`, `coff`, `pelink` and `implib`. Another CPU is another `arch/<cpu>.strata`,
+  another OS another `os/<os>.strata`.
+
 ## [2.5.0] - 2026-10-09
 **No C compiler anywhere on Windows**: dlls build natively too (libstrata included), with
 import libraries for GNU ld and MSVC; native stack frames are 63% smaller.

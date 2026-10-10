@@ -34,12 +34,16 @@ typed AST
    │                               │
    ▼  opt      IR → better IR,     ▼  gcc / cc / clang
    │           registers          native executable
-   ▼  x64      IR → assembly       (the native backend, the default where it can)
- foo.s  →  x64asm (assembler) → coff → foo.o  →  pelink (linker, + srt.o)  →  foo.exe
+   ▼  arch/x64 IR → assembly       (the native backend, the default where it can)
+ foo.s  →  asm (assembler, + arch/x64's encoder) → foo.o  →  linker (os/windows, + srt.o)  →  foo.exe
 ```
 
-Two backends share everything up to the typed AST. The native one is Strata's own:
-`ir.strata` is target-independent, so another CPU is another `x64.strata`-like file.
+Two backends share everything up to the typed AST. The native one is Strata's own, laid
+out on two axes: **one file per CPU** in `arch/` (everything about it: IR → assembly, the
+instruction encoder) and **one file per OS** in `os/` (object files, the linker, import
+libraries), behind one assembler (`asm.strata`) and one linker (`linker.strata`) that
+dispatch to them. `ir.strata` is target-independent, so another CPU is another
+`arch/<cpu>.strata`, another OS another `os/<os>.strata`.
 
 Data flows **down only**. A later phase reads the previous phase's output; **no phase
 ever reaches backward or sideways.**
@@ -77,13 +81,16 @@ compiler/
 │  ├─ ir.strata         the native backend's IR (target-independent)
 │  ├─ lower.strata      typed AST → IR (+ the C calling convention's struct rules)
 │  ├─ opt.strata        the optimizer + register allocator
-│  ├─ x64.strata        IR → x86-64 assembly (Windows)
-│  ├─ native.strata     the native backend's driver: lower → opt → x64
+│  ├─ native.strata     the native backend's driver: lower → opt → arch/<cpu>
+│  ├─ asm.strata        THE assembler: object model, directives, labels, fixups; each
+│  │                    instruction goes to its CPU's encoder in arch/
+│  ├─ linker.strata     THE linker entry: object files + linking, handed to the OS's file in os/
+│  ├─ arch/x64.strata   everything x86-64: IR → assembly (Windows x64 ABI) + the encoder
+│  ├─ os/windows.strata everything Windows: COFF objects, the PE linker (exes, dlls), import libraries
 │  ├─ core.strata       umbrella module (`export import`s every phase), main-free
 │  │  ── the build system (on top of the core) ──
 │  ├─ project.strata    reads strata.toml into a Project
 │  ├─ build.strata      the build pipeline (native or C -> exe/dll) + the build cache
-│  ├─ implib.strata     import libraries for dlls (Microsoft format: <name>.dll.a / <name>.lib)
 │  ├─ host.strata       what the compiler needs from its host (messages, memory, the OS), as a
 │  │                    foreign block: from strata_host.h on the C backend, from lib/srt.strata natively
 │  ├─ strata_host.h     those functions in C (the OS through lib/crossplatform.h)
@@ -139,7 +146,7 @@ compiler/
 - **Must NOT** make decisions the checker should have made. If codegen needs to "figure
   something out," that logic belongs in the checker. Codegen is a **pure translation.**
 
-### The native backend — `ir`, `lower`, `opt`, `x64`, `native` `.strata`
+### The native backend — `ir`, `lower`, `opt`, `native`, `asm`, `linker`, `arch/`, `os/`
 - **`ir.strata`**: the intermediate representation. Per function: instructions over
   unlimited *virtual registers* (vregs) of scalar types (i8..u64, f32, f64; pointers are
   u64), stack *slots* for aggregates, labels, jumps, branches, calls. Invariant: an
@@ -156,18 +163,22 @@ compiler/
   copy propagation, dead code, flow cleanup, loop-invariant motion, coalescing), then
   `alloc_regs`: liveness → live intervals → linear scan over the target's `RegSet`
   (callee-saved registers, plus scratch registers for values not live across a call).
-- **`x64.strata`**: IR → GNU-as AT&T assembly for Windows x64: frame layout, the calling
-  convention, immediates and folded addresses ("lazy" vregs never get a home),
-  compare+branch fusion, stack probes. **`native.strata`** drives lower → opt → x64.
-- **`x64asm.strata`**: Strata's assembler — the GNU-as AT&T subset `x64` writes → bytes,
-  symbols, relocations (`ObjFile`). Jumps always rel32 (sizes never depend on label
-  positions: one pass + fixups). **`coff.strata`** writes it as a Windows COFF object.
-  Test: its objects disassemble to exactly GNU as's instructions.
-- **`pelink.strata`**: Strata's linker — COFF objects (the program's, the runtime's
-  prebuilt `lib/srt.o`, a startup stub) → a PE executable. Merges sections, resolves
-  symbols, applies relocations, and resolves the rest from the **system DLLs' export
-  tables** (msvcrt.dll, kernel32.dll) — no import libraries. Fixed image base, no ASLR
-  relocations yet. Test: native builds with no gcc on PATH.
+- **`arch/x64.strata`** (one file per CPU): IR → GNU-as AT&T assembly for Windows x64:
+  frame layout, the calling convention, immediates and folded addresses ("lazy" vregs
+  never get a home), compare+branch fusion, stack probes; and the instruction encoder
+  (`x64_instruction`, `x64_fixup`) the assembler calls. **`native.strata`** drives
+  lower → opt → arch.
+- **`asm.strata`**: Strata's one assembler — GNU-as text → bytes, symbols, relocations
+  (`ObjFile`): sections, directives, labels, fixups, for any CPU; `assemble(text, arch)`
+  hands each instruction to `arch/<arch>.strata`. Jumps are always rel32 on x64 (sizes
+  never depend on label positions: one pass + fixups). Test: its objects disassemble to
+  exactly GNU as's instructions.
+- **`linker.strata`** + **`os/windows.strata`** (one file per OS): object files (COFF) and
+  Strata's linker — COFF objects (the program's, the runtime's prebuilt `lib/srt.o`, a
+  startup stub) → a PE executable or dll. Merges sections, resolves symbols, applies
+  relocations, and resolves the rest from **DLLs' export tables** (the system's, and the
+  libraries `link "x"` names) — no import libraries; writes import libraries for dlls.
+  Test: native builds with no gcc on PATH.
 - **Must NOT**: lower must not know the CPU (beyond the ABI rules); the target must not
   know the language. Test: every run golden, through each backend, must print the same.
 
@@ -343,8 +354,8 @@ A C/C++ compiler is a **driver** that runs a chain of programs — preprocessor 
 
 ```
 stratac run foo.strata                         (native backend: x86-64 Windows, no C headers)
-  → (in-process) lexer → parser → checker → lower → opt → x64 → x64asm → coff → foo.o
-  → (in-process) pelink: foo.o + <install>/lib/srt.o + msvcrt.dll imports → foo.exe
+  → (in-process) lexer → parser → checker → lower → opt → arch/x64 → asm → foo.o
+  → (in-process) linker (os/windows): foo.o + <install>/lib/srt.o + DLL imports → foo.exe
     (a program linking C libraries: gcc links it, with the same lib/srt.o)
 
 stratac run foo.strata --backend c             (C backend: any platform, C interop)

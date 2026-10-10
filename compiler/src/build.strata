@@ -207,7 +207,7 @@ export bool run_build(BuildSpec s, string libdir) {
         if why == "" {
             NativeResult nr = native_compile(prog, !s.dll, s.release)   // a dll has no main
             if nr.ok {
-                ObjFile ob = assemble_x64(nr.asm_text)   // Strata's own assembler
+                ObjFile ob = assemble(nr.asm_text, arch_name(host_arch()))   // Strata's own assembler
                 if ob.ok { return native_build(s, libdir, prog, nr.asm_text, &ob) }
                 why = "internal error in the assembler: " + ob.err
             } else {
@@ -282,10 +282,11 @@ export bool run_build(BuildSpec s, string libdir) {
 }
 
 // ---- native builds ------------------------------------------------------------------
-// The program as machine code: Strata's assembler (x64asm.strata) turns the backend's
-// assembly into an object file (<name>.o beside where the C would go, coff.strata), and
-// Strata's linker (pelink.strata) links it with the runtime (lib/srt.o, written in Strata:
-// lib/srt.strata), the system DLLs and the DLLs of the libraries it links (`link "x"`,
+// The program as machine code: Strata's assembler (asm.strata) turns the backend's
+// assembly into an object file (<name>.o beside where the C would go), and Strata's
+// linker (linker.strata, for the target OS: os/windows.strata) links it with the runtime
+// (lib/srt.o, written in Strata: lib/srt.strata), the system DLLs and the DLLs of the
+// libraries it links (`link "x"`,
 // `libs`: x.dll / libx.dll, found in System32, lib_dirs or on PATH). A program with C
 // sources, or a library that's no DLL (a static one), is linked by the C toolchain
 // instead (with the same lib/srt.o).
@@ -330,7 +331,7 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
 
     // Strata's own linker, when the program needs nothing but the runtime (lib/srt.o,
     // made by build.ps1) and DLLs; else the C toolchain links
-    Linker* lk = new_linker()
+    Link lk = new_link(host_os())
     bool own = s.c_sources.len == 0 && s.frameworks.len == 0
     string[dynamic] libs = []
     for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { libs.push(prog.decls[i].path) } }
@@ -340,10 +341,11 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
     }
     string dlls = ""
     for i in 0..libs.len {
-        if own && !link_library(lk, libs[i], s.lib_dirs) { own = false }
+        if own && !link_lib(&lk, libs[i], s.lib_dirs) { own = false }
     }
     if own {
-        for i in 0..lk.dll_path.len { dlls = dlls + " " + lk.dll_path[i] }
+        string[dynamic] found = link_lib_paths(&lk)
+        for i in 0..found.len { dlls = dlls + " " + found[i] }
         cmd = "strata-link " + libdir + "/srt.o" + dlls
     }
 
@@ -359,24 +361,15 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
         string dir = dirname_of(obj_file)
         if dir != "." { strata_make_dirs(dir) }
     }
-    if !write_coff(obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
+    if !write_object(host_os(), obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
     bool linked = false
     if own {
-        link_add(lk, obj_file, coff_bytes(ob))
-        link_add(lk, "srt.o", strata_read_bytes(libdir + "/srt.o"))
-        if s.dll {
-            linked = lk.ok && link_dll(lk, s.out_bin, exports)
-            if linked {
-                u8[dynamic] implib = import_library(basename_of(s.out_bin), exports)
-                strata_write_bytes(stem_of(s.out_bin) + ".dll.a", &implib)
-                strata_write_bytes(stem_of(s.out_bin) + ".lib", &implib)
-            }
-        } else {
-            linked = lk.ok && link_exe(lk, s.out_bin)
-        }
+        link_object(&lk, obj_file, object_bytes(host_os(), ob))
+        link_object(&lk, "srt.o", strata_read_bytes(libdir + "/srt.o"))
+        linked = link_program(&lk, s.out_bin, s.dll, exports)
         // --backend native: no C toolchain behind it (e.g. an undefined symbol is an error)
         if !linked && s.backend == "native" {
-            strata_report(basename_of(s.entry) + ": error: can't link: " + lk.err)
+            strata_report(basename_of(s.entry) + ": error: can't link: " + link_error(&lk))
             return false
         }
     }

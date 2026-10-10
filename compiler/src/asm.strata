@@ -1,0 +1,372 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/asm.strata - Strata's assembler: GNU-as text -> machine code, for any CPU. CORE.
+//
+// This file is the part every architecture shares: the object it builds (ObjFile: bytes,
+// symbols, relocations), reading the text line by line, labels, directives (.text / .data
+// / .section .rdata, .globl, .p2align, .quad / .long / .short / .byte, .zero, .asciz,
+// .float, .double) and fixups. Each instruction line goes to its CPU's file in arch/
+// (`assemble(text, "x64")` -> arch/x64.strata's x64_instruction), which encodes it with the
+// helpers here (asm_byte, asm_fix, ...). Anything unknown is an error naming the line.
+//
+// Fixups: an instruction that refers to a label records a Fix; once every label is known,
+// the CPU's file patches the ones in .text (it knows its instruction formats), and a .quad
+// of an address in .data becomes a 64-bit relocation here. What can't be resolved in this
+// object (another section, another object) stays a relocation for the linker.
+
+import hashidx
+import host       // strata_f32_bits, strata_f64_bits
+import arch.x64   // x64_instruction, x64_fixup, x64_nop
+
+// A relocation: in `section` (1 .text, 3 .data) at `offset`. kind 0: a 32-bit PC-relative
+// field (in .text; `after`: how many bytes of the instruction follow it, an immediate);
+// kind 1: a 64-bit address (in .data). `symbol`: an index into ObjFile.symbols, or -1 /
+// -2 / -3 for the .text / .rdata / .data section itself.
+export struct ObjReloc { int section; int offset; int symbol; int after; int kind }
+// section: 0 undefined (defined elsewhere), 1 .text, 2 .rdata, 3 .data
+export struct ObjSymbol { string name; int section; int value; bool global }
+
+export struct ObjFile {
+    bool              ok
+    string            err
+    u8[dynamic]       text
+    u8[dynamic]       rdata
+    u8[dynamic]       data
+    ObjReloc[dynamic] relocs
+    ObjSymbol[dynamic] symbols
+}
+
+// A reference to `label` at `pos` of `section` (1 .text, 3 .data: a .quad). `addend`: added
+// to the label's address; `after`: bytes of the instruction after the field (x64 rel32).
+export struct Fix { int pos; string label; int addend; int after; int section }
+
+export struct Asm {
+    ObjFile         o
+    string          arch       // "x64"
+    int             sec        // 1 .text, 2 .rdata, 3 .data
+    string[dynamic] lnames
+    int[dynamic]    lsec
+    int[dynamic]    loff
+    NameIdx         lidx
+    string[dynamic] globals
+    Fix[dynamic]    fixes
+    NameIdx         sidx       // over o.symbols
+    int             line
+    string          text       // the current line (for errors)
+}
+
+export void asm_fail(Asm* a, string msg) {
+    if a.o.ok { a.o.err = "line " + int_to_str(a.line) + ": " + msg + " (" + a.text + ")" }
+    a.o.ok = false
+}
+
+// ---- text ---------------------------------------------------------------------------------------
+
+bool is_space(char c) { return c == ' ' || c == '\t' || c == '\r' }
+
+string trim(string s) {
+    int i = 0
+    int j = s.len
+    while i < j && is_space(s[i]) { i += 1 }
+    while j > i && is_space(s[j - 1]) { j -= 1 }
+    return substr(s, i, j - i)
+}
+
+export bool asm_digit(char c) { return c >= '0' && c <= '9' }
+
+// "-40", "0x80000000", "4096" -> the value
+export int asm_num(Asm* a, string s) {
+    int i = 0
+    bool neg = false
+    if s.len > 0 && s[0] == '-' { neg = true; i = 1 }
+    else if s.len > 0 && s[0] == '+' { i = 1 }
+    u64 v = 0
+    if s.len > i + 2 && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X') {
+        i += 2
+        while i < s.len {
+            char c = s[i]
+            u64 d = 0
+            if c >= '0' && c <= '9' { d = cast<u64>(cast<int>(c) - cast<int>('0')) }
+            else if c >= 'a' && c <= 'f' { d = cast<u64>(cast<int>(c) - cast<int>('a') + 10) }
+            else if c >= 'A' && c <= 'F' { d = cast<u64>(cast<int>(c) - cast<int>('A') + 10) }
+            else { asm_fail(a, "bad number " + s) }
+            v = v * 16 + d
+            i += 1
+        }
+    } else {
+        if i >= s.len { asm_fail(a, "bad number " + s) }
+        while i < s.len {
+            if !asm_digit(s[i]) { asm_fail(a, "bad number " + s) }
+            v = v * 10 + cast<u64>(cast<int>(s[i]) - cast<int>('0'))
+            i += 1
+        }
+    }
+    int r = cast<int>(v)
+    if neg { return 0 - r }
+    return r
+}
+
+// "a, b" -> ["a", "b"] (commas inside parentheses, brackets or quotes don't split)
+string[dynamic] split_operands(string s) {
+    string[dynamic] r = []
+    int depth = 0
+    bool quoted = false
+    int start = 0
+    for i in 0..s.len {
+        char c = s[i]
+        if c == '"' { quoted = !quoted }
+        else if !quoted && (c == '(' || c == '[') { depth += 1 }
+        else if !quoted && (c == ')' || c == ']') { depth -= 1 }
+        else if !quoted && depth == 0 && c == ',' {
+            r.push(trim(substr(s, start, i - start)))
+            start = i + 1
+        }
+    }
+    string last = trim(substr(s, start, s.len - start))
+    if last.len > 0 { r.push(last) }
+    return r
+}
+
+// ---- emitting bytes -----------------------------------------------------------------------------
+
+// the current position in the current section
+export int asm_pos(Asm* a) {
+    if a.sec == 2 { return a.o.rdata.len }
+    if a.sec == 3 { return a.o.data.len }
+    return a.o.text.len
+}
+
+export void asm_byte(Asm* a, int v) {
+    if a.sec == 2 { a.o.rdata.push(cast<u8>(v & 255)) }
+    else if a.sec == 3 { a.o.data.push(cast<u8>(v & 255)) }
+    else { a.o.text.push(cast<u8>(v & 255)) }
+}
+
+// v, little-endian, in n bytes
+export void asm_bytes(Asm* a, int v, int n) {
+    u64 x = cast<u64>(v)
+    for i in 0..n {
+        asm_byte(a, cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+
+// a reference to `label` (+ addend) at the current .text position; the CPU's file patches
+// it later (x64_fixup). `after`: bytes of the instruction that follow the field.
+export void asm_fix(Asm* a, string label, int addend, int after) {
+    a.fixes.push(Fix{ a.o.text.len, label, addend, after, 1 })
+}
+
+// overwrite n bytes of .text at `at` with v, little-endian
+export void asm_patch(Asm* a, int at, int v, int n) {
+    u64 x = cast<u64>(v)
+    for i in 0..n {
+        a.o.text[at + i] = cast<u8>(cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+
+// ---- directives -----------------------------------------------------------------------------------
+
+void align_to(Asm* a, int n) {
+    if a.sec == 1 {
+        // .text pads with the CPU's no-op
+        if a.arch == "x64" { while asm_pos(a) % n != 0 { asm_byte(a, x64_nop()) } }
+    }
+    while asm_pos(a) % n != 0 { asm_byte(a, 0) }
+}
+
+// the bytes of an .asciz string (quoted, GNU escapes), then a NUL
+void asciz(Asm* a, string q) {
+    if q.len < 2 || q[0] != '"' || q[q.len - 1] != '"' { asm_fail(a, "expected a quoted string"); return }
+    int i = 1
+    int end = q.len - 1
+    while i < end {
+        char c = q[i]
+        if c == '\\' && i + 1 < end {
+            char e = q[i + 1]
+            i += 2
+            if e == 'n' { asm_byte(a, 10) }
+            else if e == 't' { asm_byte(a, 9) }
+            else if e == 'r' { asm_byte(a, 13) }
+            else if e == 'b' { asm_byte(a, 8) }
+            else if e == 'f' { asm_byte(a, 12) }
+            else if e >= '0' && e <= '7' {
+                int v = cast<int>(e) - cast<int>('0')
+                int k = 0
+                while k < 2 && i < end && q[i] >= '0' && q[i] <= '7' {
+                    v = v * 8 + (cast<int>(q[i]) - cast<int>('0'))
+                    i += 1
+                    k += 1
+                }
+                asm_byte(a, v)
+            } else { asm_byte(a, cast<int>(e)) }   // \\ \" \'
+        } else {
+            asm_byte(a, cast<int>(c))
+            i += 1
+        }
+    }
+    asm_byte(a, 0)
+}
+
+void directive(Asm* a, string s) {
+    int sp = 0 - 1
+    for i in 0..s.len { if sp < 0 && is_space(s[i]) { sp = i } }
+    string name = s
+    string arg = ""
+    if sp >= 0 { name = substr(s, 0, sp); arg = trim(substr(s, sp, s.len - sp)) }
+    if name == ".text" { a.sec = 1 }
+    else if name == ".data" { a.sec = 3 }
+    else if name == ".section" {
+        if arg.len >= 6 && substr(arg, 0, 6) == ".rdata" { a.sec = 2 }
+        else if arg.len >= 5 && substr(arg, 0, 5) == ".text" { a.sec = 1 }
+        else if arg.len >= 5 && substr(arg, 0, 5) == ".data" { a.sec = 3 }
+        else { asm_fail(a, "unknown section " + arg) }
+    }
+    else if name == ".quad" || name == ".long" || name == ".short" || name == ".byte" {
+        int n = 8
+        if name == ".long" { n = 4 } else if name == ".short" { n = 2 } else if name == ".byte" { n = 1 }
+        if arg.len > 0 && (asm_digit(arg[0]) || arg[0] == '-' || arg[0] == '+') { asm_bytes(a, asm_num(a, arg), n) }
+        else if n == 8 && a.sec == 3 {
+            // an address: sym or sym+off
+            string sym = arg
+            int off = 0
+            int q = 0 - 1
+            for i in 1..arg.len { if q < 0 && (arg[i] == '+' || arg[i] == '-') { q = i } }
+            if q > 0 { sym = substr(arg, 0, q); off = asm_num(a, substr(arg, q, arg.len - q)) }
+            a.fixes.push(Fix{ a.o.data.len, sym, off, 0, 3 })
+            asm_bytes(a, 0, 8)
+        }
+        else { asm_fail(a, "a symbol needs .quad in .data") }
+    }
+    else if name == ".zero" {
+        int n = asm_num(a, arg)
+        for i in 0..n { asm_byte(a, 0) }
+    }
+    else if name == ".globl" { a.globals.push(arg) }
+    else if name == ".p2align" {
+        int p = asm_num(a, arg)
+        int n = 1
+        for k in 0..p { n = n * 2 }
+        align_to(a, n)
+    }
+    else if name == ".asciz" { asciz(a, arg) }
+    else if name == ".float" { asm_bytes(a, strata_f32_bits(arg), 4) }
+    else if name == ".double" { asm_bytes(a, strata_f64_bits(arg), 8) }
+    else { asm_fail(a, "unknown directive " + name) }
+}
+
+// ---- labels and symbols ---------------------------------------------------------------------------
+
+void define_label(Asm* a, string name) {
+    idx_add(&a.lidx, name, a.lnames.len)
+    a.lnames.push(name)
+    a.lsec.push(a.sec)
+    a.loff.push(asm_pos(a))
+}
+
+// a label's index (-1: not defined in this object)
+export int asm_label(Asm* a, string name) {
+    int found = 0 - 1
+    int k = idx_first(&a.lidx, name)
+    while k >= 0 && found < 0 {
+        if a.lnames[k] == name { found = k }
+        k = idx_next(&a.lidx, k)
+    }
+    return found
+}
+
+// the index of symbol `name` in the object (made if new; section 0: defined elsewhere)
+export int asm_symbol(Asm* a, string name, int section, int value) {
+    int found = 0 - 1
+    int k = idx_first(&a.sidx, name)
+    while k >= 0 && found < 0 {
+        if a.o.symbols[k].name == name { found = k }
+        k = idx_next(&a.sidx, k)
+    }
+    if found >= 0 { return found }
+    idx_add(&a.sidx, name, a.o.symbols.len)
+    bool global = section == 0
+    for i in 0..a.globals.len { if a.globals[i] == name { global = true } }
+    a.o.symbols.push(ObjSymbol{ name, section, value, global })
+    return a.o.symbols.len - 1
+}
+
+void patch64_data(Asm* a, int at, int v) {
+    u64 x = cast<u64>(v)
+    for i in 0..8 {
+        a.o.data[at + i] = cast<u8>(cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+
+// ---- the whole text -------------------------------------------------------------------------------
+
+// Assemble `src` for the CPU `arch` ("x64").
+export ObjFile assemble(string src, string arch) {
+    int lines = 1
+    int n = src.len
+    for i in 0..n { if src[i] == '\n' { lines += 1 } }
+    u8[dynamic] t = []
+    u8[dynamic] r = []
+    u8[dynamic] dt = []
+    ObjReloc[dynamic] rl = []
+    ObjSymbol[dynamic] sy = []
+    string[dynamic] ln = []
+    int[dynamic] ls = []
+    int[dynamic] lo = []
+    string[dynamic] gl = []
+    Fix[dynamic] fx = []
+    Asm a = Asm{ ObjFile{ true, "", t, r, dt, rl, sy }, arch, 1, ln, ls, lo, new_idx(lines / 2 + 16), gl, fx, new_idx(lines / 8 + 16), 0, "" }
+    if arch != "x64" { asm_fail(&a, "no assembler for the CPU " + arch); return a.o }
+
+    int start = 0
+    int i = 0
+    while i <= n && a.o.ok {
+        if i == n || src[i] == '\n' {
+            a.line += 1
+            string s = trim(substr(src, start, i - start))
+            a.text = s
+            if s.len > 0 && s[0] != '#' {
+                if s[s.len - 1] == ':' { define_label(&a, substr(s, 0, s.len - 1)) }
+                else if s[0] == '.' { directive(&a, s) }
+                else {
+                    int sp = 0 - 1
+                    for k in 0..s.len { if sp < 0 && is_space(s[k]) { sp = k } }
+                    string mn = s
+                    string ops = ""
+                    if sp >= 0 { mn = substr(s, 0, sp); ops = substr(s, sp, s.len - sp) }
+                    if a.sec != 1 { asm_fail(&a, "instruction outside .text") }
+                    else { x64_instruction(&a, mn, split_operands(ops)) }
+                }
+            }
+            start = i + 1
+        }
+        i += 1
+    }
+    if !a.o.ok { return a.o }
+
+    // symbols for the functions and data (non-local .text / .data labels)
+    for k in 0..a.lnames.len {
+        string nm = a.lnames[k]
+        if (a.lsec[k] == 1 || a.lsec[k] == 3) && !(nm.len > 1 && nm[0] == '.' && nm[1] == 'L') { asm_symbol(&a, nm, a.lsec[k], a.loff[k]) }
+    }
+    // fixups: a .quad of an address is a 64-bit relocation; the CPU's file does the rest
+    for k in 0..a.fixes.len {
+        Fix f = a.fixes[k]
+        int li = asm_label(&a, f.label)
+        if f.section == 3 {
+            if li >= 0 {
+                patch64_data(&a, f.pos, a.loff[li] + f.addend)
+                a.o.relocs.push(ObjReloc{ 3, f.pos, 0 - a.lsec[li], 0, 1 })
+            } else {
+                patch64_data(&a, f.pos, f.addend)
+                a.o.relocs.push(ObjReloc{ 3, f.pos, asm_symbol(&a, f.label, 0, 0), 0, 1 })
+            }
+        } else {
+            x64_fixup(&a, f, li)
+        }
+    }
+    return a.o
+}
