@@ -1,0 +1,1004 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/os/macos.strata - everything about making macOS programs (ARM64). CORE.
+//
+// linker.strata calls it for the target OS "macos":
+//   1. Mach-O object files (.o): an assembled ObjFile (asm.strata) as an ARM64 MH_OBJECT -
+//      also what the linker below takes;
+//   2. the linker: Mach-O objects -> an ARM64 executable (MH_EXECUTE, position-independent)
+//      or dynamic library (MH_DYLIB), loaded by dyld: libSystem (the C library, the system
+//      calls) and any other dylibs it calls are bound through a table of pointers (__got,
+//      filled by dyld from bind opcodes; the code calls them through 12-byte stubs), and
+//      the absolute addresses in its data are slid by dyld (rebase opcodes);
+//   3. its code signature: an ad-hoc one (SHA-256 of every 4 KB page) - ARM64 macOS runs
+//      nothing unsigned.
+//
+// C names on macOS start with an underscore (main is _main): objects written here add it
+// to every symbol, and the linker takes it off again.
+
+import asm      // ObjFile, assemble (the start stub)
+import hashidx
+import host     // strata_read_bytes, strata_write_bytes, strata_host_os, strata_run_argv
+
+// ======== bytes ===============================================================================
+
+struct MOut { u8[dynamic] b }
+
+void m8(MOut* o, int v) { o.b.push(cast<u8>(v & 255)) }
+void m16(MOut* o, int v) { m8(o, v); m8(o, v >> 8) }
+void m32(MOut* o, int v) { m16(o, v); m16(o, v >> 16) }
+void m64(MOut* o, int v) { m32(o, v); m32(o, v >> 32) }
+void mzero(MOut* o, int n) { for i in 0..n { m8(o, 0) } }
+void mbytes(MOut* o, u8[dynamic] b) { for i in 0..b.len { o.b.push(b[i]) } }
+void mpad(MOut* o, int align) { while o.b.len % align != 0 { m8(o, 0) } }
+void mbe32(MOut* o, int v) { m8(o, v >> 24); m8(o, v >> 16); m8(o, v >> 8); m8(o, v) }
+void mbe64(MOut* o, int v) { mbe32(o, v >> 32); mbe32(o, v) }
+// a name in a fixed 16-byte field (segment / section names)
+void mname16(MOut* o, string s) {
+    for i in 0..16 { if i < s.len { m8(o, cast<int>(s[i])) } else { m8(o, 0) } }
+}
+// an unsigned LEB128 number
+void uleb(MOut* o, int v) {
+    u64 x = cast<u64>(v)
+    bool more = true
+    while more {
+        int b = cast<int>(x & cast<u64>(127))
+        x = x >> cast<u64>(7)
+        if x != cast<u64>(0) { m8(o, b | 128) } else { m8(o, b); more = false }
+    }
+}
+
+int md8(u8[dynamic] b, int at) { return cast<int>(b[at]) }
+int md16(u8[dynamic] b, int at) { return md8(b, at) | (md8(b, at + 1) << 8) }
+int md32(u8[dynamic] b, int at) { return md16(b, at) | (md16(b, at + 2) << 16) }
+int md64(u8[dynamic] b, int at) {
+    u64 lo = cast<u64>(md32(b, at)) & cast<u64>(4294967295)
+    u64 hi = cast<u64>(md32(b, at + 4)) & cast<u64>(4294967295)
+    return cast<int>(lo | (hi << cast<u64>(32)))
+}
+void mput32(u8[dynamic]* b, int at, int v) { for i in 0..4 { b[0][at + i] = cast<u8>((v >> (8 * i)) & 255) } }
+void mput64(u8[dynamic]* b, int at, int v) {
+    u64 x = cast<u64>(v)
+    for i in 0..8 {
+        b[0][at + i] = cast<u8>(cast<int>(x & cast<u64>(255)))
+        x = x >> cast<u64>(8)
+    }
+}
+
+int malign(int n, int a) { return (n + a - 1) / a * a }
+
+struct MStr { u8[dynamic] b }
+int mstr_add(MStr* t, string s) {
+    int at = t.b.len
+    for i in 0..s.len { t.b.push(cast<u8>(cast<int>(s[i]))) }
+    t.b.push(cast<u8>(0))
+    return at
+}
+
+// the Mach-O name of a symbol: _name (an assembler-local .Lname: lname, kept private)
+string macho_name(string s) {
+    if s.len > 1 && s[0] == '.' && s[1] == 'L' { return "l" + s }
+    return "_" + s
+}
+// and back
+string strata_name(string s) {
+    if s.len > 0 && s[0] == '_' { return substr(s, 1, s.len - 1) }
+    return s
+}
+
+int cpu_arm64() { return 16777228 }      // CPU_TYPE_ARM64 (0x0100000C)
+
+// ======== objects ==============================================================================
+// Layout: header | LC_SEGMENT_64 (__text, __const, __data) | LC_BUILD_VERSION | LC_SYMTAB |
+//         LC_DYSYMTAB | the sections' bytes | their relocations | symbols | strings
+// In the object's own addresses: __text at 0, __const after it, __data after that.
+// Symbols: the local ones, then the defined globals, then the undefined (dysymtab's order).
+
+int sec_align_text() { return 4 }
+int sec_align_const() { return 16 }
+int sec_align_data() { return 16 }
+
+export u8[dynamic] macho_bytes(ObjFile* f) {
+    int ntext = f.text.len
+    int a_const = malign(ntext, sec_align_const())
+    int a_data = malign(a_const + f.rdata.len, sec_align_data())
+    int vmsize = a_data + f.data.len
+    // the symbols in dysymtab order
+    int[dynamic] order = []
+    int[dynamic] newidx = []
+    for i in 0..f.symbols.len { newidx.push(0) }
+    for pass in 0..3 {
+        for i in 0..f.symbols.len {
+            ObjSymbol s = f.symbols[i]
+            int kind = 2
+            if s.section != 0 { if s.global { kind = 1 } else { kind = 0 } }
+            if kind == pass { newidx[i] = order.len; order.push(i) }
+        }
+    }
+    int nlocal = 0
+    int nextdef = 0
+    for i in 0..f.symbols.len {
+        if f.symbols[i].section != 0 { if f.symbols[i].global { nextdef += 1 } else { nlocal += 1 } }
+    }
+    int nundef = f.symbols.len - nlocal - nextdef
+    // relocations per section
+    u8[dynamic] rt_b = []
+    MOut rt = MOut{ rt_b }
+    u8[dynamic] rd_b = []
+    MOut rd = MOut{ rd_b }
+    int nrt = 0
+    int nrd = 0
+    u8[dynamic] data = []
+    for i in 0..f.data.len { data.push(f.data[i]) }
+    for k in 0..f.relocs.len {
+        ObjReloc r = f.relocs[k]
+        int symnum = 0
+        int ext = 0
+        if r.symbol >= 0 { symnum = newidx[r.symbol]; ext = 1 }
+        else {
+            symnum = 0 - r.symbol                                // the section's ordinal
+            int base = 0
+            if r.symbol == 0 - 2 { base = a_const } else if r.symbol == 0 - 3 { base = a_data }
+            if r.section == 3 { mput64(&data, r.offset, md64(data, r.offset) + base) }
+        }
+        int typ = 0
+        int pcrel = 0
+        int len = 2
+        if r.kind == 1 { typ = 0; len = 3 }                       // ARM64_RELOC_UNSIGNED
+        else if r.kind == 2 { typ = 2; pcrel = 1 }                // ARM64_RELOC_BRANCH26
+        else if r.kind == 3 { typ = 3; pcrel = 1 }                // ARM64_RELOC_PAGE21
+        else if r.kind == 4 { typ = 4 }                           // ARM64_RELOC_PAGEOFF12
+        int info = symnum | (pcrel << 24) | (len << 25) | (ext << 27) | (typ << 28)
+        if r.section == 3 { m32(&rd, r.offset); m32(&rd, info); nrd += 1 }
+        else { m32(&rt, r.offset); m32(&rt, info); nrt += 1 }
+    }
+    // symbols and their names
+    u8[dynamic] strs_b = []
+    MStr strs = MStr{ strs_b }
+    strs.b.push(cast<u8>(32))                                     // (index 0: " ", as ld does)
+    strs.b.push(cast<u8>(0))
+    u8[dynamic] syms_b = []
+    MOut syms = MOut{ syms_b }
+    for j in 0..order.len {
+        ObjSymbol s = f.symbols[order[j]]
+        m32(&syms, mstr_add(&strs, macho_name(s.name)))
+        int typ = 1                                               // N_UNDF | N_EXT
+        int sect = 0
+        int value = 0
+        if s.section != 0 {
+            typ = 14                                              // N_SECT
+            if s.global { typ = 15 }                              // | N_EXT
+            sect = s.section                                      // 1 __text, 2 __const, 3 __data
+            value = s.value
+            if s.section == 2 { value += a_const } else if s.section == 3 { value += a_data }
+        }
+        m8(&syms, typ); m8(&syms, sect); m16(&syms, 0); m64(&syms, value)
+    }
+    while strs.b.len % 8 != 0 { strs.b.push(cast<u8>(0)) }
+
+    int ncmds = 4
+    int seg_size = 72 + 80 * 3
+    int sizeofcmds = seg_size + 24 + 24 + 80
+    int off_text = 32 + sizeofcmds
+    int off_const = off_text + a_const
+    int off_data = off_text + a_data
+    int off_rt = malign(off_text + vmsize, 8)
+    int off_rd = off_rt + 8 * nrt
+    int off_sym = off_rd + 8 * nrd
+    int off_str = off_sym + 16 * order.len
+
+    u8[dynamic] o_b = []
+    MOut o = MOut{ o_b }
+    m32(&o, 4277009103)                                           // MH_MAGIC_64 0xFEEDFACF
+    m32(&o, cpu_arm64()); m32(&o, 0)
+    m32(&o, 1)                                                    // MH_OBJECT
+    m32(&o, ncmds); m32(&o, sizeofcmds)
+    m32(&o, 0); m32(&o, 0)
+    // LC_SEGMENT_64, its sections
+    m32(&o, 25); m32(&o, seg_size)
+    mname16(&o, "")
+    m64(&o, 0); m64(&o, vmsize); m64(&o, off_text); m64(&o, vmsize)
+    m32(&o, 7); m32(&o, 7); m32(&o, 3); m32(&o, 0)
+    mname16(&o, "__text"); mname16(&o, "__TEXT")
+    m64(&o, 0); m64(&o, ntext); m32(&o, off_text); m32(&o, 2)
+    m32(&o, off_rt); m32(&o, nrt); m32(&o, 0 - 2147482624); m32(&o, 0); m32(&o, 0); m32(&o, 0)   // pure + some instructions
+    mname16(&o, "__const"); mname16(&o, "__TEXT")
+    m64(&o, a_const); m64(&o, f.rdata.len); m32(&o, off_const); m32(&o, 4)
+    m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    mname16(&o, "__data"); mname16(&o, "__DATA")
+    m64(&o, a_data); m64(&o, f.data.len); m32(&o, off_data); m32(&o, 4)
+    m32(&o, off_rd); m32(&o, nrd); m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    // LC_BUILD_VERSION: macOS 11.0
+    m32(&o, 50); m32(&o, 24); m32(&o, 1); m32(&o, 720896); m32(&o, 0); m32(&o, 0)
+    // LC_SYMTAB, LC_DYSYMTAB
+    m32(&o, 2); m32(&o, 24); m32(&o, off_sym); m32(&o, order.len); m32(&o, off_str); m32(&o, strs.b.len)
+    m32(&o, 11); m32(&o, 80)
+    m32(&o, 0); m32(&o, nlocal); m32(&o, nlocal); m32(&o, nextdef); m32(&o, nlocal + nextdef); m32(&o, nundef)
+    mzero(&o, 48)
+    // the sections
+    mbytes(&o, f.text)
+    while o.b.len < off_const { m8(&o, 0) }
+    mbytes(&o, f.rdata)
+    while o.b.len < off_data { m8(&o, 0) }
+    mbytes(&o, data)
+    while o.b.len < off_rt { m8(&o, 0) }
+    mbytes(&o, rt.b)
+    mbytes(&o, rd.b)
+    mbytes(&o, syms.b)
+    mbytes(&o, strs.b)
+    return o.b
+}
+
+export bool write_macho(string path, ObjFile* f) {
+    u8[dynamic] b = macho_bytes(f)
+    return strata_write_bytes(path, &b)
+}
+
+// ======== SHA-256 (the code signature) ==========================================================
+
+int rotr(int x, int n) { return ((x >> n) | (x << (32 - n))) & 4294967295 }
+
+// the SHA-256 of b[from .. from + n), appended to out (32 bytes)
+void sha256(u8[dynamic] b, int from, int n, MOut* out) {
+    int[dynamic] k = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221,
+                      3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580,
+                      3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986,
+                      2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895,
+                      666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037,
+                      2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344,
+                      430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779,
+                      1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298]
+    int[dynamic] h = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]
+    // the message's last block(s): its tail, 0x80, zeros, its length in bits (big-endian)
+    int full = n / 64
+    u8[dynamic] tail = []
+    for i in (full * 64)..n { tail.push(b[from + i]) }
+    tail.push(cast<u8>(128))
+    while tail.len % 64 != 56 { tail.push(cast<u8>(0)) }
+    int bits = n * 8
+    for i in 0..8 { tail.push(cast<u8>((bits >> (56 - 8 * i)) & 255)) }
+    int[dynamic] w = []
+    for i in 0..64 { w.push(0) }
+    int blocks = full + tail.len / 64
+    for blk in 0..blocks {
+        for i in 0..16 {
+            int v = 0
+            for j in 0..4 {
+                int at = blk * 64 + 4 * i + j
+                int c = 0
+                if blk < full { c = cast<int>(b[from + at]) } else { c = cast<int>(tail[at - full * 64]) }
+                v = (v << 8) | c
+            }
+            w[i] = v
+        }
+        for i in 16..64 {
+            int s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3)
+            int s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10)
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) & 4294967295
+        }
+        int a = h[0]
+        int bb = h[1]
+        int c = h[2]
+        int d = h[3]
+        int e = h[4]
+        int f = h[5]
+        int g = h[6]
+        int hh = h[7]
+        for i in 0..64 {
+            int t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ ((e ^ 4294967295) & g)) + k[i] + w[i]) & 4294967295
+            int t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & bb) ^ (a & c) ^ (bb & c))) & 4294967295
+            hh = g
+            g = f
+            f = e
+            e = (d + t1) & 4294967295
+            d = c
+            c = bb
+            bb = a
+            a = (t1 + t2) & 4294967295
+        }
+        h[0] = (h[0] + a) & 4294967295
+        h[1] = (h[1] + bb) & 4294967295
+        h[2] = (h[2] + c) & 4294967295
+        h[3] = (h[3] + d) & 4294967295
+        h[4] = (h[4] + e) & 4294967295
+        h[5] = (h[5] + f) & 4294967295
+        h[6] = (h[6] + g) & 4294967295
+        h[7] = (h[7] + hh) & 4294967295
+    }
+    for i in 0..8 { for j in 0..4 { m8(out, (h[i] >> (24 - 8 * j)) & 255) } }
+}
+
+// ======== the linker ============================================================================
+// Executables: __PAGEZERO (the first 4 GB, unmapped) | __TEXT (header, load commands,
+// __text, __stubs, __const) | __DATA (__got, __data, __bss) | __LINKEDIT (rebase / bind
+// opcodes, exports, symbols, the code signature). Dylibs: the same without __PAGEZERO, at 0.
+// Segments start on 16 KB pages. Every import gets a __got slot (bound by dyld, at load)
+// and a stub (adrp x16, slot; ldr x16, [x16]; br x16) that calls go to.
+
+struct MSec { int obj; string seg; string name; int addr; int size; int raw; int align; int reloff; int nreloc; int flags; int out; int at }
+struct MSym { string name; int typ; int sect; int value }
+struct MObj { string name; u8[dynamic] b; int first; int nsec; MSym[dynamic] syms }
+
+export struct MachLinker {
+    bool            ok
+    string          err
+    MObj[dynamic]   objs
+    MSec[dynamic]   secs
+    string[dynamic] gname       // the global symbols (Mach-O names: _main)
+    int[dynamic]    gobj
+    int[dynamic]    gsym        // per global: its symbol in its object (-1: an import)
+    int[dynamic]    gaddr       // per import: its stub
+    NameIdx         gidx
+    string[dynamic] dylibs      // install names, in LC_LOAD_DYLIB order
+    string[dynamic] imports     // Mach-O names
+    int[dynamic]    osize       // per output section: 0 __text, 1 __const, 2 __data, 3 __bss
+    int[dynamic]    oaddr
+}
+
+export MachLinker* new_mach_linker() {
+    MObj[dynamic] o = []
+    MSec[dynamic] s = []
+    string[dynamic] gn = []
+    int[dynamic] go = []
+    int[dynamic] gs = []
+    int[dynamic] ga = []
+    string[dynamic] dl = ["/usr/lib/libSystem.B.dylib"]
+    string[dynamic] im = []
+    int[dynamic] os = []
+    int[dynamic] oa = []
+    return alloc(MachLinker{ true, "", o, s, gn, go, gs, ga, new_idx(4096), dl, im, os, oa })
+}
+
+void mk_fail(MachLinker* l, string msg) {
+    if l.ok { l.err = msg }
+    l.ok = false
+}
+
+string mcstr(u8[dynamic] b, int at) { return strata_bytes_cstr(&b, at, 4096) }
+string mfixed16(u8[dynamic] b, int at) {
+    int n = 0
+    while n < 16 && b[at + n] != cast<u8>(0) { n += 1 }
+    return strata_bytes_cstr(&b, at, n)
+}
+
+int find_mglobal(MachLinker* l, string name) {
+    int k = idx_first(&l.gidx, name)
+    while k >= 0 {
+        if l.gname[k] == name { return k }
+        k = idx_next(&l.gidx, k)
+    }
+    return 0 - 1
+}
+
+// where an input section goes: 0 __text, 1 __const, 2 __data, 3 __bss, -1 nowhere
+int mout_class(string seg, string name, int flags) {
+    int typ = flags & 255
+    if seg == "__TEXT" {
+        if name == "__text" { return 0 }
+        if name == "__eh_frame" || name == "__unwind_info" { return 0 - 1 }
+        return 1
+    }
+    if seg == "__DATA" || seg == "__DATA_CONST" {
+        if typ == 1 || typ == 12 { return 3 }           // S_ZEROFILL, S_GB_ZEROFILL
+        return 2
+    }
+    return 0 - 1                                          // __LD, __DWARF, ...
+}
+
+// Add an object file (ARM64 Mach-O).
+export void mach_add(MachLinker* l, string name, u8[dynamic] b) {
+    if !l.ok { return }
+    if b.len < 32 || md32(b, 0) != 4277009103 {
+        mk_fail(l, name + ": not a 64-bit Mach-O object"); return
+    }
+    if md32(b, 4) != cpu_arm64() { mk_fail(l, name + ": not an ARM64 object"); return }
+    if md32(b, 12) != 1 { mk_fail(l, name + ": not an object file"); return }
+    int oi = l.objs.len
+    MSym[dynamic] syms = []
+    int first = l.secs.len
+    int nsec = 0
+    int ncmds = md32(b, 16)
+    int off = 32
+    for c in 0..ncmds {
+        int cmd = md32(b, off)
+        int size = md32(b, off + 4)
+        if cmd == 25 {                                    // LC_SEGMENT_64
+            int ns = md32(b, off + 64)
+            for k in 0..ns {
+                int so = off + 72 + 80 * k
+                string sect = mfixed16(b, so)
+                string seg = mfixed16(b, so + 16)
+                int flags = md32(b, so + 64)
+                MSec s = MSec{ oi, seg, sect, md64(b, so + 32), md64(b, so + 40), md32(b, so + 48), 1 << md32(b, so + 52),
+                               md32(b, so + 56), md32(b, so + 60), flags, mout_class(seg, sect, flags), 0 }
+                l.secs.push(s)
+                nsec += 1
+            }
+        } else if cmd == 2 {                              // LC_SYMTAB
+            int symoff = md32(b, off + 8)
+            int nsyms = md32(b, off + 12)
+            int stroff = md32(b, off + 16)
+            for k in 0..nsyms {
+                int e = symoff + 16 * k
+                syms.push(MSym{ mcstr(b, stroff + md32(b, e)), md8(b, e + 4), md8(b, e + 5), md64(b, e + 8) })
+            }
+        }
+        off += size
+    }
+    l.objs.push(MObj{ name, b, first, nsec, syms })
+    // its global definitions
+    for k in 0..syms.len {
+        MSym s = syms[k]
+        if (s.typ & 14) == 14 && (s.typ & 1) == 1 && (s.typ & 224) == 0 {   // N_SECT | N_EXT, not a debug symbol
+            if find_mglobal(l, s.name) >= 0 { mk_fail(l, "'" + strata_name(s.name) + "' is defined twice (" + name + ")"); return }
+            idx_add(&l.gidx, s.name, l.gname.len)
+            l.gname.push(s.name)
+            l.gobj.push(oi)
+            l.gsym.push(k)
+            l.gaddr.push(0)
+        }
+    }
+}
+
+// Note a dylib the program loads (`link "name"`): libSystem's parts are libSystem; else
+// lib<name>.dylib found in `dirs` (macOS: also /usr/local/lib, /opt/homebrew/lib) gives
+// its install name, or it's @rpath/lib<name>.dylib.
+export bool mach_library(MachLinker* l, string name, string[dynamic] dirs) {
+    if name == "c" || name == "m" || name == "System" || name == "pthread" || name == "dl" { return true }
+    string install = "@rpath/lib" + name + ".dylib"
+    if strata_host_os() == "macos" {
+        string[dynamic] where = []
+        for i in 0..dirs.len { where.push(dirs[i]) }
+        where.push("/usr/local/lib")
+        where.push("/opt/homebrew/lib")
+        bool found = false
+        for i in 0..where.len {
+            string p = where[i] + "/lib" + name + ".dylib"
+            if !found && strata_file_exists(p) {
+                string id = dylib_id(strata_read_bytes(p))
+                if id != "" { install = id }
+                found = true
+            }
+        }
+    }
+    for i in 0..l.dylibs.len { if l.dylibs[i] == install { return true } }
+    l.dylibs.push(install)
+    return true
+}
+
+// a dylib's install name (LC_ID_DYLIB); "" if it isn't a thin ARM64 dylib
+string dylib_id(u8[dynamic] b) {
+    if b.len < 32 || md32(b, 0) != 4277009103 { return "" }
+    int ncmds = md32(b, 16)
+    int off = 32
+    for c in 0..ncmds {
+        if md32(b, off) == 13 { return mcstr(b, off + md32(b, off + 8)) }   // LC_ID_DYLIB
+        off += md32(b, off + 4)
+    }
+    return ""
+}
+
+// a symbol of object oi: its address (0 if undefined - see mach_target)
+int msym_addr(MachLinker* l, int oi, int si) {
+    MSym s = l.objs[oi].syms[si]
+    if (s.typ & 14) == 14 && s.sect > 0 {
+        MSec sec = l.secs[l.objs[oi].first + s.sect - 1]
+        if sec.out < 0 { return 0 }
+        return l.oaddr[sec.out] + sec.at + (s.value - sec.addr)
+    }
+    int g = find_mglobal(l, s.name)
+    if g < 0 { return 0 }
+    if l.gsym[g] < 0 { return l.gaddr[g] }
+    return msym_addr(l, l.gobj[g], l.gsym[g])
+}
+
+// an address in object oi (as the object laid it out) -> its address in the output
+int mobj_addr(MachLinker* l, int oi, int a) {
+    MObj o = l.objs[oi]
+    for k in 0..o.nsec {
+        MSec s = l.secs[o.first + k]
+        if a >= s.addr && a <= s.addr + s.size && s.out >= 0 { return l.oaddr[s.out] + s.at + (a - s.addr) }
+    }
+    return 0
+}
+
+// the undefined symbols nothing defines: imports
+void find_mach_imports(MachLinker* l) {
+    for oi in 0..l.objs.len {
+        MObj o = l.objs[oi]
+        for k in 0..o.nsec {
+            MSec s = l.secs[o.first + k]
+            if s.out >= 0 {
+                for r in 0..s.nreloc {
+                    int info = md32(o.b, s.reloff + 8 * r + 4)
+                    int typ = (info >> 28) & 15
+                    if ((info >> 27) & 1) == 1 && typ != 10 {
+                        MSym y = o.syms[info & 16777215]
+                        if (y.typ & 14) == 0 && find_mglobal(l, y.name) < 0 {
+                            idx_add(&l.gidx, y.name, l.gname.len)
+                            l.gname.push(y.name)
+                            l.gobj.push(0 - 1)
+                            l.gsym.push(0 - 1)
+                            l.gaddr.push(0)
+                            l.imports.push(y.name)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The executable's entry: sets up flushing stdout at exit (atexit(srt_os_flush)), calls
+// main(argc, argv), then exit with its result.
+string mach_start_stub() {
+    string[dynamic] p = []
+    p.push("\t.text\n\t.globl strata_start\nstrata_start:\n")
+    p.push("\tstp x29, x30, [sp, #-32]!\n\tmov x29, sp\n")
+    p.push("\tstp x0, x1, [sp, #16]\n")
+    p.push("\tadrp x0, srt_os_flush@PAGE\n\tadd x0, x0, srt_os_flush@PAGEOFF\n\tbl atexit\n")
+    p.push("\tldp x0, x1, [sp, #16]\n")
+    p.push("\tbl main\n\tbl exit\n")
+    return strata_join(&p)
+}
+
+// A dylib's initializer: flush stdout when the process exits (atexit(srt_os_flush)).
+string mach_dylib_init() {
+    string[dynamic] p = []
+    p.push("\t.text\n\t.globl strata_dylib_init\nstrata_dylib_init:\n")
+    p.push("\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
+    p.push("\tadrp x0, srt_os_flush@PAGE\n\tadd x0, x0, srt_os_flush@PAGEOFF\n\tbl atexit\n")
+    p.push("\tldp x29, x30, [sp], #16\n\tret\n")
+    return strata_join(&p)
+}
+
+// an export trie (dyld's table of a dylib's symbols): one character per edge. Nodes are
+// parallel arrays; a node's children are the nodes whose parent it is, in order.
+struct Trie { int[dynamic] parent; int[dynamic] ch; int[dynamic] addr; int[dynamic] term; int[dynamic] off }
+
+int trie_child(Trie* t, int n, int c) {
+    for i in 0..t.parent.len { if t.parent[i] == n && t.ch[i] == c { return i } }
+    t.parent.push(n); t.ch.push(c); t.addr.push(0); t.term.push(0); t.off.push(0)
+    return t.parent.len - 1
+}
+
+int uleb_size(int v) {
+    int n = 1
+    u64 x = cast<u64>(v) >> cast<u64>(7)
+    while x != cast<u64>(0) { n += 1; x = x >> cast<u64>(7) }
+    return n
+}
+
+u8[dynamic] export_trie(string[dynamic] names, int[dynamic] addrs) {
+    int[dynamic] pa = [0 - 1]
+    int[dynamic] ch = [0]
+    int[dynamic] ad = [0]
+    int[dynamic] te = [0]
+    int[dynamic] of = [0]
+    Trie t = Trie{ pa, ch, ad, te, of }
+    for i in 0..names.len {
+        int n = 0
+        for j in 0..names[i].len { n = trie_child(&t, n, cast<int>(names[i][j])) }
+        t.term[n] = 1
+        t.addr[n] = addrs[i]
+    }
+    int nn = t.parent.len
+    // offsets: until they stop changing (a node's size depends on its children's offsets)
+    bool moved = true
+    while moved {
+        moved = false
+        int at = 0
+        for n in 0..nn {
+            if t.off[n] != at { t.off[n] = at; moved = true }
+            int size = 1
+            if t.term[n] == 1 { int info = 1 + uleb_size(t.addr[n]); size = uleb_size(info) + info }
+            size += 1
+            for k in 0..nn { if t.parent[k] == n { size += 2 + uleb_size(t.off[k]) } }
+            at += size
+        }
+    }
+    u8[dynamic] ob = []
+    MOut o = MOut{ ob }
+    for n in 0..nn {
+        if t.term[n] == 1 { uleb(&o, 1 + uleb_size(t.addr[n])); uleb(&o, 0); uleb(&o, t.addr[n]) } else { m8(&o, 0) }
+        int kids = 0
+        for k in 0..nn { if t.parent[k] == n { kids += 1 } }
+        m8(&o, kids)
+        for k in 0..nn { if t.parent[k] == n { m8(&o, t.ch[k]); m8(&o, 0); uleb(&o, t.off[k]) } }
+    }
+    while o.b.len % 8 != 0 { m8(&o, 0) }
+    return o.b
+}
+
+// a load command's name: its bytes after `fixed` bytes, NUL-padded to 8
+int lc_str_size(int fixed, string s) { return malign(fixed + s.len + 1, 8) }
+void lc_str(MOut* o, string s, int size, int fixed) {
+    for i in 0..s.len { m8(o, cast<int>(s[i])) }
+    mzero(o, size - fixed - s.len)
+}
+
+export bool mach_link_exe(MachLinker* l, string path) {
+    string[dynamic] none = []
+    return mach_link(l, path, false, none)
+}
+
+export bool mach_link_dylib(MachLinker* l, string path, string[dynamic] exports) {
+    return mach_link(l, path, true, exports)
+}
+
+bool mach_link(MachLinker* l, string path, bool dylib, string[dynamic] exports) {
+    if !l.ok { return false }
+    if !dylib && find_mglobal(l, "_main") < 0 { mk_fail(l, "no main"); return false }
+    string stub_src = mach_start_stub()
+    if dylib { stub_src = mach_dylib_init() }
+    ObjFile st = assemble(stub_src, "arm64")
+    if !st.ok { mk_fail(l, "start: " + st.err); return false }
+    mach_add(l, "start", macho_bytes(&st))
+    if !l.ok { return false }
+    for i in 0..exports.len { if find_mglobal(l, "_" + exports[i]) < 0 { mk_fail(l, "exported function '" + exports[i] + "' isn't defined") } }
+    if !l.ok { return false }
+    find_mach_imports(l)
+    int ni = l.imports.len
+    string base_name = path
+    for i in 0..path.len { if path[i] == '/' || path[i] == '\\' { base_name = substr(path, i + 1, path.len - i - 1) } }
+
+    // the load commands' size, to know where __text starts
+    int nseg = 4
+    if dylib { nseg = 3 }
+    int text_nsect = 3
+    int data_nsect = 3
+    if dylib { data_nsect = 4 }                          // + __mod_init_func
+    int sizeofcmds = 72 * nseg + 80 * (text_nsect + data_nsect)
+    sizeofcmds += 48 + 24 + 80 + 24 + 24 + 16            // dyld info, symtab, dysymtab, uuid, build version, code signature
+    int dylinker_size = lc_str_size(12, "/usr/lib/dyld")
+    string id_name = "@rpath/" + base_name
+    int id_size = lc_str_size(24, id_name)
+    if dylib { sizeofcmds += id_size } else { sizeofcmds += dylinker_size + 24 }   // LC_ID_DYLIB / LC_LOAD_DYLINKER + LC_MAIN
+    int[dynamic] dl_size = []
+    for i in 0..l.dylibs.len { dl_size.push(lc_str_size(24, l.dylibs[i])); sizeofcmds += dl_size[i] }
+    int ncmds = nseg + 6 + l.dylibs.len + 1
+    if !dylib { ncmds += 1 }
+
+    // place the input sections
+    for k in 0..4 { l.osize.push(0); l.oaddr.push(0) }
+    for k in 0..l.secs.len {
+        int out = l.secs[k].out
+        if out >= 0 {
+            int at = malign(l.osize[out], l.secs[k].align)
+            l.secs[k].at = at
+            l.osize[out] = at + l.secs[k].size
+        }
+    }
+    int page = 16384
+    int base = 4294967296                                 // 0x100000000 (after __PAGEZERO)
+    if dylib { base = 0 }
+    int text_off = malign(32 + sizeofcmds, 16)
+    int stubs_off = malign(text_off + l.osize[0], 4)
+    int const_off = malign(stubs_off + 12 * ni, 16)
+    int text_end = const_off + l.osize[1]
+    int text_size = malign(text_end, page)
+    int data_off = text_size                              // (file offset = address - base)
+    int got_at = 0
+    int init_at = 8 * ni                                  // a dylib's initializer pointer
+    int data_at = init_at
+    if dylib { data_at = init_at + 8 }
+    data_at = malign(data_at, 16)
+    int data_end = data_at + l.osize[2]
+    int bss_at = malign(data_end, 16)
+    int data_filesize = malign(data_end, page)
+    int data_vmsize = malign(bss_at + l.osize[3], page)
+    if data_vmsize == 0 { data_vmsize = page }
+    if data_filesize == 0 { data_filesize = page }
+    int link_off = data_off + data_filesize
+    l.oaddr[0] = base + text_off
+    l.oaddr[1] = base + const_off
+    l.oaddr[2] = base + data_off + data_at
+    l.oaddr[3] = base + data_off + bss_at
+    int stubs_addr = base + stubs_off
+    int got_addr = base + data_off + got_at
+    for i in 0..ni { l.gaddr[find_mglobal(l, l.imports[i])] = stubs_addr + 12 * i }
+
+    u8[dynamic] text = []
+    u8[dynamic] cst = []
+    u8[dynamic] data = []
+    for i in 0..(const_off - text_off) { text.push(cast<u8>(0)) }
+    for i in 0..l.osize[1] { cst.push(cast<u8>(0)) }
+    for i in 0..(data_end) { data.push(cast<u8>(0)) }
+    for k in 0..l.secs.len {
+        MSec s = l.secs[k]
+        if s.out >= 0 && s.out != 3 && (s.flags & 255) != 1 {
+            u8[dynamic] src = l.objs[s.obj].b
+            for i in 0..s.size {
+                if s.out == 0 { text[s.at + i] = src[s.raw + i] }
+                else if s.out == 1 { cst[s.at + i] = src[s.raw + i] }
+                else { data[data_at + s.at + i] = src[s.raw + i] }
+            }
+        }
+    }
+    // stubs: adrp x16, slot@PAGE; ldr x16, [x16, slot@PAGEOFF]; br x16
+    for i in 0..ni {
+        int p = stubs_off - text_off + 12 * i
+        int pa = stubs_addr + 12 * i
+        int slot = got_addr + 8 * i
+        int pg = ((slot >> 12) - (pa >> 12)) & 2097151
+        mput32(&text, p, 0 - 1879048176 | ((pg & 3) << 29) | ((pg >> 2) << 5))   // 0x90000010
+        mput32(&text, p + 4, 0 - 113245680 | (((slot & 4095) >> 3) << 10))       // 0xF9400210
+        mput32(&text, p + 8, 0 - 702610944)                                       // 0xD61F0200
+    }
+    // relocations
+    int[dynamic] rebase = []                              // __DATA offsets of pointers dyld slides
+    int[dynamic] bind_at = []                             // __DATA offsets dyld binds to bind_name
+    string[dynamic] bind_name = []
+    for i in 0..ni { bind_at.push(got_at + 8 * i); bind_name.push(l.imports[i]) }
+    for oi in 0..l.objs.len {
+        MObj o = l.objs[oi]
+        for k in 0..o.nsec {
+            MSec s = l.secs[o.first + k]
+            if s.out >= 0 && s.out != 3 {
+                int addend = 0
+                for r in 0..s.nreloc {
+                    int ra = s.reloff + 8 * r
+                    int off = md32(o.b, ra)
+                    int info = md32(o.b, ra + 4)
+                    int symnum = info & 16777215
+                    bool ext = ((info >> 27) & 1) == 1
+                    int typ = (info >> 28) & 15
+                    int p = s.at + off                    // in its output section's bytes
+                    int pa = l.oaddr[s.out] + p
+                    if typ == 10 {                        // ARM64_RELOC_ADDEND: for the next one
+                        addend = symnum
+                        if addend >= 8388608 { addend = addend - 16777216 }
+                    } else {
+                        string tname = ""
+                        int target = 0
+                        bool is_import = false
+                        if ext {
+                            MSym y = o.syms[symnum]
+                            tname = y.name
+                            target = msym_addr(l, oi, symnum)
+                            int g = find_mglobal(l, y.name)
+                            is_import = (y.typ & 14) == 0 && g >= 0 && l.gsym[g] < 0
+                        }
+                        if typ == 0 {                     // ARM64_RELOC_UNSIGNED: a pointer
+                            if ((info >> 25) & 3) != 3 || s.out != 2 { mk_fail(l, "a 32-bit / non-data address in " + o.name) }
+                            else {
+                                int dp = data_at + p
+                                int v = md64(data, dp)
+                                if !ext { v = mobj_addr(l, oi, v) }
+                                else if is_import { bind_at.push(dp); bind_name.push(tname); v = md64(data, dp) }
+                                else { v = target + v }
+                                mput64(&data, dp, v)
+                                if !is_import { rebase.push(dp) }
+                            }
+                        } else if s.out != 0 {
+                            mk_fail(l, "a code relocation outside __text in " + o.name)
+                        } else {
+                            int w = md32(text, p)
+                            target += addend
+                            if typ == 2 {                 // BRANCH26
+                                int d = target - pa
+                                if d < 0 - 134217728 || d >= 134217728 { mk_fail(l, "a call too far, to " + strata_name(tname)) }
+                                w = w | ((d >> 2) & 67108863)
+                            } else if is_import {
+                                mk_fail(l, "'" + strata_name(tname) + "' (a shared library's) used as data")
+                            } else if typ == 3 {          // PAGE21
+                                int pg = ((target >> 12) - (pa >> 12)) & 2097151
+                                w = w | ((pg & 3) << 29) | ((pg >> 2) << 5)
+                            } else if typ == 4 {          // PAGEOFF12, scaled by the access size
+                                int scale = 0
+                                if (w & 989855744) == 956301312 {        // a load / store (0x3B000000 == 0x39000000)
+                                    scale = (w >> 30) & 3
+                                    if ((w >> 26) & 1) == 1 && ((w >> 23) & 1) == 1 { scale = 4 }   // q
+                                }
+                                int lo = target & 4095
+                                if (lo & ((1 << scale) - 1)) != 0 { mk_fail(l, "a misaligned access to " + strata_name(tname)) }
+                                w = w | ((lo >> scale) << 10)
+                            } else {
+                                mk_fail(l, "unsupported relocation type " + int_to_str(typ) + " in " + o.name)
+                            }
+                            mput32(&text, p, w)
+                        }
+                        addend = 0
+                    }
+                }
+            }
+        }
+    }
+    if !l.ok { return false }
+    int entry = 0
+    if dylib {
+        int g = find_mglobal(l, "_strata_dylib_init")
+        mput64(&data, init_at, msym_addr(l, l.gobj[g], l.gsym[g]))
+        rebase.push(init_at)
+    } else {
+        int g = find_mglobal(l, "_strata_start")
+        entry = msym_addr(l, l.gobj[g], l.gsym[g]) - base
+    }
+
+    // __LINKEDIT: rebase opcodes, bind opcodes, exports, symbols, strings, signature
+    int dseg = 2
+    if dylib { dseg = 1 }
+    u8[dynamic] lb = []
+    MOut le = MOut{ lb }
+    int rebase_off = 0
+    m8(&le, 17)                                           // REBASE_OPCODE_SET_TYPE_IMM | POINTER
+    for i in 0..rebase.len {
+        m8(&le, 32 | dseg)                                // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
+        uleb(&le, rebase[i])
+        m8(&le, 81)                                       // REBASE_OPCODE_DO_REBASE_IMM_TIMES | 1
+    }
+    m8(&le, 0)
+    mpad(&le, 8)
+    int rebase_size = le.b.len
+    int bind_off = le.b.len
+    bool flat = l.dylibs.len > 1
+    for i in 0..bind_at.len {
+        if flat { m8(&le, 62) } else { m8(&le, 17) }      // BIND_OPCODE_SET_DYLIB_SPECIAL_IMM | FLAT_LOOKUP / ..._ORDINAL_IMM | 1
+        m8(&le, 64)                                       // BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM
+        for j in 0..bind_name[i].len { m8(&le, cast<int>(bind_name[i][j])) }
+        m8(&le, 0)
+        m8(&le, 81)                                       // BIND_OPCODE_SET_TYPE_IMM | POINTER
+        m8(&le, 112 | dseg)                               // BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
+        uleb(&le, bind_at[i])
+        m8(&le, 144)                                      // BIND_OPCODE_DO_BIND
+    }
+    m8(&le, 0)
+    mpad(&le, 8)
+    int bind_size = le.b.len - bind_off
+    int export_off = le.b.len
+    string[dynamic] enames = []
+    int[dynamic] eaddrs = []
+    for i in 0..exports.len {
+        int g = find_mglobal(l, "_" + exports[i])
+        enames.push("_" + exports[i])
+        eaddrs.push(msym_addr(l, l.gobj[g], l.gsym[g]) - base)
+    }
+    if !dylib {
+        int g = find_mglobal(l, "_main")
+        enames.push("_main")
+        eaddrs.push(msym_addr(l, l.gobj[g], l.gsym[g]) - base)
+    }
+    mbytes(&le, export_trie(enames, eaddrs))
+    int export_size = le.b.len - export_off
+    // symbols: the exports (external, defined), for tools and C linkers
+    int sym_off = le.b.len
+    u8[dynamic] sb = []
+    MStr strs = MStr{ sb }
+    strs.b.push(cast<u8>(32))
+    strs.b.push(cast<u8>(0))
+    for i in 0..enames.len {
+        m32(&le, mstr_add(&strs, enames[i]))
+        m8(&le, 15); m8(&le, 1); m16(&le, 0); m64(&le, eaddrs[i] + base)    // N_SECT | N_EXT, in __text
+    }
+    int str_off = le.b.len
+    mbytes(&le, strs.b)
+    mpad(&le, 16)
+    int sig_off = le.b.len
+    // the signature's size: one hash per 4 KB page of everything before it
+    int code_limit = link_off + sig_off
+    int nslots = (code_limit + 4095) / 4096
+    int ident_len = base_name.len + 1
+    int cd_len = 88 + ident_len + 32 * nslots
+    int sig_len = malign(20 + cd_len, 16)
+    int link_filesize = sig_off + sig_len
+    int link_vmsize = malign(link_filesize, page)
+
+    // the header and load commands
+    u8[dynamic] hb = []
+    MOut o = MOut{ hb }
+    m32(&o, 4277009103)                                   // MH_MAGIC_64
+    m32(&o, cpu_arm64()); m32(&o, 0)
+    if dylib { m32(&o, 6) } else { m32(&o, 2) }           // MH_DYLIB / MH_EXECUTE
+    m32(&o, ncmds); m32(&o, sizeofcmds)
+    if dylib { m32(&o, 1048709) } else { m32(&o, 2097285) }   // NOUNDEFS|DYLDLINK|TWOLEVEL + NO_REEXPORTED_DYLIBS / PIE
+    m32(&o, 0)
+    int vm = base
+    if !dylib {
+        m32(&o, 25); m32(&o, 72); mname16(&o, "__PAGEZERO")
+        m64(&o, 0); m64(&o, base); m64(&o, 0); m64(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    }
+    m32(&o, 25); m32(&o, 72 + 80 * text_nsect); mname16(&o, "__TEXT")
+    m64(&o, base); m64(&o, text_size); m64(&o, 0); m64(&o, text_size); m32(&o, 5); m32(&o, 5); m32(&o, text_nsect); m32(&o, 0)
+    mname16(&o, "__text"); mname16(&o, "__TEXT")
+    m64(&o, base + text_off); m64(&o, l.osize[0]); m32(&o, text_off); m32(&o, 4); m32(&o, 0); m32(&o, 0)
+    m32(&o, 0 - 2147482624); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    mname16(&o, "__stubs"); mname16(&o, "__TEXT")
+    m64(&o, stubs_addr); m64(&o, 12 * ni); m32(&o, stubs_off); m32(&o, 2); m32(&o, 0); m32(&o, 0)
+    m32(&o, 0 - 2147482624); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    mname16(&o, "__const"); mname16(&o, "__TEXT")
+    m64(&o, base + const_off); m64(&o, l.osize[1]); m32(&o, const_off); m32(&o, 4); m32(&o, 0); m32(&o, 0)
+    m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    m32(&o, 25); m32(&o, 72 + 80 * data_nsect); mname16(&o, "__DATA")
+    m64(&o, base + data_off); m64(&o, data_vmsize); m64(&o, data_off); m64(&o, data_filesize); m32(&o, 3); m32(&o, 3); m32(&o, data_nsect); m32(&o, 0)
+    mname16(&o, "__got"); mname16(&o, "__DATA")
+    m64(&o, got_addr); m64(&o, 8 * ni); m32(&o, data_off + got_at); m32(&o, 3); m32(&o, 0); m32(&o, 0)
+    m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    if dylib {
+        mname16(&o, "__mod_init_func"); mname16(&o, "__DATA")
+        m64(&o, base + data_off + init_at); m64(&o, 8); m32(&o, data_off + init_at); m32(&o, 3); m32(&o, 0); m32(&o, 0)
+        m32(&o, 9); m32(&o, 0); m32(&o, 0); m32(&o, 0)    // S_MOD_INIT_FUNC_POINTERS
+    }
+    mname16(&o, "__data"); mname16(&o, "__DATA")
+    m64(&o, l.oaddr[2]); m64(&o, l.osize[2]); m32(&o, data_off + data_at); m32(&o, 4); m32(&o, 0); m32(&o, 0)
+    m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0)
+    mname16(&o, "__bss"); mname16(&o, "__DATA")
+    m64(&o, l.oaddr[3]); m64(&o, l.osize[3]); m32(&o, 0); m32(&o, 4); m32(&o, 0); m32(&o, 0)
+    m32(&o, 1); m32(&o, 0); m32(&o, 0); m32(&o, 0)        // S_ZEROFILL
+    m32(&o, 25); m32(&o, 72); mname16(&o, "__LINKEDIT")
+    m64(&o, base + link_off); m64(&o, link_vmsize); m64(&o, link_off); m64(&o, link_filesize); m32(&o, 1); m32(&o, 1); m32(&o, 0); m32(&o, 0)
+    // LC_DYLD_INFO_ONLY
+    m32(&o, 2147483682); m32(&o, 48)
+    m32(&o, link_off + rebase_off); m32(&o, rebase_size); m32(&o, link_off + bind_off); m32(&o, bind_size)
+    m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, link_off + export_off); m32(&o, export_size)
+    // LC_SYMTAB, LC_DYSYMTAB
+    m32(&o, 2); m32(&o, 24); m32(&o, link_off + sym_off); m32(&o, enames.len); m32(&o, link_off + str_off); m32(&o, strs.b.len)
+    m32(&o, 11); m32(&o, 80); m32(&o, 0); m32(&o, 0); m32(&o, 0); m32(&o, enames.len); m32(&o, enames.len); m32(&o, 0)
+    mzero(&o, 48)
+    if dylib {
+        m32(&o, 13); m32(&o, id_size); m32(&o, 24); m32(&o, 2); m32(&o, 65536); m32(&o, 65536)   // LC_ID_DYLIB
+        lc_str(&o, id_name, id_size, 24)
+    } else {
+        m32(&o, 14); m32(&o, dylinker_size); m32(&o, 12)                                         // LC_LOAD_DYLINKER
+        lc_str(&o, "/usr/lib/dyld", dylinker_size, 12)
+    }
+    // LC_UUID: from the code and data
+    u8[dynamic] idb = []
+    MOut id = MOut{ idb }
+    u8[dynamic] both = []
+    for i in 0..text.len { both.push(text[i]) }
+    for i in 0..data.len { both.push(data[i]) }
+    sha256(both, 0, both.len, &id)
+    m32(&o, 27); m32(&o, 24)
+    for i in 0..16 { if i == 6 { m8(&o, (cast<int>(id.b[i]) & 15) | 64) } else if i == 8 { m8(&o, (cast<int>(id.b[i]) & 63) | 128) } else { m8(&o, cast<int>(id.b[i])) } }
+    // LC_BUILD_VERSION: macOS 11.0
+    m32(&o, 50); m32(&o, 24); m32(&o, 1); m32(&o, 720896); m32(&o, 720896); m32(&o, 0)
+    if !dylib { m32(&o, 2147483688); m32(&o, 24); m64(&o, entry); m64(&o, 0) }               // LC_MAIN
+    for i in 0..l.dylibs.len {
+        m32(&o, 12); m32(&o, dl_size[i]); m32(&o, 24); m32(&o, 2); m32(&o, 65536); m32(&o, 65536)   // LC_LOAD_DYLIB
+        lc_str(&o, l.dylibs[i], dl_size[i], 24)
+    }
+    m32(&o, 29); m32(&o, 16); m32(&o, link_off + sig_off); m32(&o, sig_len)                  // LC_CODE_SIGNATURE
+    if o.b.len != 32 + sizeofcmds { mk_fail(l, "internal: load commands are " + int_to_str(o.b.len - 32) + " bytes, not " + int_to_str(sizeofcmds)); return false }
+
+    // the file
+    while o.b.len < text_off { m8(&o, 0) }
+    mbytes(&o, text)
+    mbytes(&o, cst)
+    while o.b.len < data_off { m8(&o, 0) }
+    mbytes(&o, data)
+    while o.b.len < link_off { m8(&o, 0) }
+    mbytes(&o, le.b)
+    // the code signature: a SuperBlob holding one CodeDirectory (big-endian), ad-hoc
+    mbe32(&o, 4206816448)                                 // CSMAGIC_EMBEDDED_SIGNATURE 0xFADE0CC0
+    mbe32(&o, 20 + cd_len); mbe32(&o, 1)
+    mbe32(&o, 0); mbe32(&o, 20)                           // slot 0: the CodeDirectory, at 20
+    mbe32(&o, 4206734338)                                 // CSMAGIC_CODEDIRECTORY 0xFADE0C02
+    mbe32(&o, cd_len); mbe32(&o, 132096)                  // version 0x20400
+    mbe32(&o, 131074)                                     // CS_ADHOC | CS_LINKER_SIGNED
+    mbe32(&o, 88 + ident_len); mbe32(&o, 88)              // hashes, identifier
+    mbe32(&o, 0); mbe32(&o, nslots); mbe32(&o, code_limit)
+    m8(&o, 32); m8(&o, 2); m8(&o, 0); m8(&o, 12)          // SHA-256, 4 KB pages
+    mbe32(&o, 0); mbe32(&o, 0); mbe32(&o, 0); mbe32(&o, 0)
+    mbe64(&o, 0)
+    mbe64(&o, 0); mbe64(&o, text_size)                    // the executable segment: __TEXT
+    if dylib { mbe64(&o, 0) } else { mbe64(&o, 1) }       // CS_EXECSEG_MAIN_BINARY
+    for i in 0..base_name.len { m8(&o, cast<int>(base_name[i])) }
+    m8(&o, 0)
+    u8[dynamic] hsb = []
+    MOut hs = MOut{ hsb }
+    for s in 0..nslots {
+        int from = 4096 * s
+        int n = 4096
+        if from + n > code_limit { n = code_limit - from }
+        sha256(o.b, from, n, &hs)
+    }
+    mbytes(&o, hs.b)
+    while o.b.len < link_off + link_filesize { m8(&o, 0) }
+    if !strata_write_bytes(path, &o.b) { mk_fail(l, "cannot write " + path); return false }
+    if strata_host_os() != "windows" {
+        string[dynamic] chmod = ["chmod", "+x", path]
+        strata_run_argv(&chmod)
+    }
+    return true
+}

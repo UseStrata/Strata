@@ -102,10 +102,14 @@ cp "$src/console" "$bin/console"
 say "building libstrata ..."
 "$stratac" build "$here/api" --backend c >/dev/null || fail "libstrata build failed"
 
-# --- the native backend's runtime, where it builds programs (Linux x86-64) ------------
+# --- the native backend's runtime, where it builds programs (Linux x86-64, macOS ARM64) ---
 if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
     say "building lib/srt-linux-x64.o ..."
     "$stratac" object "$lib/srt.strata" "$lib/srt-linux-x64.o" || fail "lib/srt-linux-x64.o build failed"
+fi
+if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+    say "building lib/srt-macos-arm64.o ..."
+    "$stratac" object "$lib/srt.strata" "$lib/srt-macos-arm64.o" || fail "lib/srt-macos-arm64.o build failed"
 fi
 
 # --- the seed: this compiler as portable C, for the next bootstrap ----------------

@@ -25,7 +25,7 @@
 import ast
 import ir
 import host   // strata_join
-import target // target_os: which calling convention
+import target // target_os / target_arch: which calling convention
 
 // ---- layouts ---------------------------------------------------------------------
 
@@ -229,6 +229,210 @@ int spec_ints(int spec) {
     int n = 0
     for k in 0..spec_halves(spec) { if spec_class(spec, k) == int_class() { n += 1 } }
     return n
+}
+
+// ---- the calling convention (Apple ARM64) -------------------------------------------------------
+// A struct of 1-4 floats of one type (an HFA: vec2 / vec3 / vec4, a struct of floats)
+// travels in float registers, one per float; any other struct of up to 16 bytes in one or
+// two integer registers; a bigger one by the address of a copy (and comes back through
+// the address in x8). A struct the registers have run out for is copied onto the stack
+// (and no more registers of its kind are used). 8 integer and 8 float registers, counted
+// separately.
+
+bool aapcs() { return target_arch() == "arm64" }
+
+int stk_hfa() { return 100000 }   // arg_bytes: an HFA copied onto the stack (+ its size)
+
+// is t an HFA so far: st = [count, element type (KVoid: none yet), 1 if not one]
+void hfa_walk(Lower* l, TypeNode* t, int[dynamic]* st) {
+    if t == null || t.kind != TyNamed { st[0][2] = 1; return }
+    string n = t.name
+    int d = vec_dim_of(n)
+    if d > 0 || n == "mat4" {
+        if d == 0 { d = 16 }
+        if st[0][1] != KVoid && st[0][1] != KF32 { st[0][2] = 1 }
+        st[0][1] = KF32
+        st[0][0] = st[0][0] + d
+        return
+    }
+    int si = struct_index(l, n)
+    if si >= 0 {
+        layout(l, si)
+        for k in 0..l.structs[si].fields.len { hfa_walk(l, l.structs[si].fields[k].type, st) }
+        return
+    }
+    TInfo ti = tinfo(l, t)
+    if ti.kind != TK_SCALAR() || !ir_is_float(ti.ty) { st[0][2] = 1; return }
+    if st[0][1] != KVoid && st[0][1] != ti.ty { st[0][2] = 1 }
+    st[0][1] = ti.ty
+    st[0][0] = st[0][0] + 1
+}
+
+// How a struct (type t) travels: 0 by address (more than 16 bytes, not an HFA); 64 + 8 *
+// (doubles) + count for an HFA; else 1 or 2 (integer registers)
+int aapcs_spec(Lower* l, TypeNode* t, TInfo ti) {
+    if ti.size == 0 { return 0 }
+    int[dynamic] st = [0, KVoid, 0]
+    hfa_walk(l, t, &st)
+    if st[2] == 0 && st[0] >= 1 && st[0] <= 4 {
+        int spec = 64 + st[0]
+        if st[1] == KF64 { spec += 8 }
+        return spec
+    }
+    if ti.size > 16 { return 0 }
+    return (ti.size + 7) / 8
+}
+bool spec_hfa(int spec) { return (spec & 64) != 0 }
+int spec_count(int spec) { if spec_hfa(spec) { return spec & 7 } return spec & 3 }
+int spec_elem(int spec) {
+    if !spec_hfa(spec) { return KU64 }
+    if (spec & 8) != 0 { return KF64 }
+    return KF32
+}
+int spec_step(int spec) { return ir_size(spec_elem(spec)) }
+
+// A call by the Apple ARM64 convention (see call_strata).
+LVal call_aapcs(Lower* l, Decl* d, Expr* e) {
+    TInfo ri = tinfo(l, d.ret)
+    int[dynamic] args = []
+    int[dynamic] bytes = []
+    int ints = 0
+    int fls = 0
+    int out = 0 - 1
+    int buf = 0 - 1
+    int spec = 0
+    if ri.kind == TK_AGG() {
+        spec = aapcs_spec(l, d.ret, ri)
+        if spec == 0 { out = temp(l, ri.size, ri.align); args.push(out); bytes.push(0 - 2) }   // its address, in x8
+        else { buf = temp(l, 32, 8) }
+    }
+    for i in 0..e.items.len {
+        if i < d.params.len {
+            TypeNode* pt = d.params[i].type
+            TInfo pi = tinfo(l, pt)
+            LVal v = lower_expr(l, e.items[i])
+            if pi.kind == TK_SCALAR() {
+                args.push(as_ty(l, v, pi.ty, e.line))
+                bytes.push(0)
+                if ir_is_float(pi.ty) { fls += 1 } else { ints += 1 }
+            } else if !v.agg {
+                lw_fail(l, e.line, "expected a " + type_text(pt))
+            } else {
+                int ps = aapcs_spec(l, pt, pi)
+                int c = spec_count(ps)
+                if ps == 0 {                                    // a copy, by address
+                    int copy = temp(l, pi.size, pi.align)
+                    copy_mem(l, copy, v.reg, pi.size)
+                    args.push(copy)
+                    bytes.push(0)
+                    ints += 1
+                } else if (spec_hfa(ps) && fls + c <= 8) || (!spec_hfa(ps) && ints + c <= 8) {
+                    int tmp = temp(l, 32, 8)                    // (whole parts can be loaded from it)
+                    copy_mem(l, tmp, v.reg, pi.size)
+                    for k in 0..c {
+                        args.push(load(l, spec_elem(ps), tmp, spec_step(ps) * k))
+                        bytes.push(0)
+                    }
+                    if spec_hfa(ps) { fls += c } else { ints += c }
+                } else {
+                    int copy = temp(l, pi.size, pi.align)       // onto the stack
+                    copy_mem(l, copy, v.reg, pi.size)
+                    args.push(copy)
+                    if spec_hfa(ps) { bytes.push(stk_hfa() + pi.size); fls = 8 } else { bytes.push(pi.size); ints = 8 }
+                }
+            }
+        }
+    }
+    if buf >= 0 { args.push(buf); bytes.push(0 - 1) }
+    int rty = KVoid
+    if ri.kind == TK_SCALAR() { rty = ri.ty }
+    int r = 0 - 1
+    if rty != KVoid { r = vreg(l, rty) }
+    Ins c = new_ins(OCall, rty, r, 0 - 1, 0 - 1)
+    c.sym = d.name
+    c.args = args
+    c.arg_bytes = bytes
+    c.imm = spec
+    emit(l, c)
+    if ri.kind == TK_SCALAR() { return scalar(r, rty) }
+    if out >= 0 { return aggregate(out, d.ret) }
+    if buf >= 0 { return aggregate(buf, d.ret) }
+    return scalar(iconst(l, KI64, 0), KI64)
+}
+
+// A function's incoming arguments by the Apple ARM64 convention (see call_aapcs); opens
+// the function's scope and binds them to its parameters.
+void lower_params_aapcs(Lower* l, Decl* d, TInfo ri) {
+    int index = 0
+    int ints = 0
+    int fls = 0
+    if ri.kind == TK_AGG() {
+        int spec = aapcs_spec(l, d.ret, ri)
+        if spec == 0 {
+            l.f.param_types.push(KU64)
+            l.f.param_bytes.push(0 - 2)                     // in x8
+            l.f.ret_ty = KU64
+            l.sret = param(l, KU64, 0)
+            index = 1
+        } else {
+            l.f.ret_spec = spec
+            l.f.ret_ty = KVoid
+        }
+    } else if ri.kind == TK_SCALAR() {
+        l.f.ret_ty = ri.ty
+    }
+    // the incoming values first, per parameter: where they start
+    int[dynamic] first = []
+    int[dynamic] kind = []          // 0 a value, 1 parts in registers (spec in `specs`), 2 the address of a copy
+    int[dynamic] specs = []
+    int[dynamic] incoming = []
+    for i in 0..d.params.len {
+        TypeNode* pt = d.params[i].type
+        TInfo pi = tinfo(l, pt)
+        first.push(incoming.len)
+        if pi.kind == TK_SCALAR() {
+            l.f.param_types.push(pi.ty)
+            l.f.param_bytes.push(0)
+            incoming.push(param(l, pi.ty, index))
+            index += 1
+            if ir_is_float(pi.ty) { fls += 1 } else { ints += 1 }
+            kind.push(0); specs.push(0)
+        } else {
+            int ps = aapcs_spec(l, pt, pi)
+            int c = spec_count(ps)
+            if ps != 0 && ((spec_hfa(ps) && fls + c <= 8) || (!spec_hfa(ps) && ints + c <= 8)) {
+                for k in 0..c {
+                    l.f.param_types.push(spec_elem(ps))
+                    l.f.param_bytes.push(0)
+                    incoming.push(param(l, spec_elem(ps), index))
+                    index += 1
+                }
+                if spec_hfa(ps) { fls += c } else { ints += c }
+                kind.push(1); specs.push(ps)
+            } else {
+                l.f.param_types.push(KU64)
+                if ps == 0 { l.f.param_bytes.push(0); ints += 1 }
+                else if spec_hfa(ps) { l.f.param_bytes.push(stk_hfa() + pi.size); fls = 8 }
+                else { l.f.param_bytes.push(pi.size); ints = 8 }
+                incoming.push(param(l, KU64, index))
+                index += 1
+                kind.push(2); specs.push(0)
+            }
+        }
+    }
+    push_scope(l)
+    for i in 0..d.params.len {
+        TypeNode* pt = d.params[i].type
+        TInfo pi = tinfo(l, pt)
+        LVar v = declare(l, d.params[i].name, pt, d.line)
+        if kind[i] == 0 { assign_var(l, v, scalar(incoming[first[i]], pi.ty), d.line) }
+        else if kind[i] == 1 {
+            int tmp = temp(l, 32, 8)
+            for k in 0..spec_count(specs[i]) { store(l, spec_elem(specs[i]), tmp, spec_step(specs[i]) * k, incoming[first[i] + k]) }
+            copy_mem(l, v.reg, tmp, pi.size)
+        }
+        else { copy_mem(l, v.reg, incoming[first[i]], pi.size) }
+    }
 }
 
 // A call by the System V convention (see call_strata).
@@ -1246,6 +1450,7 @@ LVal lower_math_builtin(Lower* l, Expr* e, string nm) {
 
 // A call to a Strata function, by the C calling convention.
 LVal call_strata(Lower* l, Decl* d, Expr* e) {
+    if aapcs() { return call_aapcs(l, d, e) }
     if sysv() { return call_sysv(l, d, e) }
     TInfo ri = tinfo(l, d.ret)
     int[dynamic] args = []
@@ -1534,8 +1739,8 @@ void lower_return(Lower* l, Stmt* s) {
         if ri.kind == TK_SCALAR() { r = as_ty(l, v, ri.ty, s.line) }
         else if !v.agg { lw_fail(l, s.line, "expected a " + type_text(l.ret_type)) }
         else if l.sret >= 0 { copy_mem(l, l.sret, v.reg, ri.size); r = l.sret }
-        else if l.f.ret_spec != 0 {                  // System V: from a 16-byte buffer, in registers
-            r = temp(l, 16, 8)
+        else if l.f.ret_spec != 0 {                  // System V / ARM64: from a buffer, in registers
+            r = temp(l, 32, 8)
             copy_mem(l, r, v.reg, ri.size)
         }
         else { r = load(l, abi_int_of(ri.size), v.reg, 0) }
@@ -1573,7 +1778,7 @@ void lower_function(Lower* l, Decl* d) {
     scan_stmt(l, d.body)
     l.ret_type = d.ret
     TInfo ri = tinfo(l, d.ret)
-    if sysv() { lower_params_sysv(l, d, ri) } else {
+    if aapcs() { lower_params_aapcs(l, d, ri) } else if sysv() { lower_params_sysv(l, d, ri) } else {
         int np = 0
         if abi_sret(ri) {
             l.f.param_types.push(KU64)
@@ -1610,8 +1815,8 @@ void lower_function(Lower* l, Decl* d) {
     if ri.kind == TK_VOID() { emit(l, new_ins(ORet, KVoid, 0 - 1, 0 - 1, 0 - 1)) }
     else if l.sret >= 0 { emit(l, new_ins(ORet, KVoid, 0 - 1, l.sret, 0 - 1)) }
     else if l.f.ret_spec != 0 {
-        int z = temp(l, 16, 8)
-        zero_mem(l, z, 16)
+        int z = temp(l, 32, 8)
+        zero_mem(l, z, 32)
         emit(l, new_ins(ORet, KVoid, 0 - 1, z, 0 - 1))
     }
     else { emit(l, new_ins(ORet, KVoid, 0 - 1, iconst(l, l.f.ret_ty, 0), 0 - 1)) }

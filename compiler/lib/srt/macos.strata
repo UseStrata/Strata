@@ -1,0 +1,170 @@
+// Copyright © 2026 Connor Rutberg
+// lib/srt/macos.strata - the native runtime's macOS layer: what lib/srt.strata needs from
+// the OS, on macOS (ARM64).
+//
+//   * libSystem (the C library every macOS has; system calls go through it - they aren't
+//     a stable interface there): memory, strings, files, sinf / cosf / tanf, getenv -
+//     exported as they are (a foreign block), so srt.strata calls them directly;
+//   * stdout: buffered here (puts, srt_os_print_raw), written with write(2) - the start
+//     code (src/os/macos.strata) calls srt_os_flush before the C library's exit;
+//   * srt_os_*: the rest - paths, folders, starting programs.
+//
+// lib/srt.strata imports it when building for macOS (`when target_os == "macos"`).
+//
+// Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
+// (see ../../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
+
+export foreign {   // libSystem
+    u8* malloc(int size)
+    u8* realloc(u8* p, int size)
+    void free(u8* p)
+    u8* memcpy(u8* dst, u8* src, int n)
+    u8* memset(u8* dst, i32 c, int n)
+    int strlen(string s)
+    i32 strcmp(string a, string b)
+    u8* fopen(string path, string mode)
+    i32 fclose(u8* f)
+    i32 fseek(u8* f, i32 offset, i32 whence)     // (long: the i32 travels sign-extended)
+    i32 ftell(u8* f)
+    int fread(u8* buf, int size, int n, u8* f)
+    int fwrite(u8* buf, int size, int n, u8* f)
+    float sinf(float x)
+    float cosf(float x)
+    float tanf(float x)
+    string getenv(string name)
+}
+
+foreign {          // libSystem, for this file only
+    int write(i32 fd, u8* buf, int n)
+    i32 _NSGetExecutablePath(u8* buf, u32* size)
+    i32 dladdr(u8* address, u8* info)
+    int sysconf(i32 name)
+    i32 stat(string path, u8* buf)
+    i32 mkdir(string path, u16 mode)
+    i32 posix_spawnp(i32* pid, string file, u8* actions, u8* attrs, string* argv, string* envp)
+    string** _NSGetEnviron()
+    i32 waitpid(i32 pid, i32* status, i32 options)
+}
+
+export string srt_os_name() { return "macos" }
+export string srt_os_arch() { return "arm64" }
+export string srt_os_default_cc() { return "cc" }
+
+export void srt_os_init(i32 argc, string* argv) {}           // (libSystem keeps the environment)
+
+int ptr(u8* p) { return cast<int>(p) }
+
+// ---- output: stdout, buffered ----------------------------------------------------------------
+
+global u8* out_buf
+global int out_len
+
+void write_all(i32 fd, u8* p, int n) {
+    int done = 0
+    while done < n {
+        int w = write(fd, cast<u8*>(ptr(p) + done), n - done)
+        if w <= 0 { done = n } else { done += w }
+    }
+}
+
+void flush_out() {
+    if out_len > 0 { write_all(1, out_buf, out_len) }
+    out_len = 0
+}
+
+void out_bytes(u8* p, int n) {
+    if out_buf == null { out_buf = malloc(65536) }
+    if out_len + n > 65536 { flush_out() }
+    if n > 65536 { write_all(1, p, n); return }
+    memcpy(cast<u8*>(ptr(out_buf) + out_len), p, n)
+    out_len += n
+}
+
+export i32 puts(string s) {
+    out_bytes(cast<u8*>(s), strlen(s))
+    u8 nl = cast<u8>(10)
+    out_bytes(&nl, 1)
+    return cast<i32>(0)
+}
+
+export void srt_os_print_raw(u8* text, int n) { out_bytes(text, n) }
+
+// write out what's buffered (the program's start code calls it before the C library's exit)
+export void srt_os_flush() { flush_out() }
+
+// ---- paths --------------------------------------------------------------------------------
+
+export int srt_os_exe_path(u8* buf, int size) {
+    u32 n = cast<u32>(size)
+    if _NSGetExecutablePath(buf, &n) != 0 { return 0 }
+    return strlen(cast<string>(buf))
+}
+
+global int anchor          // something in this module, to find it by
+
+// the file of the executable or dylib this runtime is in
+export int srt_os_module_path(u8* buf, int size) {
+    u8[dynamic] info = []                                     // a Dl_info: dli_fname first
+    for i in 0..32 { info.push(cast<u8>(0)) }
+    if dladdr(cast<u8*>(&anchor), &info[0]) == 0 { return 0 }
+    int* f = cast<int*>(&info[0])
+    string name = cast<string>(cast<u8*>(f[0]))
+    if cast<u8*>(name) == null { return 0 }
+    int n = strlen(name)
+    if n >= size { return 0 }
+    memcpy(buf, cast<u8*>(name), n + 1)
+    return n
+}
+
+export int srt_os_cpu_count() {
+    int n = sysconf(58)                                       // _SC_NPROCESSORS_ONLN
+    if n < 1 { return 1 }
+    return n
+}
+
+// ---- files and folders ----------------------------------------------------------------------
+
+// 0: nothing there, 1: a file, 2: a folder
+export int srt_os_path_kind(string path) {
+    if strlen(path) == 0 { return 0 }
+    u8[dynamic] st = []
+    for i in 0..144 { st.push(cast<u8>(0)) }                  // a struct stat
+    if stat(path, &st[0]) != 0 { return 0 }
+    int mode = cast<int>(st[4]) | (cast<int>(st[5]) << 8)    // st_mode (u16, at 4)
+    if (mode & 61440) == 16384 { return 2 }                   // S_IFDIR
+    return 1
+}
+
+export bool srt_os_mkdir(string path) {
+    mkdir(path, cast<u16>(493))                               // 0755
+    return srt_os_path_kind(path) == 2
+}
+
+export int srt_os_path_root(string path) { return 0 }        // ("/" is where folders start)
+
+// ---- running programs -------------------------------------------------------------------------
+
+// start argv[0..n) without waiting (found on PATH): its process id, 0 if it couldn't be started
+export int srt_os_start(string* argv, int n) {
+    if n < 1 { return 0 }
+    string* args = cast<string*>(malloc(8 * (n + 1)))
+    for i in 0..n { args[i] = argv[i] }
+    args[n] = cast<string>(null)
+    flush_out()
+    i32 pid = 0
+    string** env = _NSGetEnviron()
+    i32 r = posix_spawnp(&pid, argv[0], null, null, args, env[0])
+    free(cast<u8*>(args))
+    if r != 0 { return 0 }
+    return cast<int>(pid)
+}
+
+// wait for a started program: its exit code (128 + the signal if one ended it), -1 if that failed
+export int srt_os_wait(int pid) {
+    if pid == 0 { return 0 - 1 }
+    i32 status = 0
+    if waitpid(cast<i32>(pid), &status, 0) < 0 { return 0 - 1 }
+    int s = cast<int>(status)
+    if (s & 127) == 0 { return (s >> 8) & 255 }
+    return 128 + (s & 127)
+}

@@ -19,6 +19,7 @@
 // from the OS's file in lib/srt/:
 when target_os == "windows" { import srt.windows }
 when target_os == "linux" { import srt.linux }
+when target_os == "macos" { import srt.macos }
 
 // ---- arenas -------------------------------------------------------------------------------
 // The layout of lib/arena.h: an arena is the newest of a chain of blocks; a block is this

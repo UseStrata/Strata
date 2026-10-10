@@ -4,8 +4,9 @@
 // src/native.strata - the native backend's driver: checked program -> machine code. CORE.
 //
 //     lower.strata (AST -> IR) -> opt.strata (optimize, allocate registers) -> arch/x64.strata
+//                                                                            or arch/arm64.strata
 //
-// Which targets exist: x86-64 Windows so far. Anything else (another OS or CPU, a
+// Which targets exist: x86-64 Windows and Linux, ARM64 macOS. Anything else (another OS or CPU, a
 // program the native backend can't handle yet) is the C backend's job; `why` says why.
 
 import ast
@@ -13,7 +14,9 @@ import ir
 import lower
 import opt
 import arch.x64
-import asm      // ObjFile
+import arch.arm64
+import asm      // ObjFile, assemble
+import target   // target_arch
 
 export struct NativeResult {
     bool    ok
@@ -37,7 +40,8 @@ export string arch_name(string host_arch) {
 // Can the native backend target this machine? ("" if yes, else why not)
 export string native_target_why(string os, string arch) {
     if (os == "windows" || os == "linux") && arch == "x86_64" { return "" }
-    return "the native backend targets x86-64 Windows and Linux so far (this is " + arch + " " + os + ")"
+    if os == "macos" && arch == "arm64" { return "" }
+    return "the native backend targets x86-64 Windows and Linux and ARM64 macOS so far (this is " + arch + " " + os + ")"
 }
 
 export NativeResult native_compile(Program prog, bool with_main, bool optimize_code, int view) {
@@ -49,6 +53,7 @@ export NativeResult native_compile(Program prog, bool with_main, bool optimize_c
     ObjSymbol[dynamic] sy0 = []
     ObjFile none = ObjFile{ false, "", t0, r0, d0, rl0, sy0 }
     if !lower_program(l, prog, with_main) { return NativeResult{ false, l.err, none, "" } }
+    if target_arch() == "arm64" { return native_arm64(l, optimize_code, view, none) }
     int size = 0
     for i in 0..l.prog.funcs.len { size += l.prog.funcs[i].code.len }
     X64 x = new_x64(view == view_object(), size + 64)
@@ -66,6 +71,27 @@ export NativeResult native_compile(Program prog, bool with_main, bool optimize_c
     if view == view_ir() { return NativeResult{ true, "", none, ir_program_text(&l.prog) } }
     if view == view_asm() { return NativeResult{ true, "", none, x64_finish(&x, &l.prog) } }
     ObjFile o = x64_finish_object(&x, &l.prog)
+    if !o.ok { return NativeResult{ false, "internal error in the assembler: " + o.err, none, "" } }
+    return NativeResult{ true, "", o, "" }
+}
+
+// ARM64: IR -> assembly text -> (a build) the assembler
+NativeResult native_arm64(Lower* l, bool optimize_code, int view, ObjFile none) {
+    A64 x = new_a64()
+    arm64_begin(&x)
+    for i in 0..l.prog.funcs.len {
+        IrFunc* f = &l.prog.funcs[i]
+        int[dynamic] regs = []
+        if optimize_code {
+            optimize(f)
+            regs = alloc_regs(f, arm64_regs(), arm64_lazy(f))
+        }
+        arm64_function(&x, f, regs)
+    }
+    if view == view_ir() { return NativeResult{ true, "", none, ir_program_text(&l.prog) } }
+    string text = arm64_finish(&x, &l.prog)
+    if view == view_asm() { return NativeResult{ true, "", none, text } }
+    ObjFile o = assemble(text, "arm64")
     if !o.ok { return NativeResult{ false, "internal error in the assembler: " + o.err, none, "" } }
     return NativeResult{ true, "", o, "" }
 }

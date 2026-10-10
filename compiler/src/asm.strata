@@ -23,10 +23,13 @@
 import hashidx
 import host       // strata_f32_bits, strata_f64_bits
 import arch.x64   // x64_instruction, x64_fixup, x64_nop
+import arch.arm64 // arm64_instruction, arm64_fixup, arm64_nop
 
 // A relocation: in `section` (1 .text, 3 .data) at `offset`. kind 0: a 32-bit PC-relative
 // field (in .text; `after`: how many bytes of the instruction follow it, an immediate);
-// kind 1: a 64-bit address (in .data). `symbol`: an index into ObjFile.symbols, or -1 /
+// kind 1: a 64-bit address (in .data); ARM64 (in .text): kind 2 a b / bl (26 bits), 3 an
+// adrp (the page, 21 bits), 4 an add / load / store @PAGEOFF (12 bits; `after`: log2 of
+// the access size, 0 for add). `symbol`: an index into ObjFile.symbols, or -1 /
 // -2 / -3 for the .text / .rdata / .data section itself.
 export struct ObjReloc { int section; int offset; int symbol; int after; int kind }
 // section: 0 undefined (defined elsewhere), 1 .text, 2 .rdata, 3 .data
@@ -178,6 +181,7 @@ void align_to(Asm* a, int n) {
     if a.sec == 1 {
         // .text pads with the CPU's no-op
         if a.arch == "x64" { while asm_pos(a) % n != 0 { asm_byte(a, x64_nop()) } }
+        if a.arch == "arm64" { while asm_pos(a) % 4 == 0 && asm_pos(a) % n != 0 { asm_bytes(a, arm64_nop(), 4) } }
     }
     while asm_pos(a) % n != 0 { asm_byte(a, 0) }
 }
@@ -341,7 +345,7 @@ export Asm asm_new(string arch, int size_hint) {
     string[dynamic] gl = []
     Fix[dynamic] fx = []
     Asm a = Asm{ ObjFile{ true, "", t, r, dt, rl, sy }, arch, 1, ln, ls, lo, new_idx(lines / 2 + 16), gl, fx, new_idx(lines / 8 + 16), 0, "" }
-    if arch != "x64" { asm_fail(&a, "no assembler for the CPU " + arch) }
+    if arch != "x64" && arch != "arm64" { asm_fail(&a, "no assembler for the CPU " + arch) }
     return a
 }
 
@@ -361,6 +365,7 @@ export void asm_line(Asm* a, string line) {
         string ops = ""
         if sp >= 0 { mn = substr(s, 0, sp); ops = substr(s, sp, s.len - sp) }
         if a.sec != 1 { asm_fail(a, "instruction outside .text") }
+        else if a.arch == "arm64" { arm64_instruction(a, mn, split_operands(ops)) }
         else { x64_instruction(a, mn, split_operands(ops)) }
     }
 }
@@ -387,6 +392,8 @@ export ObjFile asm_finish(Asm* a_in) {
                 patch64_data(&a, f.pos, f.addend)
                 a.o.relocs.push(ObjReloc{ 3, f.pos, asm_symbol(&a, f.label, 0, 0), 0, 1 })
             }
+        } else if a.arch == "arm64" {
+            arm64_fixup(&a, f, li)
         } else {
             x64_fixup(&a, f, li)
         }

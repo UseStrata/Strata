@@ -63,22 +63,30 @@ for dir in "$here"/*/; do
     done
 done
 
-# --- the native backend, where it builds programs (Linux x86-64) --------------------
-# Every run golden again, forced through Strata's own backend, assembler and ELF linker
-# (no C compiler; the runtime is lib/srt-linux-x64.o).
-if [ -f "$compiler/lib/srt-linux-x64.o" ]; then
+# --- the native backend, where it builds programs (Linux x86-64, macOS ARM64) ----------
+# Every run golden again, forced through Strata's own backend, assembler and linker (no C
+# compiler; the runtime is lib/srt-linux-x64.o / lib/srt-macos-arm64.o).
+native_rt=""; native_os=""; native_name=""
+if [ -f "$compiler/lib/srt-linux-x64.o" ]; then native_rt=1; native_os=linux; native_name="Linux x86-64"; fi
+if [ -f "$compiler/lib/srt-macos-arm64.o" ]; then native_rt=1; native_os=macos; native_name="macOS ARM64"; fi
+if [ -n "$native_rt" ]; then
     badn=""
     for exp in "$here"/run/*.expected; do
         name=$(basename "$exp" .expected)
         source=$examples/$name.strata
-        # (C headers: not natively; what differs by OS: its .expected.linux)
+        # (C headers: not natively; CrossPlatform: where it has this OS's part; what
+        # differs by OS: its .expected.<os>)
         if grep -q '^import [<"]' "$source"; then continue; fi
+        if grep -q "^import CrossPlatform" "$source" && [ ! -f "$compiler/lib/CrossPlatform/$native_os.strata" ]; then continue; fi
         want=$exp
-        [ -f "$exp.linux" ] && want=$exp.linux
+        [ -f "$exp.$native_os" ] && want=$exp.$native_os
         actual=$("$strata" run "$source" --backend native --force 2>&1 | norm)
-        [ "$actual" = "$(norm < "$want")" ] || badn="$badn $name"
+        if [ "$actual" != "$(norm < "$want")" ]; then
+            badn="$badn $name"
+            printf '%s\n' "$actual" | head -5 | sed "s/^/    $name: /"
+        fi
     done
-    if [ -z "$badn" ]; then ok "backend/native (every run golden, Linux x86-64)"; else bad "backend/native:$badn"; fi
+    if [ -z "$badn" ]; then ok "backend/native (every run golden, $native_name)"; else bad "backend/native:$badn"; fi
 fi
 
 # --- the CrossPlatform library's window (lib/CrossPlatform/linux.strata: X11), natively ---
