@@ -496,9 +496,14 @@ int msym_addr(MachLinker* l, int oi, int si) {
 // an address in object oi (as the object laid it out) -> its address in the output
 int mobj_addr(MachLinker* l, int oi, int a) {
     MObj o = l.objs[oi]
+    // (inside a section; else just past one's end - sections touch, so that's the last resort)
     for k in 0..o.nsec {
         MSec s = l.secs[o.first + k]
-        if a >= s.addr && a <= s.addr + s.size && s.out >= 0 { return l.oaddr[s.out] + s.at + (a - s.addr) }
+        if a >= s.addr && a < s.addr + s.size && s.out >= 0 { return l.oaddr[s.out] + s.at + (a - s.addr) }
+    }
+    for k in 0..o.nsec {
+        MSec s = l.secs[o.first + k]
+        if a == s.addr + s.size && s.out >= 0 { return l.oaddr[s.out] + s.at + (a - s.addr) }
     }
     return 0
 }
@@ -970,10 +975,10 @@ bool mach_link(MachLinker* l, string path, bool dylib, string[dynamic] exports) 
     while o.b.len < link_off { m8(&o, 0) }
     mbytes(&o, le.b)
     // the code signature: a SuperBlob holding one CodeDirectory (big-endian), ad-hoc
-    mbe32(&o, 4206816448)                                 // CSMAGIC_EMBEDDED_SIGNATURE 0xFADE0CC0
+    mbe32(&o, 4208856256)                                 // CSMAGIC_EMBEDDED_SIGNATURE 0xFADE0CC0
     mbe32(&o, 20 + cd_len); mbe32(&o, 1)
     mbe32(&o, 0); mbe32(&o, 20)                           // slot 0: the CodeDirectory, at 20
-    mbe32(&o, 4206734338)                                 // CSMAGIC_CODEDIRECTORY 0xFADE0C02
+    mbe32(&o, 4208856066)                                 // CSMAGIC_CODEDIRECTORY 0xFADE0C02
     mbe32(&o, cd_len); mbe32(&o, 132096)                  // version 0x20400
     mbe32(&o, 131074)                                     // CS_ADHOC | CS_LINKER_SIGNED
     mbe32(&o, 88 + ident_len); mbe32(&o, 88)              // hashes, identifier
