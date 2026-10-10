@@ -12,7 +12,7 @@
 //      Two small stubs come with every program: `_start` (the entry: argc / argv off the
 //      stack, main, then srt_os_exit) and `srt_syscall` (a Strata call -> a system call).
 //
-// Making shared libraries (.so) comes later.
+// It also makes shared libraries (.so: elf_link_so): exports, relocated by the loader.
 
 import asm      // ObjFile, assemble (the stubs)
 import hashidx
@@ -531,25 +531,61 @@ void find_elf_imports(ElfLinker* l) {
 
 // Link everything added so far into the executable `path`. False (with l.err) on failure.
 export bool elf_link_exe(ElfLinker* l, string path) {
-    if find_eglobal(l, "main") < 0 { ek_fail(l, "no main"); return false }
-    // imports from shared libraries? (then: dynamic, with the C library)
+    string[dynamic] none = []
+    return elf_link(l, path, false, none)
+}
+
+// Link everything added so far into the shared library `path` (.so), exporting the
+// functions `exports`. False (with l.err) on failure.
+export bool elf_link_so(ElfLinker* l, string path, string[dynamic] exports) {
+    return elf_link(l, path, true, exports)
+}
+
+// how many 64-bit absolute addresses the kept sections hold (a shared library: each one
+// a R_X86_64_RELATIVE for the loader)
+int count_abs(ElfLinker* l) {
+    int n = 0
+    for oi in 0..l.objs.len {
+        EObj o = l.objs[oi]
+        for r in 0..o.rela_at.len {
+            if l.secs[o.first + o.rela_to[r]].out >= 0 {
+                for k in 0..o.rela_n[r] { if (rd64le(o.b, o.rela_at[r] + 24 * k + 8) & 4294967295) == 1 { n += 1 } }
+            }
+        }
+    }
+    return n
+}
+
+// An executable (static, or dynamic when it calls shared libraries) or, `shared`, a
+// shared library at base 0 that exports `exports` and is relocated by the loader.
+bool elf_link(ElfLinker* l, string path, bool shared, string[dynamic] exports) {
+    if !shared && find_eglobal(l, "main") < 0 { ek_fail(l, "no main"); return false }
     for k in 0..4 { l.osize.push(0); l.oaddr.push(0) }
     ObjFile sc = assemble(syscall_stub(), "x64")
     if !sc.ok { ek_fail(l, "syscall: " + sc.err); return false }
     elf_add(l, "syscall", elf_bytes(&sc))
     find_elf_imports(l)
-    bool dynamic = l.imports.len > 0
-    ObjFile st = assemble(start_stub(dynamic), "x64")
-    if !st.ok { ek_fail(l, "start: " + st.err); return false }
-    elf_add(l, "start", elf_bytes(&st))
+    bool dynamic = shared || l.imports.len > 0
+    if !shared {
+        ObjFile st = assemble(start_stub(l.imports.len > 0), "x64")
+        if !st.ok { ek_fail(l, "start: " + st.err); return false }
+        elf_add(l, "start", elf_bytes(&st))
+    }
     if !l.ok { return false }
-    if dynamic {
+    for i in 0..exports.len { if find_eglobal(l, exports[i]) < 0 { ek_fail(l, "exported function '" + exports[i] + "' isn't defined") } }
+    if !l.ok { return false }
+    l.imports = []
+    find_elf_imports(l)                          // (with the start code's own: `exit`)
+    if l.imports.len > 0 {
         string[dynamic] none = []
         elf_library(l, "c", none)
-        l.imports = []
-        find_elf_imports(l)                      // (now with the stub's `exit`)
     }
     int ni = l.imports.len
+    int ne = exports.len
+    bool fini = shared && find_eglobal(l, "srt_os_flush") >= 0   // flush stdout when the library goes
+    int nrel = ni
+    if shared { nrel = ni + count_abs(l) }
+    if fini { nrel += 1 }
 
     // place the input sections
     for si in 0..l.secs.len {
@@ -564,7 +600,8 @@ export bool elf_link_exe(ElfLinker* l, string path) {
     l.osize[0] = stubs_at + 8 * ni
 
     // the dynamic linking tables (in the first segment, before the code): the loader's
-    // name, .hash, .dynsym, .dynstr, .rela.dyn; in the data segment: the slots, .dynamic
+    // name (an executable), .hash, .dynsym, .dynstr, .rela.dyn; in the data segment: the
+    // slots, the finalizer, .dynamic
     string interp = "/lib64/ld-linux-x86-64.so.2"
     u8[dynamic] dsb = []
     StrTab dynstr = StrTab{ dsb }
@@ -573,10 +610,19 @@ export bool elf_link_exe(ElfLinker* l, string path) {
     for i in 0..l.needed.len { need_off.push(strtab_add(&dynstr, l.needed[i])) }
     int[dynamic] name_off = []
     for i in 0..ni { name_off.push(strtab_add(&dynstr, l.imports[i])) }
-    int nsym = ni + 1
+    for i in 0..ne { name_off.push(strtab_add(&dynstr, exports[i])) }
+    string soname = path
+    for i in 0..path.len { if path[i] == '/' || path[i] == '\\' { soname = substr(path, i + 1, path.len - i - 1) } }
+    int soname_off = 0
+    if shared { soname_off = strtab_add(&dynstr, soname) }
+    int nsym = ni + ne + 1
+    int nbucket = 1
+    if ne > 0 { nbucket = ne }
     int base = 4194304                                      // 0x400000
+    if shared { base = 0 }
     int nph = 4                                             // 3 PT_LOAD + PT_GNU_STACK
-    if dynamic { nph = 7 }                                  // + PT_PHDR, PT_INTERP, PT_DYNAMIC
+    if dynamic { nph = 5 }                                  // + PT_DYNAMIC
+    if dynamic && !shared { nph = 7 }                       // + PT_PHDR, PT_INTERP
     int at = 64 + 56 * nph
     int interp_off = at
     int hash_off = 0
@@ -584,9 +630,10 @@ export bool elf_link_exe(ElfLinker* l, string path) {
     int dynstr_off = 0
     int rela_off = 0
     if dynamic {
-        at = ealign(interp_off + interp.len + 1, 8)
+        if !shared { at = interp_off + interp.len + 1 }
+        at = ealign(at, 8)
         hash_off = at
-        at = hash_off + 4 * (2 + 1 + nsym)                  // nbucket, nchain, 1 bucket, the chains
+        at = hash_off + 4 * (2 + nbucket + nsym)
         at = ealign(at, 8)
         dynsym_off = at
         at = dynsym_off + 24 * nsym
@@ -594,14 +641,17 @@ export bool elf_link_exe(ElfLinker* l, string path) {
         at = dynstr_off + dynstr.b.len
         at = ealign(at, 8)
         rela_off = at
-        at = rela_off + 24 * ni
+        at = rela_off + 24 * nrel
     }
     int text_off = ealign(at, 16)
     int ro_off = ealign(text_off + l.osize[0], 4096)
     int data_off = ealign(ro_off + l.osize[1], 4096)
     int got_at = ealign(l.osize[2], 8)                      // the slots, after the data
-    int dyn_at = got_at + 8 * ni                            // then .dynamic
+    int fini_at = got_at + 8 * ni                           // the finalizer array
+    int dyn_at = fini_at
+    if fini { dyn_at = fini_at + 8 }
     int ndyn = l.needed.len + 13
+    if shared { ndyn += 3 }
     int data_size = l.osize[2]
     if dynamic { data_size = dyn_at + 16 * ndyn }
     int bss_at = ealign(data_size, 16)
@@ -643,7 +693,9 @@ export bool elf_link_exe(ElfLinker* l, string path) {
         text[p + 1] = cast<u8>(37)
         put32le(&text, p + 2, (got_addr + 8 * i) - (l.oaddr[0] + p + 6))
     }
-    // relocations
+    // relocations (a shared library: its absolute addresses also for the loader to move)
+    int[dynamic] rel_at = []
+    int[dynamic] rel_val = []
     for oi in 0..l.objs.len {
         EObj o = l.objs[oi]
         for r in 0..o.rela_at.len {
@@ -662,7 +714,9 @@ export bool elf_link_exe(ElfLinker* l, string path) {
                     if tgt.out == 3 { ek_fail(l, "relocations in .bss") }
                     else if typ == 1 {
                         if tgt.out == 0 { put64le(&text, p, sv + addend) } else if tgt.out == 1 { put64le(&ro, p, sv + addend) } else { put64le(&data, p, sv + addend) }
+                        if shared { rel_at.push(pa); rel_val.push(sv + addend) }
                     } else if typ == 2 || typ == 4 || typ == 10 || typ == 11 {
+                        if shared && (typ == 10 || typ == 11) { ek_fail(l, "a 32-bit absolute address in " + o.name + " (a shared library can't be moved with it)") }
                         int v = sv + addend
                         if typ == 2 || typ == 4 { v = v - pa }
                         if tgt.out == 0 { put32le(&text, p, v) } else if tgt.out == 1 { put32le(&ro, p, v) } else { put32le(&data, p, v) }
@@ -674,33 +728,54 @@ export bool elf_link_exe(ElfLinker* l, string path) {
         }
     }
     if !l.ok { return false }
+    int fini_addr = base + data_off + fini_at
+    if fini {
+        int fg = find_eglobal(l, "srt_os_flush")
+        ESec fs = l.secs[l.gsec[fg]]
+        int fv = l.oaddr[fs.out] + fs.at + l.gval[fg]
+        put64le(&data, fini_at, fv)
+        rel_at.push(fini_addr)
+        rel_val.push(fv)
+    }
     // .dynamic: the libraries, then where the tables are
     if dynamic {
         int d = dyn_at
         for i in 0..l.needed.len { put64le(&data, d, 1); put64le(&data, d + 8, need_off[i]); d += 16 }   // DT_NEEDED
+        if shared {
+            put64le(&data, d, 14); put64le(&data, d + 8, soname_off); d += 16                         // DT_SONAME
+        }
+        if fini {
+            put64le(&data, d, 26); put64le(&data, d + 8, fini_addr); d += 16                          // DT_FINI_ARRAY
+            put64le(&data, d, 28); put64le(&data, d + 8, 8); d += 16                                  // DT_FINI_ARRAYSZ
+        }
         put64le(&data, d, 4); put64le(&data, d + 8, base + hash_off); d += 16           // DT_HASH
         put64le(&data, d, 5); put64le(&data, d + 8, base + dynstr_off); d += 16         // DT_STRTAB
         put64le(&data, d, 6); put64le(&data, d + 8, base + dynsym_off); d += 16         // DT_SYMTAB
         put64le(&data, d, 10); put64le(&data, d + 8, dynstr.b.len); d += 16             // DT_STRSZ
         put64le(&data, d, 11); put64le(&data, d + 8, 24); d += 16                       // DT_SYMENT
         put64le(&data, d, 7); put64le(&data, d + 8, base + rela_off); d += 16           // DT_RELA
-        put64le(&data, d, 8); put64le(&data, d + 8, 24 * ni); d += 16                   // DT_RELASZ
+        put64le(&data, d, 8); put64le(&data, d + 8, 24 * nrel); d += 16                 // DT_RELASZ
         put64le(&data, d, 9); put64le(&data, d + 8, 24); d += 16                        // DT_RELAENT
         put64le(&data, d, 30); put64le(&data, d + 8, 8); d += 16                        // DT_FLAGS: BIND_NOW
         put64le(&data, d, 1879048187); put64le(&data, d + 8, 1); d += 16                // DT_FLAGS_1: NOW
-        put64le(&data, d, 21); put64le(&data, d + 8, 0); d += 16                        // DT_DEBUG
+        if !shared { put64le(&data, d, 21); put64le(&data, d + 8, 0); d += 16 }        // DT_DEBUG
         put64le(&data, d, 0); put64le(&data, d + 8, 0)                                  // DT_NULL
     }
-    int g = find_eglobal(l, "_start")
-    ESec es = l.secs[l.gsec[g]]
-    int entry = l.oaddr[es.out] + es.at + l.gval[g]
+    int entry = 0
+    if !shared {
+        int g = find_eglobal(l, "_start")
+        ESec es = l.secs[l.gsec[g]]
+        entry = l.oaddr[es.out] + es.at + l.gval[g]
+    }
 
     // the file
     u8[dynamic] fb = []
     EOut o = EOut{ fb }
-    elf_header(&o, 2, entry, 64, nph, 0, 0, 0)
+    int etype = 2
+    if shared { etype = 3 }
+    elf_header(&o, etype, entry, 64, nph, 0, 0, 0)
     // program headers: type, flags, offset, vaddr, paddr, filesz, memsz, align
-    if dynamic {
+    if dynamic && !shared {
         e32(&o, 6); e32(&o, 4); e64(&o, 64); e64(&o, base + 64); e64(&o, base + 64)                                   // PT_PHDR
         e64(&o, 56 * nph); e64(&o, 56 * nph); e64(&o, 8)
         e32(&o, 3); e32(&o, 4); e64(&o, interp_off); e64(&o, base + interp_off); e64(&o, base + interp_off)          // PT_INTERP
@@ -718,25 +793,41 @@ export bool elf_link_exe(ElfLinker* l, string path) {
     }
     e32(&o, 1685382481); e32(&o, 6); e64(&o, 0); e64(&o, 0); e64(&o, 0); e64(&o, 0); e64(&o, 0); e64(&o, 16)   // PT_GNU_STACK: not executable
     if dynamic {
-        // the loader's name; .hash (one bucket); .dynsym (the imports: undefined functions);
-        // .dynstr; .rela.dyn (fill each slot with its symbol's address)
-        for i in 0..interp.len { e8(&o, cast<int>(interp[i])) }
-        e8(&o, 0)
+        // the loader's name (an executable); .hash; .dynsym (imports: undefined; exports:
+        // their addresses); .dynstr; .rela.dyn (slots: their symbols; moved addresses)
+        if !shared {
+            for i in 0..interp.len { e8(&o, cast<int>(interp[i])) }
+            e8(&o, 0)
+        }
         while o.b.len < hash_off { e8(&o, 0) }
-        e32(&o, 1)
+        e32(&o, nbucket)
         e32(&o, nsym)
+        int[dynamic] bucket = []
+        for i in 0..nbucket { bucket.push(0) }
         int[dynamic] chain = []
         for i in 0..nsym { chain.push(0) }
-        int head = 0
-        for i in 1..nsym { chain[i] = head; head = i }
-        e32(&o, head)
+        for i in 1..nsym {
+            string nm = ""
+            if i <= ni { nm = l.imports[i - 1] } else { nm = exports[i - 1 - ni] }
+            int b = elf_hash(nm) % nbucket
+            chain[i] = bucket[b]
+            bucket[b] = i
+        }
+        for i in 0..nbucket { e32(&o, bucket[i]) }
         for i in 0..nsym { e32(&o, chain[i]) }
         while o.b.len < dynsym_off { e8(&o, 0) }
         ezero(&o, 24)
         for i in 0..ni { e32(&o, name_off[i]); e8(&o, 18); e8(&o, 0); e16(&o, 0); e64(&o, 0); e64(&o, 0) }   // GLOBAL FUNC, undefined
+        for i in 0..ne {
+            int g = find_eglobal(l, exports[i])
+            ESec gs = l.secs[l.gsec[g]]
+            e32(&o, name_off[ni + i]); e8(&o, 18); e8(&o, 0); e16(&o, 1)                                // GLOBAL FUNC, defined
+            e64(&o, l.oaddr[gs.out] + gs.at + l.gval[g]); e64(&o, 0)
+        }
         ebytes(&o, dynstr.b)
         while o.b.len < rela_off { e8(&o, 0) }
         for i in 0..ni { e64(&o, got_addr + 8 * i); e64(&o, (i + 1) * 4294967296 + 6); e64(&o, 0) }        // R_X86_64_GLOB_DAT
+        for i in 0..rel_at.len { e64(&o, rel_at[i]); e64(&o, 8); e64(&o, rel_val[i]) }                     // R_X86_64_RELATIVE
     }
     while o.b.len < text_off { e8(&o, 0) }
     ebytes(&o, text)
@@ -746,7 +837,7 @@ export bool elf_link_exe(ElfLinker* l, string path) {
     ebytes(&o, data)
     if !strata_write_bytes(path, &o.b) { ek_fail(l, "cannot write " + path); return false }
     // runnable (on a Linux / macOS machine: building on Windows, it's copied there)
-    if strata_host_os() != "windows" {
+    if strata_host_os() != "windows" && !shared {
         string[dynamic] chmod = ["chmod", "+x", path]
         strata_run_argv(&chmod)
     }

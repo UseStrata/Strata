@@ -60,11 +60,12 @@ plus releases, and approve releases when asked.
   linux-x64` (`src/target.strata`), `src/os/linux.strata` (ELF objects + a static ELF
   linker, `_start` / `srt_syscall` stubs), `lib/srt/linux.strata` (the runtime on system
   calls; `lib/srt.strata` `when`-imports `srt/windows` or `srt/linux`). Strata's own
-  calling convention is used inside Linux programs too (no C on the other side yet);
-  System V comes with dynamic linking (libc, X11: step 3's CrossPlatform/linux needs it).
-  CI's Linux job runs every run golden natively. On Linux, `auto` uses C for programs with
-  foreign functions / libraries / shared libraries; the compiler itself still builds
-  through C there (build.sh `--backend c`).
+  calls are System V on Linux; programs that call shared libraries link dynamically
+  (libc auto-needed; 8-byte `jmp *slot` stubs, GLOB_DAT, BIND_NOW), and `output = "dll"`
+  is a native `.so` (`elf_link_so`: base 0, R_X86_64_RELATIVE for every 64-bit address,
+  DT_SONAME, DT_FINI_ARRAY -> srt_os_flush; no srt_os_init, so getenv is null there).
+  CI's Linux job runs every run golden natively. On Linux, `auto` uses C only for projects
+  with C sources; the compiler itself still builds through C there (build.sh `--backend c`).
 - **On `main` (unreleased): the CrossPlatform library in Strata** (user's idea and
   naming): `import CrossPlatform` → `lib/CrossPlatform.strata` (the API, same on every OS)
   + `lib/CrossPlatform/windows.strata` (user32 / kernel32 / msvcrt), which the main file

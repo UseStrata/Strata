@@ -70,7 +70,7 @@ export string link_error(Link* k) {
 export bool link_program(Link* k, string out, bool dll, string[dynamic] exports) {
     if k.os == "linux" {
         if !k.lin.ok { return false }
-        if dll { k.lin.ok = false; k.lin.err = "Linux shared libraries (.so) aren't made natively yet"; return false }
+        if dll { return elf_link_so(k.lin, out, exports) }
         return elf_link_exe(k.lin, out)
     }
     if !k.win.ok { return false }

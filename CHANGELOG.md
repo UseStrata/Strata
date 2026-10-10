@@ -13,9 +13,11 @@ and a GitHub Release.
   ELF executables (a `_start` stub and a `srt_syscall` stub come with every program), and
   the runtime's Linux layer, `lib/srt/linux.strata`, talks to the kernel with system calls
   (an mmap allocator, buffered stdout, files, sin / cos / tan, the environment, paths,
-  folders, fork / execve / wait4). Every run golden passes natively on Linux (CI). Plain
-  programs for now: programs that call C functions or build shared libraries use the C
-  backend there until dynamic linking lands.
+  folders, fork / execve / wait4). Every run golden passes natively on Linux (CI).
+  Programs that call shared libraries (libc too) link dynamically (PT_INTERP, .dynamic,
+  BIND_NOW, the System V calling convention), and `output = "dll"` makes a native `.so`
+  (relocated by the loader, its exports in .dynsym, a soname, stdout flushed when it's
+  unloaded). Only projects with C sources still use the C backend there.
 - **The CrossPlatform library, in Strata**: `import CrossPlatform` - a window
   (`create_window`, `poll_events`, `set_window_title` / `size`, `window_width` /
   `height`, `close_window`), the system (`os_name`, `cpu_arch`, `cpu_count`, `exe_path`,
