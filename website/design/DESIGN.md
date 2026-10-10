@@ -293,6 +293,21 @@ foreign {                            // no header: found when linking (e.g. a sy
 
 ---
 
+## 8c. `when`: compile-time conditions
+
+- **Settled (2026-10-10): `when`** (the user's idea; the keyword as in Odin). Code for one
+  target only, decided while compiling:
+  ```strata
+  when target_os == "windows" { import CrossPlatform.windows }
+  else when target_os == "linux" { import CrossPlatform.linux }
+  ```
+  `target_os` / `target_arch` compared with strings, `&&` `||` `!`; at the top of a file and
+  inside functions; `else when` / `else` chain. Only the chosen branch is compiled (the
+  others are parsed, then dropped: their imports aren't loaded, their calls needn't exist).
+  It replaces a hidden "load X/<os>.strata with X" rule: the dependency is written down.
+
+---
+
 ## 9. Naming & style (proposal)
 
 - `snake_case` functions/variables, `PascalCase` types, `SCREAMING_CASE` constants.

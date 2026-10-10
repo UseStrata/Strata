@@ -1,0 +1,25 @@
+// when.strata - code for one target only, decided while compiling.
+// `when` compares target_os ("windows" / "linux" / "macos") or target_arch ("x86_64" /
+// "arm64") with a string; only the chosen branch is compiled. Libraries use it to import
+// their OS's file: `when target_os == "windows" { import CrossPlatform.windows }`.
+
+// at the top of a file: declarations for one target
+when target_os == "windows" { string os_greeting() { return "a known OS" } }
+else when target_os == "linux" { string os_greeting() { return "a known OS" } }
+else when target_os == "macos" { string os_greeting() { return "a known OS" } }
+else { string os_greeting() { return "somewhere new" } }
+
+// a branch that isn't taken isn't compiled: it may call what doesn't exist here
+when target_os == "plan9" { int never() { return no_such_function_anywhere() } }
+
+print(os_greeting())                                      // a known OS
+
+int bits() {
+    // inside a function: statements for one target
+    when target_arch == "x86_64" || target_arch == "arm64" { return 64 }
+    else { return 0 }
+}
+print(bits())                                             // 64
+
+when !(target_os == "plan9") && target_os != "beos" { print("not plan9, not beos") }
+when false { print("never printed") } else { print("else taken") }

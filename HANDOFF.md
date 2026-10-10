@@ -7,7 +7,7 @@
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
 **Current:** stratac **2.5.0** (native dlls + import libraries; no C compiler anywhere on Windows), released 2026-10-09
-· tests **75/75** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
+· tests **76/76** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
 · installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.5.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
@@ -58,9 +58,10 @@ plus releases, and approve releases when asked.
   convention arrives).
 - **On `main` (unreleased): the CrossPlatform library in Strata** (user's idea and
   naming): `import CrossPlatform` → `lib/CrossPlatform.strata` (the API, same on every OS)
-  + `lib/CrossPlatform/windows.strata` (user32 / kernel32 / msvcrt), loaded together as
-  one module. Window, system, files, programs; works natively and through C. Imports now
-  fall back to Strata's `lib/`; a module's OS part `X/<os>.strata` is loaded with it.
+  + `lib/CrossPlatform/windows.strata` (user32 / kernel32 / msvcrt), which the main file
+  imports with `when target_os == "windows" { import CrossPlatform.windows }` (the user's
+  `when` design, DESIGN.md §8c). Window, system, files, programs; works natively and
+  through C. Imports now fall back to Strata's `lib/`.
   Next: its linux / macos parts (macOS's window needs Cocoa through `objc_msgSend`, which
   needs function-pointer-style casts Strata doesn't have yet), then port the compiler's
   own OS code onto it. No window drawing yet (only the window itself).
@@ -328,8 +329,9 @@ for i in 0..10 { if i % 2 == 0 { continue }; print(i) }
 - **Casts:** `cast<T>(x)` (scalar↔scalar, pointer↔pointer, pointer↔int), `sizeof(T)`.
 - **Modules:** every file is a module; declarations are **private unless `export`ed**.
   `import gfx.Renderer` loads `<root>/gfx/Renderer.strata` (root = the main file's folder;
-  else Strata's `lib/`: `import CrossPlatform`); a module `X.strata` may have OS parts
-  `X/windows.strata` / `linux.strata` / `macos.strata`, the target's loaded as part of X;
+  else Strata's `lib/`: `import CrossPlatform`); **`when target_os == "windows" { ... }`**
+  keeps code / imports for one target only (decided while parsing: `parser.strata`'s
+  `when_top` / `when_stmt`; `target_os`, `target_arch`);
   imports are **not transitive**; `export import X` re-exports. Modules hold declarations
   only. Missing/private/unimported/conflicting names get errors that say how to fix them.
 - **Globals:** `global int score = 0`, `export global ...`, `global var x = "s"` — any file,
@@ -396,7 +398,8 @@ freely (it may only use stage0's language features).
 `modules` + `greetlib`, `modules2` + `mods/` (the module system), `crossplatform` (a window
 via `lib/crossplatform.h`: `crossplatform_header`), `foreign` (C structs / constants in
 foreign blocks), `order` (evaluation order), `platform` + `platform_window` (the
-CrossPlatform library: system / files / programs, and a window).
+CrossPlatform library: system / files / programs, and a window), `when` (compile-time
+conditions).
 Graphical (open a window; build, don't auto-run): `window`, `sprite`, `balls` — raylib
 through the `raylib.strata` module (a foreign block), native. Error cases: `errors`, `breakerr`, `modvis`, `modload`, `modpriv`.
 `abi` (native-backend corners: struct passing, 7-argument calls, narrow / unsigned
@@ -404,7 +407,7 @@ arithmetic, shifts, floats, short-circuiting, pointers).
 
 ---
 
-## 9. Tests (`compiler/tests/run.ps1`: 75 checks; `run.sh`: the same on macOS / Linux, minus the native ones)
+## 9. Tests (`compiler/tests/run.ps1`: 76 checks; `run.sh`: the same on macOS / Linux, minus the native ones)
 
 1. **Bootstrap + fixpoint** (runs `build.ps1`: native stages, stage2 == stage3).
 2. **Goldens:** `tests/<stage>/<name>.expected` vs `stratac <stage> examples/<name>.strata`,

@@ -14,11 +14,8 @@
 // means the same file everywhere: `import gfx.Renderer` is <root>/gfx/Renderer.strata
 // whichever file imports it. A name not found there is looked for in Strata's own lib/
 // folder (its libraries: `import CrossPlatform` is <lib>/CrossPlatform.strata).
-//
-// OS parts: a module X.strata may come with per-OS files in a folder beside it,
-// X/windows.strata, X/linux.strata, X/macos.strata. The one for the OS being built for is
-// loaded as part of module X (its declarations are X's, private ones shared), so a
-// library splits its OS calls into their own files and is still imported as one module.
+// An import inside a `when` branch that isn't taken is never loaded (see parser.strata):
+// that's how a library picks its OS's file.
 //
 // Declaration order matches the old paste-based loader: an imported module's declarations
 // appear where its `import` is, so generated C is unchanged.
@@ -91,16 +88,6 @@ int ld_module(Loader* ld, string path, string file, string name, bool is_root) {
     int idx = ld.prog.modules.len
     ld.prog.modules.push(new_module(name, path, file))   // registered first, so cycles terminate
     ld_part(ld, idx, path, file, is_root)
-    if !is_root {
-        // its OS part, if it has any: X/<os>.strata (the OS being built for)
-        string dir = stem_of(path)
-        string os = strata_host_os()
-        string own = dir + "/" + os + ".strata"
-        if strata_file_exists(own) { ld_part(ld, idx, own, stem_of(file) + "/" + os + ".strata", false) }
-        else if strata_file_exists(dir + "/windows.strata") || strata_file_exists(dir + "/linux.strata") || strata_file_exists(dir + "/macos.strata") {
-            ld_error(ld, file, 1, 1, "module '" + name + "' has no " + os + " part yet (" + stem_of(file) + "/" + os + ".strata)")
-        }
-    }
     return idx
 }
 

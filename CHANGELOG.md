@@ -17,12 +17,21 @@ and a GitHub Release.
   native successor of `lib/crossplatform.h`.
 - **Strata's libraries are importable**: a module not found in the project folder is
   looked for in Strata's `lib/` (`import CrossPlatform` is `<lib>/CrossPlatform.strata`).
-- **OS parts of a module**: `X.strata` may come with `X/windows.strata`, `X/linux.strata`,
-  `X/macos.strata`; the compiler loads the one for the OS it builds for as part of module
-  X (one module, its OS calls in their own files). A module without a part for the OS is
-  a clear error.
-- Examples `platform` (system, files, programs: a run golden, Windows-only for now) and
-  `platform_window`; tests (75): the window opened natively and closed by the user.
+- **`when`: code for one target only**, decided while compiling (the user's design):
+  ```strata
+  when target_os == "windows" { import CrossPlatform.windows }
+  else when target_os == "linux" { ... }
+  else { ... }
+  ```
+  `target_os` ("windows" / "linux" / "macos") and `target_arch` ("x86_64" / "arm64")
+  compared with strings, combined with `&&` `||` `!`. At the top of a file (imports,
+  declarations, the main file's code) and inside functions. Only the chosen branch is
+  compiled - the others may call what doesn't exist on this target, and their imports are
+  never loaded. `when` stays usable as a name. CrossPlatform imports its OS's file this
+  way.
+- Examples `platform` (system, files, programs: a run golden, Windows-only for now),
+  `platform_window` and `when`; tests (76): the window opened natively and closed by the
+  user, `when` on both backends.
 
 ### Changed
 - `examples/crossplatform.strata` is now `crossplatform_header.strata` (the C-header

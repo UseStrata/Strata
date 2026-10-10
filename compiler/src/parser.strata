@@ -21,6 +21,7 @@ import lexer
 // the AST node types + new_* constructors
 import ast
 import token
+import host   // strata_host_os, strata_host_arch: the default target for `when`
 
 export struct Parser {
     Token[dynamic] toks
@@ -32,9 +33,13 @@ export struct Parser {
     int     err_col
     string     err_msg
     int     depth      // how deeply the code being parsed is nested (see max_nesting)
+    // what `when` tests: the OS and CPU being built for ("windows" / "linux" / "macos",
+    // "x86_64" / "arm64"); this machine's unless set otherwise
+    string  target_os
+    string  target_arch
 }
 
-export Parser new_parser(Token[dynamic] toks) { return Parser{ toks, 0, false, false, 0, 0, "", 0 }; }
+export Parser new_parser(Token[dynamic] toks) { return Parser{ toks, 0, false, false, 0, 0, "", 0, strata_host_os(), strata_host_arch() }; }
 
 // ---- cursor ------------------------------------------------------------
 
@@ -349,6 +354,20 @@ export Program parse_program(Parser* p) {
     Stmt*[dynamic] main  = []
     skip_newlines(p)
     while (!p_at_end(p) && !p.had_error) {
+        top_item(p, &decls, &main)
+        skip_newlines(p)
+    }
+    Module[dynamic] mods = []
+    return Program{ decls, main, mods }
+}
+
+// One top-level item: a declaration (into decls), an import, or a statement of the main
+// file's code (into main).
+void top_item(Parser* p, Decl*[dynamic]* decls_out, Stmt*[dynamic]* main_out) {
+    Decl*[dynamic] decls = decls_out[0]
+    Stmt*[dynamic] main = main_out[0]
+    if at_when(p) { when_top(p, &decls, &main) }
+    else {
         bool exported = false
         if (p_check(p, TkKwExport)) { p_advance(p); exported = true; skip_newlines(p); }
         if at_global(p)                 { Decl* d = global_decl(p); d.is_exported = exported; decls.push(d); }
@@ -371,10 +390,118 @@ export Program parse_program(Parser* p) {
             main.push(statement(p))
             if (p.pos == before) { p_unexpected(p); p_advance(p); }
         }
-        skip_newlines(p)
     }
-    Module[dynamic] mods = []
-    return Program{ decls, main, mods }
+    decls_out[0] = decls
+    main_out[0] = main
+}
+
+// ---- when: code for one target only ---------------------------------------
+//
+//     when target_os == "windows" { import CrossPlatform.windows }
+//     else when target_os == "linux" { ... }
+//     else { ... }
+//
+// Decided while parsing, for the OS / CPU being built for (Parser.target_os / target_arch):
+// only the chosen branch is kept - its imports are loaded, its declarations and code are
+// compiled; the others are parsed (they must be well-formed) and dropped, so they may call
+// what doesn't exist on this target. A condition compares `target_os` / `target_arch` with
+// strings (== !=), combined with && || ! and parentheses.
+
+// Is the parser at `when <condition>`? (`when` stays a usable name everywhere else)
+bool at_when(Parser* p) {
+    if !p_check(p, TkIdent) || p_peek(p).text != "when" { return false }
+    TokKind k = p.toks[p.pos + 1].kind
+    if k == TkBang || k == TkLParen || k == TkKwTrue || k == TkKwFalse { return true }
+    if k != TkIdent { return false }
+    string n = p.toks[p.pos + 1].text
+    return n == "target_os" || n == "target_arch"
+}
+
+// the value of a `when` condition
+bool when_value(Parser* p, Expr* e) {
+    if e.kind == ExBoolLit { return e.bval }
+    if e.kind == ExUnary && e.text == "!" { return !when_value(p, e.a) }
+    if e.kind == ExBinary && e.text == "&&" { return when_value(p, e.a) && when_value(p, e.b) }
+    if e.kind == ExBinary && e.text == "||" { return when_value(p, e.a) || when_value(p, e.b) }
+    if e.kind == ExBinary && (e.text == "==" || e.text == "!=") {
+        Expr* name = e.a
+        Expr* value = e.b
+        if name.kind == ExStringLit { name = e.b; value = e.a }
+        if name.kind == ExName && value.kind == ExStringLit && (name.text == "target_os" || name.text == "target_arch") {
+            string actual = p.target_os
+            if name.text == "target_arch" { actual = p.target_arch }
+            bool same = actual == value.text
+            if e.text == "!=" { return !same }
+            return same
+        }
+    }
+    Token t = Token{ TkIdent, "", e.line, e.col }
+    p_error(p, t, "a 'when' condition compares target_os or target_arch with a string (==, !=, &&, ||, !)")
+    return false
+}
+
+// `when` at the top of a file: the chosen branch's items join the file's
+void when_top(Parser* p, Decl*[dynamic]* decls, Stmt*[dynamic]* main) {
+    bool done = false        // has a branch been chosen?
+    bool more = true
+    while more && !p.had_error {
+        bool take = false
+        if p_check(p, TkIdent) && p_peek(p).text == "when" {
+            p_advance(p)
+            take = when_value(p, header_expr(p)) && !done
+        } else {
+            take = !done         // the final `else { }`
+        }
+        Decl*[dynamic] skip_decls = []
+        Stmt*[dynamic] skip_main = []
+        p_expect(p, TkLBrace)
+        skip_newlines(p)
+        while !p_check(p, TkRBrace) && !p_at_end(p) && !p.had_error {
+            if take { top_item(p, decls, main) } else { top_item(p, &skip_decls, &skip_main) }
+            skip_newlines(p)
+        }
+        p_expect(p, TkRBrace)
+        if take { done = true }
+        // `else when ... { }` / `else { }` (on the line after the `}` too)
+        int save = p.pos
+        skip_newlines(p)
+        if p_match(p, TkKwElse) {
+            more = true
+            if !(p_check(p, TkIdent) && p_peek(p).text == "when") && !p_check(p, TkLBrace) { p_unexpected(p) }
+            if p_check(p, TkLBrace) { more = true }
+        } else {
+            p.pos = save
+            more = false
+        }
+    }
+}
+
+// `when` inside a function: the chosen branch's statements, as a block
+Stmt* when_stmt(Parser* p) {
+    Token kw = p_peek(p)
+    Stmt* chosen = new_stmt(StBlock, kw.line, kw.col)
+    bool done = false
+    bool more = true
+    while more && !p.had_error {
+        bool take = false
+        if p_check(p, TkIdent) && p_peek(p).text == "when" {
+            p_advance(p)
+            take = when_value(p, header_expr(p)) && !done
+        } else {
+            take = !done
+        }
+        Stmt* b = block(p)
+        if take { chosen = b; done = true }
+        int save = p.pos
+        skip_newlines(p)
+        if p_match(p, TkKwElse) {
+            if !(p_check(p, TkIdent) && p_peek(p).text == "when") && !p_check(p, TkLBrace) { p_unexpected(p) }
+        } else {
+            p.pos = save
+            more = false
+        }
+    }
+    return chosen
 }
 
 // ---- statements --------------------------------------------------------
@@ -534,6 +661,7 @@ Stmt* statement(Parser* p) {
         case TkLBrace:   return block(p)
         case TkKwVar, TkKwConst: return var_decl_core(p)
         default:
+            if at_when(p) { return when_stmt(p) }
             if (looks_like_typed_decl(p)) { return var_decl_core(p); }
             return expr_or_assign_core(p)
     }
