@@ -33,7 +33,18 @@ and a GitHub Release.
   `platform_window` and `when`; tests (76): the window opened natively and closed by the
   user, `when` on both backends.
 
+### Added
+- **`--target windows-x64 | linux-x64 | macos-arm64`**: build for another OS / CPU
+  (cross-compiling, native backend only; `src/target.strata`). `when` tests the target,
+  and so do executable names, the object format / linker and a project's per-platform
+  settings. (The Linux and macOS targets themselves are being built.)
+
 ### Changed
+- **The native runtime is split by OS**: `lib/srt.strata` is the same everywhere and
+  `when`-imports its OS layer, `lib/srt/windows.strata` (msvcrt / kernel32, with
+  `srt_os_*` for paths, folders and programs); a Linux layer is next.
+- `bootstrap.txt`: 2.5.0. stage0 links stage1 with its own runtime, so today's
+  `lib/srt.strata` is first compiled by stage1 (and may use `when`).
 - **Machine code straight from the code generator**: `arch/x64.strata` builds its
   instructions as operands (`Opnd`) and hands them to the encoder directly - no assembly
   text in a build (it's printed only for `stratac asm`, and the IR text only for

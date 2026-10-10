@@ -63,7 +63,7 @@ done
 rm -rf "$prefix/lib"                                  # drop stale runtime files
 mkdir -p "$prefix/lib"
 cp "$compiler"/lib/*.h "$compiler"/lib/srt.strata "$compiler"/lib/CrossPlatform.strata "$prefix/lib/"
-cp -R "$compiler"/lib/CrossPlatform "$prefix/lib/"
+cp -R "$compiler"/lib/CrossPlatform "$compiler"/lib/srt "$prefix/lib/"
 
 # --- Link into bindir ---------------------------------------------------------
 mkdir -p "$bindir"

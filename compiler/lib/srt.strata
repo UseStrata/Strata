@@ -7,44 +7,17 @@
 // runtime (lib/*.h) the C backend uses, so both backends print the same.
 //
 // build.ps1 compiles this file with Strata's own native backend (`stratac object`) into
-// lib/srt.o, which Strata's linker links into every native program. What it needs from
-// outside is in the `foreign` block: functions of the C runtime that ships with Windows
-// (msvcrt.dll). Structs travel by pointer (results through the first argument).
+// lib/srt.o, which Strata's linker links into every native program. It's the same on every
+// OS; what it needs from the OS is in lib/srt/<os>.strata (windows.strata: msvcrt and
+// kernel32). Structs travel by pointer (results through the first argument).
 //
 // Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
 // (see ../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
 
-foreign {
-    u8* malloc(int size)
-    u8* realloc(u8* p, int size)
-    void free(u8* p)
-    u8* memcpy(u8* dst, u8* src, int n)
-    u8* memset(u8* dst, i32 c, int n)
-    int strlen(string s)
-    i32 strcmp(string a, string b)
-    i32 puts(string s)
-    u8* fopen(string path, string mode)
-    i32 fclose(u8* f)
-    i32 fseek(u8* f, i32 offset, i32 whence)     // `long` is 32 bits on Windows
-    i32 ftell(u8* f)
-    int fread(u8* buf, int size, int n, u8* f)
-    int fwrite(u8* buf, int size, int n, u8* f)
-    float sinf(float x)
-    float cosf(float x)
-    float tanf(float x)
-    // for the host functions (the end of this file)
-    i32 fflush(u8* f)
-    u8* __iob_func()
-    string getenv(string name)
-    i32 _mkdir(string path)
-    int _spawnvp(i32 mode, string cmd, string* argv)
-    int _cwait(i32* status, int process, i32 action)
-}
-foreign {   // kernel32.dll
-    u32 GetFileAttributesA(string path)
-    u32 GetModuleFileNameA(u8* module, u8* buf, u32 size)
-    i32 GetModuleHandleExA(u32 flags, u8* address, u8** module)
-}
+// What the runtime needs from the OS - memory, strings and stdio in the C runtime's names
+// (malloc, memcpy, puts, fopen, ...), and srt_os_* for paths, folders and programs - comes
+// from the OS's file in lib/srt/:
+when target_os == "windows" { import srt.windows }
 
 // ---- arenas -------------------------------------------------------------------------------
 // The layout of lib/arena.h: an arena is the newest of a chain of blocks; a block is this
@@ -779,13 +752,7 @@ export string strata_capture_text() {
     return cast<string>(cap_buf)
 }
 
-// stdout: msvcrt's FILE array, entry 1 (a FILE is 48 bytes)
-u8* stdout_file() { return cast<u8*>(cast<int>(__iob_func()) + 48) }
-
-export void strata_print_raw(string text) {
-    int n = strlen(text)
-    if n > 0 { fwrite(bytes(text), 1, n, stdout_file()) }
-}
+export void strata_print_raw(string text) { srt_os_print_raw(bytes(text), strlen(text)) }
 
 export string strata_join(ArrayRep* parts) {
     string* p = cast<string*>(parts.data)
@@ -802,8 +769,8 @@ export string strata_join(ArrayRep* parts) {
     return cast<string>(r)
 }
 
-export string strata_host_os() { return "windows" }
-export string strata_host_arch() { return "x86_64" }
+export string strata_host_os() { return srt_os_name() }
+export string strata_host_arch() { return srt_os_arch() }
 
 export string strata_getenv(string name) {
     string v = getenv(name)
@@ -814,48 +781,29 @@ export string strata_getenv(string name) {
 export string strata_cc() {
     string cc = strata_getenv("STRATA_CC")
     if cc != "" { return cc }
-    return "gcc"
+    return srt_os_default_cc()
 }
 
-// the path of a loaded module (null: the exe), as a runtime string ("" on failure)
-string module_path(u8* module) {
+export string strata_exe_path() {
     u8* buf = pool_alloc(&strs, 4096)
-    u32 n = GetModuleFileNameA(module, buf, cast<u32>(4096))
-    if n == cast<u32>(0) || n >= cast<u32>(4096) { return "" }
+    if srt_os_exe_path(buf, 4096) == 0 { return "" }
     return cast<string>(buf)
 }
 
-export string strata_exe_path() { return module_path(null) }
-
-export int strata_cpu_count() {
-    string n = getenv("NUMBER_OF_PROCESSORS")
-    int v = 0
-    if cast<u8*>(n) != null {
-        u8* b = bytes(n)
-        int i = 0
-        while b[i] >= cast<u8>('0') && b[i] <= cast<u8>('9') {
-            v = v * 10 + (cast<int>(b[i]) - cast<int>('0'))
-            i += 1
-        }
-    }
-    if v > 0 { return v }
-    return 1
+// the path of the exe / dll this runtime is in ("" if unknown)
+string module_path() {
+    u8* buf = pool_alloc(&strs, 4096)
+    if srt_os_module_path(buf, 4096) == 0 { return "" }
+    return cast<string>(buf)
 }
+
+export int strata_cpu_count() { return srt_os_cpu_count() }
 
 // ---- files
 
-u32 no_file() { return cast<u32>(4294967295) }   // INVALID_FILE_ATTRIBUTES
+export bool strata_file_exists(string path) { return srt_os_path_kind(path) != 0 }
 
-export bool strata_file_exists(string path) {
-    if strlen(path) == 0 { return false }
-    return GetFileAttributesA(path) != no_file()
-}
-
-bool is_directory(string path) {
-    if strlen(path) == 0 { return false }
-    u32 a = GetFileAttributesA(path)
-    return a != no_file() && (a & cast<u32>(16)) != cast<u32>(0)
-}
+bool is_directory(string path) { return srt_os_path_kind(path) == 2 }
 
 bool is_sep(u8 c) { return c == cast<u8>('/') || c == cast<u8>('\\') }
 
@@ -866,23 +814,14 @@ export bool strata_make_dirs(string path) {
     if is_directory(path) { return true }
     u8* p = pool_alloc(&strs, n + 1)
     memcpy(p, bytes(path), n)
-    int start = 0
-    if n >= 2 && p[1] == cast<u8>(':') { start = 2 }                 // C:\...
-    else if n >= 2 && is_sep(p[0]) && is_sep(p[1]) {                  // \\server\share\...
-        int seps = 0
-        start = 2
-        while start < n && seps < 2 {
-            if is_sep(p[start]) { seps += 1 }
-            start += 1
-        }
-    }
+    int start = srt_os_path_root(path)       // "C:" etc. isn't a folder to make
     bool going = true
     int i = start + 1
     while going && i <= n {
         if i == n || is_sep(p[i]) {
             u8 saved = p[i]
             p[i] = cast<u8>(0)
-            if !is_directory(cast<string>(p)) && _mkdir(cast<string>(p)) != 0 && !is_directory(cast<string>(p)) { going = false }
+            if !is_directory(cast<string>(p)) && !srt_os_mkdir(cast<string>(p)) { going = false }
             p[i] = saved
         }
         i += 1
@@ -1092,61 +1031,9 @@ export void strata_host_reset() {
 }
 
 // ---- running programs
-// msvcrt's _spawnvp joins argv into one command line WITHOUT quoting, and the program
-// splits it again; so quote each argument the way the C runtime parses them back.
 
-string quote_arg(string a) {
-    int n = strlen(a)
-    u8* s = bytes(a)
-    bool needs = n == 0
-    for i in 0..n {
-        u8 c = s[i]
-        if c == cast<u8>(' ') || c == cast<u8>(9) || c == cast<u8>(10) || c == cast<u8>(11) || c == cast<u8>('"') { needs = true }
-    }
-    if !needs { return a }
-    u8* q = pool_alloc(&strs, n * 2 + 3)
-    int o = 0
-    int slashes = 0
-    q[o] = cast<u8>('"'); o += 1
-    for i in 0..n {
-        u8 c = s[i]
-        if c == cast<u8>('\\') {
-            slashes += 1
-            q[o] = c; o += 1
-        } else {
-            if c == cast<u8>('"') {          // double the backslashes, escape the quote
-                for k in 0..slashes { q[o] = cast<u8>('\\'); o += 1 }
-                q[o] = cast<u8>('\\'); o += 1
-            }
-            slashes = 0
-            q[o] = c; o += 1
-        }
-    }
-    for k in 0..slashes { q[o] = cast<u8>('\\'); o += 1 }    // backslashes before the closing quote
-    q[o] = cast<u8>('"'); o += 1
-    q[o] = cast<u8>(0)
-    return cast<string>(q)
-}
-
-// start argv[0..n) (no wait); 0 if it couldn't be started
-int start_process(string* argv, int n) {
-    if n < 1 { return 0 }
-    string* quoted = cast<string*>(malloc(8 * (n + 1)))
-    for i in 0..n { quoted[i] = quote_arg(argv[i]) }
-    quoted[n] = cast<string>(null)
-    fflush(null)
-    int h = _spawnvp(1, argv[0], quoted)      // _P_NOWAIT
-    free(cast<u8*>(quoted))
-    if h == 0 - 1 { return 0 }
-    return h
-}
-
-int wait_process(int h) {
-    if h == 0 { return 0 - 1 }
-    i32 status = 0
-    if _cwait(&status, h, 0) == 0 - 1 { return 0 - 1 }
-    return cast<int>(status)
-}
+int start_process(string* argv, int n) { return srt_os_start(argv, n) }
+int wait_process(int h) { return srt_os_wait(h) }
 
 void report_no_start(string program) {
     if program == strata_cc() {
@@ -1197,19 +1084,11 @@ global string libdir_set
 
 export void strata_host_set_libdir(string dir) { libdir_set = dir }
 
-// the exe or dll this code is in (the one holding this runtime's globals)
-u8* this_module() {
-    u8* m = null
-    // 4 | 2: GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | ..._UNCHANGED_REFCOUNT
-    if GetModuleHandleExA(cast<u32>(6), cast<u8*>(&libdir_set), &m) == 0 { return null }
-    return m
-}
-
 // The host's choice; else lib/ next to the module this code is in (the exe, or libstrata.dll
 // for an engine), or one level up (the repo layout: bin/../lib); else "lib".
 export string strata_host_libdir() {
     if cast<u8*>(libdir_set) != null && libdir_set != "" { return libdir_set }
-    string path = module_path(this_module())
+    string path = module_path()
     int cut = 0 - 1
     u8* b = bytes(path)
     for i in 0..strlen(path) { if is_sep(b[i]) { cut = i } }

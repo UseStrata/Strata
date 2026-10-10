@@ -113,10 +113,10 @@ int cmd_native(string path, bool show_ir, bool opt) {
 int cmd_assemble(string path, string out) {
     string src = read_file(path)
     if src.len == 0 { print("error: cannot read " + path); return 1 }
-    ObjFile ob = assemble(src, arch_name(host_arch()))
+    ObjFile ob = assemble(src, arch_name(target_arch()))
     if !ob.ok { print(basename_of(path) + ": error: " + ob.err); return 1 }
     if out == "" { out = stem_of(path) + ".o" }
-    if !write_object(host_os(), out, &ob) { print("error: cannot write " + out); return 1 }
+    if !write_object(target_os(), out, &ob) { print("error: cannot write " + out); return 1 }
     return 0
 }
 
@@ -139,7 +139,7 @@ int cmd_object(string path, string out) {
     if !nr.ok { print(basename_of(path) + ": error: can't compile natively: " + nr.why); return 1 }
     ObjFile ob = nr.obj
     if out == "" { out = stem_of(path) + ".o" }
-    if !write_object(host_os(), out, &ob) { print("error: cannot write " + out); return 1 }
+    if !write_object(target_os(), out, &ob) { print("error: cannot write " + out); return 1 }
     return 0
 }
 
@@ -216,6 +216,7 @@ int usage() {
     print("  stratac object <file.strata> [out.o]  compile a module (no main) into an object file")
     print("  stratac ast    <file.strata>     parse and print the AST")
     print("  stratac tokens <file.strata>     print the token stream")
+    print("  --target windows-x64 | linux-x64 | macos-arm64   build for another OS / CPU (native backend)")
     print("")
     print("target: a .strata file, a project folder, a strata.toml, or nothing (the project")
     print("in the current folder). Projects are cached: unchanged builds skip the C compiler.")
@@ -241,13 +242,17 @@ int dmm_main(string[dynamic] args) {
     bool rest_mode = false
     string backend = "auto"
     bool backend_next = false
+    string target_flag = ""
+    bool target_next = false
     string[dynamic] prog_args = []
     for i in 2..args.len {
         string a = args[i]
         if rest_mode { prog_args.push(a) }
         else if backend_next { backend = a; backend_next = false }
+        else if target_next { target_flag = a; target_next = false }
         else if a == "--" { rest_mode = true }
         else if a == "--backend" { backend_next = true }
+        else if a == "--target" { target_next = true }
         else if a == "--release" { release = true }
         else if a == "--force" { force = true }
         else if !have_target { target = a; have_target = true }
@@ -256,6 +261,15 @@ int dmm_main(string[dynamic] args) {
     string libdir = resolve_libdir(args[0])
     if backend_next || (backend != "auto" && backend != "native" && backend != "c") {
         print("error: --backend takes native, c or auto")
+        return 2
+    }
+    // --target: build for another OS / CPU (cross-compiling): windows-x64, linux-x64, macos-arm64
+    if target_next || (target_flag != "" && !set_target(target_flag)) {
+        print("error: --target takes windows-x64, linux-x64 or macos-arm64")
+        return 2
+    }
+    if cmd == "run" && !target_is_host() {
+        print("error: a program built for " + target_name() + " can't run here (use build)")
         return 2
     }
 

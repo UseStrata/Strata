@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright © 2026 Connor Rutberg
+//
+// src/target.strata - the OS and CPU the compiler builds for. CORE.
+//
+// This machine's, unless `--target` says otherwise (cross-compiling: e.g. Linux programs
+// built on Windows). Everything about the program being made asks here - `when`, the
+// executable's name, the backend, the object format and linker, a project's per-platform
+// settings; what's about the machine running the compiler (starting programs, its own
+// paths) asks the host (project.strata's host_os).
+
+import host   // strata_host_os, strata_host_arch
+
+global string chosen_os = ""      // "" = this machine's
+global string chosen_arch = ""
+
+// "windows", "linux" or "macos"
+export string target_os() {
+    if chosen_os == "" { return strata_host_os() }
+    return chosen_os
+}
+
+// "x86_64" or "arm64"
+export string target_arch() {
+    if chosen_arch == "" { return strata_host_arch() }
+    return chosen_arch
+}
+
+// a target's name, as `--target` takes it: "windows-x64", "linux-x64", "macos-arm64"
+export string target_name() {
+    string a = target_arch()
+    if a == "x86_64" { a = "x64" }
+    return target_os() + "-" + a
+}
+
+// Is the target this machine? (the C backend can only build for it: it runs this machine's C compiler)
+export bool target_is_host() { return target_os() == strata_host_os() && target_arch() == strata_host_arch() }
+
+// Set the target from a name like "linux-x64". False if it isn't one.
+export bool set_target(string name) {
+    int dash = 0 - 1
+    for i in 0..name.len { if name[i] == '-' { dash = i } }
+    if dash <= 0 { return false }
+    string os = substr(name, 0, dash)
+    string arch = substr(name, dash + 1, name.len - dash - 1)
+    if arch == "x64" || arch == "x86_64" || arch == "amd64" { arch = "x86_64" }
+    else if arch == "aarch64" { arch = "arm64" }
+    if os != "windows" && os != "linux" && os != "macos" { return false }
+    if arch != "x86_64" && arch != "arm64" { return false }
+    chosen_os = os
+    chosen_arch = arch
+    return true
+}

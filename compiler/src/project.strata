@@ -32,6 +32,7 @@
 // Unknown sections and keys are errors, so a typo can't silently do nothing.
 
 import modules   // dirname_of
+import target   // target_os: the OS being built for
 import host   // strata_report: where messages go; strata_host_os (see strata_host.h)
 
 export struct Project {
@@ -186,7 +187,7 @@ void toml_key(Toml* t, string key, string v) {
     } else if sec == "build" {
         toml_build_key(t, key, v, false, true)
     } else if sec == "windows" || sec == "linux" || sec == "macos" {
-        toml_build_key(t, key, v, true, sec == host_os())
+        toml_build_key(t, key, v, true, sec == target_os())   // the OS being built for
     } else if sec == "" {
         toml_error(t, "'" + key + "' must be inside a section such as [project]")
     }

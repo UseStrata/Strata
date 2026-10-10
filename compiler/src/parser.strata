@@ -21,7 +21,7 @@ import lexer
 // the AST node types + new_* constructors
 import ast
 import token
-import host   // strata_host_os, strata_host_arch: the default target for `when`
+import target // target_os, target_arch: what `when` tests
 
 export struct Parser {
     Token[dynamic] toks
@@ -34,12 +34,12 @@ export struct Parser {
     string     err_msg
     int     depth      // how deeply the code being parsed is nested (see max_nesting)
     // what `when` tests: the OS and CPU being built for ("windows" / "linux" / "macos",
-    // "x86_64" / "arm64"); this machine's unless set otherwise
+    // "x86_64" / "arm64"; target.strata: this machine's unless --target says otherwise)
     string  target_os
     string  target_arch
 }
 
-export Parser new_parser(Token[dynamic] toks) { return Parser{ toks, 0, false, false, 0, 0, "", 0, strata_host_os(), strata_host_arch() }; }
+export Parser new_parser(Token[dynamic] toks) { return Parser{ toks, 0, false, false, 0, 0, "", 0, target_os(), target_arch() }; }
 
 // ---- cursor ------------------------------------------------------------
 

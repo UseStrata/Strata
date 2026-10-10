@@ -47,14 +47,14 @@ string[dynamic] no_strings() {
     return a
 }
 
-// What this platform calls a program and a shared library: foo.exe / foo.dll on Windows,
+// What the target OS calls a program and a shared library: foo.exe / foo.dll on Windows,
 // foo / foo.dylib on macOS, foo / foo.so on Linux.
 export string exe_ext() {
-    if host_os() == "windows" { return ".exe" }
+    if target_os() == "windows" { return ".exe" }
     return ""
 }
 export string dll_ext() {
-    string os = host_os()
+    string os = target_os()
     if os == "windows" { return ".dll" }
     if os == "macos" { return ".dylib" }
     return ".so"
@@ -200,16 +200,21 @@ export bool run_build(BuildSpec s, string libdir) {
               ": error: a dll has no main, so its entry file can't contain top-level code")
         return false
     }
+    // cross-compiling (another OS / CPU than this machine's): only the native backend can
+    if !target_is_host() && s.backend == "c" {
+        strata_report(basename_of(s.entry) + ": error: the C backend builds only for this machine (" + target_name() + " needs the native backend)")
+        return false
+    }
     // the native backend, when it can build this (else the C backend below)
     if s.backend != "c" {
-        string why = native_target_why(host_os(), host_arch())
-        if why == "" && !strata_file_exists(libdir + "/srt.o") { why = "its runtime, lib/srt.o, is missing (build.ps1 makes it from lib/srt.strata)" }
+        string why = native_target_why(target_os(), target_arch())
+        if why == "" && !strata_file_exists(runtime_object(libdir)) { why = "its runtime, " + runtime_object(libdir) + ", is missing (build.ps1 makes it from lib/srt.strata)" }
         if why == "" {
             NativeResult nr = native_compile(prog, !s.dll, s.release, view_object())   // a dll has no main
             if nr.ok { return native_build(s, libdir, prog, &nr.obj) }
             why = nr.why
         }
-        if s.backend == "native" {
+        if s.backend == "native" || !target_is_host() {
             strata_report(basename_of(s.entry) + ": error: can't build natively: " + why + " (use --backend c)")
             return false
         }
@@ -288,6 +293,13 @@ export bool run_build(BuildSpec s, string libdir) {
 // A dll exports its entry module's `export`ed functions, and gets a C header (<name>.h)
 // and an import library (<name>.dll.a for GNU ld, <name>.lib for MSVC) beside it.
 
+// The native runtime for the target, compiled from lib/srt.strata: lib/srt.o for Windows
+// x64, lib/srt-<target>.o for the others (lib/srt-linux-x64.o).
+export string runtime_object(string libdir) {
+    if target_os() == "windows" && target_arch() == "x86_64" { return libdir + "/srt.o" }
+    return libdir + "/srt-" + target_name() + ".o"
+}
+
 // a fingerprint of an object's contents (bytes, relocations, symbols): for the build cache
 string object_fingerprint(ObjFile* o) {
     u64 h = 1469598103934665603
@@ -309,7 +321,7 @@ bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
     argv.push(strata_cc())
     argv.push("-O2")
     argv.push(obj_file)
-    argv.push(libdir + "/srt.o")
+    argv.push(runtime_object(libdir))
     for i in 0..s.c_sources.len    { argv.push(s.c_sources[i]) }
     for i in 0..s.include_dirs.len { argv.push("-I" + s.include_dirs[i]) }
     for i in 0..s.defines.len      { argv.push("-D" + s.defines[i]) }
@@ -341,7 +353,7 @@ bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
 
     // Strata's own linker, when the program needs nothing but the runtime (lib/srt.o,
     // made by build.ps1) and DLLs; else the C toolchain links
-    Link lk = new_link(host_os())
+    Link lk = new_link(target_os())
     bool own = s.c_sources.len == 0 && s.frameworks.len == 0
     string[dynamic] libs = []
     for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { libs.push(prog.decls[i].path) } }
@@ -356,7 +368,7 @@ bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
     if own {
         string[dynamic] found = link_lib_paths(&lk)
         for i in 0..found.len { dlls = dlls + " " + found[i] }
-        cmd = "strata-link " + libdir + "/srt.o" + dlls
+        cmd = "strata-link " + runtime_object(libdir) + dlls
     }
 
     string key = ""
@@ -371,11 +383,11 @@ bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
         string dir = dirname_of(obj_file)
         if dir != "." { strata_make_dirs(dir) }
     }
-    if !write_object(host_os(), obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
+    if !write_object(target_os(), obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
     bool linked = false
     if own {
-        link_object(&lk, obj_file, object_bytes(host_os(), ob))
-        link_object(&lk, "srt.o", strata_read_bytes(libdir + "/srt.o"))
+        link_object(&lk, obj_file, object_bytes(target_os(), ob))
+        link_object(&lk, basename_of(runtime_object(libdir)), strata_read_bytes(runtime_object(libdir)))
         linked = link_program(&lk, s.out_bin, s.dll, exports)
         // --backend native: no C toolchain behind it (e.g. an undefined symbol is an error)
         if !linked && s.backend == "native" {

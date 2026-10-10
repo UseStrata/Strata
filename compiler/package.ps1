@@ -31,6 +31,7 @@ Copy-Item (Join-Path $lib '*.h') (Join-Path $stage 'lib')
 Copy-Item (Join-Path $lib 'srt.strata') (Join-Path $stage 'lib')   # the native backend's runtime (Strata)
 Copy-Item (Join-Path $lib 'CrossPlatform.strata') (Join-Path $stage 'lib')   # Strata's libraries (import CrossPlatform)
 Copy-Item (Join-Path $lib 'CrossPlatform') (Join-Path $stage 'lib') -Recurse
+Copy-Item (Join-Path $lib 'srt') (Join-Path $stage 'lib') -Recurse   # the runtime's OS layers
 Copy-Item (Join-Path $lib 'srt.o') (Join-Path $stage 'lib')   # ... compiled: Strata's linker links it
 # the embedding API: C header, C++ wrapper, C# bindings
 foreach ($f in 'strata.h','strata.hpp','Strata.cs') { Copy-Item (Join-Path $here "api\$f") (Join-Path $stage "include\$f") }

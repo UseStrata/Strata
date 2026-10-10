@@ -84,21 +84,9 @@ function Build-Runtime([string]$with, [string]$to) {
     if ($LASTEXITCODE -ne 0) { throw "lib\srt.o build failed ($with)" }
 }
 
-# --- stage1: built by stage0, against today's runtime -----------------------------
-# stage0 links the runtime from its own lib/, so it gets this one (compiled by stage0).
-$stage0Lib = Join-Path (Split-Path -Parent $stage0) "lib"
-if ($Bootstrap -or -not ($stage0 -like "$boot*")) {
-    # someone else's stratac (-Bootstrap, or the installed one): run a copy beside a lib/
-    # of our own, so its own lib/srt.o isn't touched
-    $s0dir = Join-Path $boot "stage0"
-    if (Test-Path $s0dir) { Remove-Item -Recurse -Force $s0dir }
-    New-Item -ItemType Directory -Path (Join-Path $s0dir "lib") | Out-Null
-    Copy-Item (Join-Path $lib "*.h") (Join-Path $s0dir "lib")
-    Copy-Item $stage0 (Join-Path $s0dir "stratac.exe")
-    $stage0 = Join-Path $s0dir "stratac.exe"
-    $stage0Lib = Join-Path $s0dir "lib"
-}
-Build-Runtime $stage0 (Join-Path $stage0Lib "srt.o")
+# --- stage1: built by stage0, with stage0's own runtime ---------------------------
+# (the pinned release's lib/srt.o: it has everything the compiler's source calls, so
+# today's lib/srt.strata is first compiled by stage1 - and may use what stage0 can't read)
 $stage1 = Join-Path $boot "stage1.exe"
 $stage2 = Join-Path $boot "stage2.exe"
 $stage3 = Join-Path $boot "stage3.exe"

@@ -23,5 +23,6 @@ export import lower
 export import opt
 export import arch.x64
 export import native
+export import target
 export import asm
 export import linker

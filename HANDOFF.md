@@ -164,14 +164,13 @@ powershell -ExecutionPolicy Bypass -File compiler\install.ps1      # rebuild + i
 ```
 
 **The bootstrap** (`build.ps1`, ~9 s, **no C compiler**): stage0 = the release named in
-`bootstrap.txt` (2.3.0), downloaded from GitHub once and cached in `compiler/build/`
+`bootstrap.txt` (2.5.0), downloaded from GitHub once and cached in `compiler/build/`
 (`-Bootstrap <exe>` overrides; offline it falls back to the installed `stratac`). Every
-stage is built natively and links the runtime `lib/srt.o`, which each stage first compiles
-from `lib/srt.strata` (`stratac object`; stage0's copy goes into stage0's own `lib/`):
-stage0 → stage1 → stage2 → stage3. **The build fails unless stage2 and stage3 are
-byte-identical executables** (and stage1 / stage2 compile the same `srt.o`). stage3 ships
-as `bin/stratac.exe`; `console.exe` is built by it; `libstrata.dll` from
-`compiler/api/strata.toml` through C (skipped if there's no gcc).
+stage is built natively. stage0 links stage1 with **its own** shipped `lib/srt.o`; from
+then on each stage first compiles today's `lib/srt.strata` (`stratac object`) and links
+with that: stage0 → stage1 → stage2 → stage3. **The build fails unless stage2 and stage3
+are byte-identical executables** (and stage1 / stage2 compile the same `srt.o`). stage3
+ships as `bin/stratac.exe`; `console.exe` and `libstrata.dll` (natively) are built by it.
 
 **macOS / Linux** (needs `cc`; X11 headers on Linux for the test projects):
 ```
@@ -539,11 +538,12 @@ iteration (today)? · which of the candidates comes next.
 
 ## 13. Working notes (for whoever picks this up — human or agent)
 
-- **The bootstrap rule:** the compiler's own source (and `lib/srt.strata`) may only use
-  features of the release in `bootstrap.txt` (2.3.0) **and of the seed** (`seed/VERSION`).
-  To use a new feature in `src/`: release a version with it, bump the pin, refresh the
-  seed. The pinned release must also have a native backend that can build the compiler
-  (any 2.3.0+).
+- **The bootstrap rule:** the compiler's own source may only use features of the release
+  in `bootstrap.txt` (2.5.0) **and of the seed** (`seed/VERSION`), and only the runtime /
+  host functions the pinned release's `lib/srt.o` provides (stage0 links stage1 with it).
+  `lib/srt.strata` is first compiled by stage1, so it may use anything the current source
+  supports (`when`, ...). To use a new feature in `src/`: release a version with it, bump
+  the pin, refresh the seed.
 - **OS-specific code goes in `lib/crossplatform.h`** (a new section or function), called
   from `src/strata_host.h`. No `system()`, `cmd.exe`, `.exe` literals or `#ifdef _WIN32`
   in the Strata sources: ask `host_os()` / `exe_ext()` / `dll_ext()`.
