@@ -111,6 +111,24 @@ foreach ($backend in @("native", "c")) {
     if ($bad.Count -eq 0) { Write-Host "PASS  backend/$backend (every run golden)" -ForegroundColor Green; $pass++ }
     else { Write-Host "FAIL  backend/$backend ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
 }
+# The CrossPlatform library's window (lib/CrossPlatform*.strata), natively: open it, close
+# it the way a user would (WM_CLOSE), and the program must notice and end.
+$winSrc = Join-Path $examples "platform_window.strata"
+$null = & $strata build $winSrc --backend native --force
+$winOk = $false
+if ($LASTEXITCODE -eq 0) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo (Join-Path $examples "platform_window.exe")
+    $psi.RedirectStandardOutput = $true
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    for ($t = 0; $t -lt 50 -and $proc.MainWindowHandle -eq [IntPtr]::Zero; $t++) { Start-Sleep -Milliseconds 100; $proc.Refresh() }
+    $null = $proc.CloseMainWindow()
+    if ($proc.WaitForExit(5000)) { $winOk = ($proc.StandardOutput.ReadToEnd().Trim() -eq "window closed") }
+    else { $proc.Kill() }
+}
+if ($winOk) { Write-Host "PASS  library/CrossPlatform-window (opened natively, closed by the user)" -ForegroundColor Green; $pass++ }
+else { Write-Host "FAIL  library/CrossPlatform-window" -ForegroundColor Red; $fail++ }
+
 # The raylib examples (graphical: built, not run) declare raylib in a foreign block
 # (examples/raylib.strata), so they build natively - linked by Strata's linker, straight
 # against libraylib.dll - and through C, with raylib.h.

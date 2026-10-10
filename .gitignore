@@ -58,3 +58,6 @@ compiler/dist/
 *.user
 Thumbs.db
 .DS_Store
+
+# CrossPlatform example: the folders examples/platform.strata makes next to itself
+compiler/examples/platform-test/

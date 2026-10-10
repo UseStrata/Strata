@@ -6,7 +6,27 @@ and a GitHub Release.
 
 ## [Unreleased]
 
+### Added
+- **The CrossPlatform library, in Strata**: `import CrossPlatform` - a window
+  (`create_window`, `poll_events`, `set_window_title` / `size`, `window_width` /
+  `height`, `close_window`), the system (`os_name`, `cpu_arch`, `cpu_count`, `exe_path`,
+  `exe_file` / `library_file`: game -> game.exe / game.dll, libgame.so, libgame.dylib),
+  files (`path_exists`, `is_directory`, `make_directories`) and other programs
+  (`run_program`, `start_program` / `wait_program`). Same code on every OS; its Windows
+  part (user32 / kernel32) is all there is so far - it works natively and through C. The
+  native successor of `lib/crossplatform.h`.
+- **Strata's libraries are importable**: a module not found in the project folder is
+  looked for in Strata's `lib/` (`import CrossPlatform` is `<lib>/CrossPlatform.strata`).
+- **OS parts of a module**: `X.strata` may come with `X/windows.strata`, `X/linux.strata`,
+  `X/macos.strata`; the compiler loads the one for the OS it builds for as part of module
+  X (one module, its OS calls in their own files). A module without a part for the OS is
+  a clear error.
+- Examples `platform` (system, files, programs: a run golden, Windows-only for now) and
+  `platform_window`; tests (75): the window opened natively and closed by the user.
+
 ### Changed
+- `examples/crossplatform.strata` is now `crossplatform_header.strata` (the C-header
+  version; `import CrossPlatform` would find it first on Windows' case-blind file system).
 - **The native backend's layout** (internal; outputs byte-identical): one assembler,
   `src/asm.strata`, hands each instruction to its CPU's file - `src/arch/x64.strata` holds
   everything x86-64 (IR -> assembly and the encoder); one linker entry,

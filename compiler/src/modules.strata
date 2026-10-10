@@ -12,7 +12,13 @@
 //
 // Module names are resolved from the PROJECT ROOT (the main file's folder), so a name
 // means the same file everywhere: `import gfx.Renderer` is <root>/gfx/Renderer.strata
-// whichever file imports it.
+// whichever file imports it. A name not found there is looked for in Strata's own lib/
+// folder (its libraries: `import CrossPlatform` is <lib>/CrossPlatform.strata).
+//
+// OS parts: a module X.strata may come with per-OS files in a folder beside it,
+// X/windows.strata, X/linux.strata, X/macos.strata. The one for the OS being built for is
+// loaded as part of module X (its declarations are X's, private ones shared), so a
+// library splits its OS calls into their own files and is still imported as one module.
 //
 // Declaration order matches the old paste-based loader: an imported module's declarations
 // appear where its `import` is, so generated C is unchanged.
@@ -84,7 +90,23 @@ int ld_module(Loader* ld, string path, string file, string name, bool is_root) {
 
     int idx = ld.prog.modules.len
     ld.prog.modules.push(new_module(name, path, file))   // registered first, so cycles terminate
+    ld_part(ld, idx, path, file, is_root)
+    if !is_root {
+        // its OS part, if it has any: X/<os>.strata (the OS being built for)
+        string dir = stem_of(path)
+        string os = strata_host_os()
+        string own = dir + "/" + os + ".strata"
+        if strata_file_exists(own) { ld_part(ld, idx, own, stem_of(file) + "/" + os + ".strata", false) }
+        else if strata_file_exists(dir + "/windows.strata") || strata_file_exists(dir + "/linux.strata") || strata_file_exists(dir + "/macos.strata") {
+            ld_error(ld, file, 1, 1, "module '" + name + "' has no " + os + " part yet (" + stem_of(file) + "/" + os + ".strata)")
+        }
+    }
+    return idx
+}
 
+// Parse the file at `path` as (part of) module `idx`: its declarations join the program,
+// its imports are loaded.
+void ld_part(Loader* ld, int idx, string path, string file, bool is_root) {
     string src = ""
     // (a host's text is copied once, so the runtime remembers its length; see sstr.h)
     if is_root && ld.has_text { src = substr(ld.root_text, 0, ld.root_text.len) } else { src = read_file(path) }
@@ -94,7 +116,7 @@ int ld_module(Loader* ld, string path, string file, string name, bool is_root) {
     if p.had_error {
         strata_report(file + ":" + int_to_str(p.err_line) + ":" + int_to_str(p.err_col) + ": parse error: " + p.err_msg)
         ld.had_error = true
-        return idx
+        return
     }
 
     if is_root {
@@ -110,8 +132,9 @@ int ld_module(Loader* ld, string path, string file, string name, bool is_root) {
         if d.kind == DcImport {
             string rel = module_rel_path(d.path)
             string mpath = ld.root + "/" + rel
+            if !strata_file_exists(mpath) { mpath = strata_host_libdir() + "/" + rel }   // one of Strata's libraries
             if read_file(mpath).len == 0 {
-                ld_error(ld, file, d.line, d.col, "cannot find module '" + d.path + "' (looked for " + rel + " in the project folder)")
+                ld_error(ld, file, d.line, d.col, "cannot find module '" + d.path + "' (looked for " + rel + " in the project folder and in Strata's lib/)")
             } else {
                 int m = ld_module(ld, mpath, rel, d.path, false)
                 ld.prog.modules[idx].imports.push(m)
@@ -121,7 +144,6 @@ int ld_module(Loader* ld, string path, string file, string name, bool is_root) {
             ld.prog.decls.push(d)
         }
     }
-    return idx
 }
 
 // Load a program rooted at `path`. Errors are printed as they are found; `ok` is false

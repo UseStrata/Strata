@@ -1,0 +1,89 @@
+// Copyright © 2026 Connor Rutberg
+// lib/CrossPlatform.strata - what differs between operating systems, in one module:
+// a window, the system, files and other programs.
+//
+//     import CrossPlatform
+//     create_window(800, 450, "hello")
+//     while poll_events() { ... }
+//
+// The functions below are the same on every OS. The OS calls behind them are in
+// CrossPlatform/<os>.strata (windows.strata so far): the compiler loads the one for the OS
+// it builds for as part of this module. Adding an OS = adding its file with the same
+// os_* functions.
+//
+// Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
+// (see ../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
+
+// ---- the window ------------------------------------------------------------------------------
+// One window per program. Sizes are of its drawing area (without the title bar / borders).
+
+// Open the window. False if the OS wouldn't make it.
+export bool create_window(int width, int height, string title) { return os_create_window(width, height, title) }
+
+// Handle what happened to the window since the last call (resizing, closing, ...). False
+// once it's closed: the usual loop is `while poll_events() { ... }`.
+export bool poll_events() { return os_poll_events() }
+
+export void set_window_title(string title) { os_set_window_title(title) }
+export void set_window_size(int width, int height) { os_set_window_size(width, height) }
+export int window_width() { return os_window_width() }
+export int window_height() { return os_window_height() }
+export void close_window() { os_close_window() }
+
+// ---- the system ------------------------------------------------------------------------------
+
+export string os_name() { return os_system_name() }       // "windows", "linux" or "macos"
+export string cpu_arch() { return os_cpu_arch() }         // "x86_64" or "arm64"
+export int cpu_count() { return os_cpu_count() }          // logical processors (at least 1)
+export string exe_path() { return os_exe_path() }         // this program's file ("" if unknown)
+
+// The file name of a program / of a shared library called `name`, as this OS spells it:
+// game -> game.exe and game.dll on Windows, game and libgame.so on Linux, game and
+// libgame.dylib on macOS.
+export string exe_file(string name) {
+    if os_name() == "windows" { return name + ".exe" }
+    return name
+}
+export string library_file(string name) {
+    string os = os_name()
+    if os == "windows" { return name + ".dll" }
+    if os == "macos" { return "lib" + name + ".dylib" }
+    return "lib" + name + ".so"
+}
+
+// ---- files -----------------------------------------------------------------------------------
+
+export bool path_exists(string path) { return os_path_exists(path) }
+export bool is_directory(string path) { return os_is_directory(path) }
+
+// Make a folder and any missing parents ("a/b/c"). True if it exists afterwards.
+export bool make_directories(string path) {
+    if path == "" { return false }
+    if is_directory(path) { return true }
+    // each parent in turn ("a", "a/b", ...), then the folder itself
+    int start = os_path_root_length(path)
+    for i in (start + 1)..(path.len + 1) {
+        if i == path.len || path[i] == '/' || path[i] == '\\' {
+            string part = substr(path, 0, i)
+            if !is_directory(part) { os_make_directory(part) }
+        }
+    }
+    return is_directory(path)
+}
+
+// ---- other programs ---------------------------------------------------------------------------
+// A program and its arguments: ["gcc", "-O2", "game.c"] (no shell: nothing needs quoting).
+
+export struct Running { int handle }   // a started program (handle 0: it didn't start)
+
+// Start a program and wait for it: its exit code, -1 if it couldn't be started.
+export int run_program(string[dynamic] argv) { return wait_program(start_program(argv)) }
+
+// Start a program without waiting for it.
+export Running start_program(string[dynamic] argv) { return Running{ os_start_program(argv) } }
+
+// Wait for a started program to end: its exit code, -1 if it never started.
+export int wait_program(Running p) {
+    if p.handle == 0 { return 0 - 1 }
+    return os_wait_program(p.handle)
+}

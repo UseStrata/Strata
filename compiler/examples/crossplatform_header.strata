@@ -1,4 +1,5 @@
-// crossplatform.strata - a native window from Strata, using lib/crossplatform.h
+// crossplatform_header.strata - a native window from Strata, using lib/crossplatform.h
+// through the C backend (the native way: the CrossPlatform library, platform_window.strata)
 // (Win32 on Windows, Cocoa on macOS, X11 on Linux).
 //
 // import: the header's implementation switches on automatically in a Strata program,

@@ -1,0 +1,17 @@
+// platform_window.strata - a window from the CrossPlatform library, natively (no C):
+// it shows its live size in the title; close it to end the program.
+
+import CrossPlatform
+
+if !create_window(800, 450, "Strata - CrossPlatform window") {
+    print("couldn't open a window")
+} else {
+    var frames = 0
+    while poll_events() {
+        frames += 1
+        if frames % 60 == 0 {
+            set_window_title("Strata - " + int_to_str(window_width()) + " x " + int_to_str(window_height()))
+        }
+    }
+    print("window closed")
+}

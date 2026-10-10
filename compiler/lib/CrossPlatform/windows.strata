@@ -1,0 +1,227 @@
+// Copyright © 2026 Connor Rutberg
+// lib/CrossPlatform/windows.strata - CrossPlatform's Windows part: the os_* functions
+// CrossPlatform.strata calls, on top of user32 / kernel32 (and msvcrt for starting
+// programs). Loaded as part of the CrossPlatform module when building for Windows.
+//
+// Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
+// (see ../../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
+
+link "user32"
+
+foreign {   // kernel32.dll
+    u8* GetModuleHandleA(u8* name)
+    u8* GetProcAddress(u8* module, string name)
+    u32 GetModuleFileNameA(u8* module, u8* buf, u32 size)
+    u32 GetFileAttributesA(string path)
+    i32 CreateDirectoryA(string path, u8* security)
+    u32 GetActiveProcessorCount(u16 group)
+}
+
+foreign {   // user32.dll
+    struct WNDCLASSEXA {
+        u32 cbSize; u32 style; u8* lpfnWndProc; i32 cbClsExtra; i32 cbWndExtra
+        u8* hInstance; u8* hIcon; u8* hCursor; u8* hbrBackground
+        u8* lpszMenuName; string lpszClassName; u8* hIconSm
+    }
+    struct POINT { i32 x; i32 y }
+    struct MSG { u8* hwnd; u32 message; u64 wParam; i64 lParam; u32 time; POINT pt; u32 lPrivate }
+    struct RECT { i32 left; i32 top; i32 right; i32 bottom }
+
+    u16 RegisterClassExA(WNDCLASSEXA* wc)
+    u8* CreateWindowExA(u32 ex_style, string class_name, string title, u32 style, i32 x, i32 y,
+                        i32 width, i32 height, u8* parent, u8* menu, u8* instance, u8* param)
+    i32 ShowWindow(u8* window, i32 show)
+    i32 PeekMessageA(MSG* msg, u8* window, u32 first, u32 last, u32 remove)
+    i32 TranslateMessage(MSG* msg)
+    i64 DispatchMessageA(MSG* msg)
+    i32 IsWindow(u8* window)
+    i32 DestroyWindow(u8* window)
+    i32 SetWindowTextA(u8* window, string text)
+    i32 GetClientRect(u8* window, RECT* r)
+    i32 AdjustWindowRect(RECT* r, u32 style, i32 has_menu)
+    i32 SetWindowPos(u8* window, u8* after, i32 x, i32 y, i32 width, i32 height, u32 flags)
+    u8* LoadCursorA(u8* instance, u8* name)
+}
+
+foreign <process.h> {   // msvcrt.dll
+    int _spawnvp(i32 mode, string cmd, string* argv)
+    int _cwait(i32* status, int process, i32 action)
+}
+foreign <stdio.h> {
+    i32 fflush(u8* file)
+}
+
+// ---- the window ------------------------------------------------------------------------------
+
+global u8* window          // the window (null: none)
+global bool registered     // its window class
+
+u32 window_style() { return cast<u32>(13565952) }   // WS_OVERLAPPEDWINDOW
+
+// the outer size of a window whose drawing area is width x height
+RECT outer_size(int width, int height) {
+    RECT r = RECT{ 0, 0, cast<i32>(width), cast<i32>(height) }
+    AdjustWindowRect(&r, window_style(), 0)
+    return r
+}
+
+bool os_create_window(int width, int height, string title) {
+    if window != null { return true }
+    u8* instance = GetModuleHandleA(null)
+    if !registered {
+        // the window procedure: Windows' default (closing destroys the window, which
+        // os_poll_events notices)
+        u8* user32 = GetModuleHandleA(cast<u8*>("user32.dll"))
+        WNDCLASSEXA wc = WNDCLASSEXA{ cast<u32>(80), cast<u32>(3), GetProcAddress(user32, "DefWindowProcA"), 0, 0,
+                                      instance, null, LoadCursorA(null, cast<u8*>(32512)), cast<u8*>(6),
+                                      null, "StrataWindow", null }   // CS_HREDRAW | CS_VREDRAW, IDC_ARROW, COLOR_WINDOW + 1
+        if RegisterClassExA(&wc) == cast<u16>(0) { return false }
+        registered = true
+    }
+    RECT r = outer_size(width, height)
+    i32 anywhere = cast<i32>(0 - 2147483648)                        // CW_USEDEFAULT
+    window = CreateWindowExA(cast<u32>(0), "StrataWindow", title, window_style(), anywhere, anywhere,
+                             r.right - r.left, r.bottom - r.top, null, null, instance, null)
+    if window == null { return false }
+    ShowWindow(window, 1)                                           // SW_SHOWNORMAL
+    return true
+}
+
+bool os_poll_events() {
+    if window == null { return false }
+    MSG msg = MSG{ null, cast<u32>(0), cast<u64>(0), cast<i64>(0), cast<u32>(0), POINT{ 0, 0 }, cast<u32>(0) }
+    while PeekMessageA(&msg, null, cast<u32>(0), cast<u32>(0), cast<u32>(1)) != 0 {   // PM_REMOVE
+        TranslateMessage(&msg)
+        DispatchMessageA(&msg)
+    }
+    if IsWindow(window) == 0 { window = null }
+    return window != null
+}
+
+void os_set_window_title(string title) { if window != null { SetWindowTextA(window, title) } }
+
+void os_set_window_size(int width, int height) {
+    if window == null { return }
+    RECT r = outer_size(width, height)
+    SetWindowPos(window, null, 0, 0, r.right - r.left, r.bottom - r.top, cast<u32>(6))   // SWP_NOMOVE | SWP_NOZORDER
+}
+
+int os_window_width() {
+    if window == null { return 0 }
+    RECT r = RECT{ 0, 0, 0, 0 }
+    GetClientRect(window, &r)
+    return cast<int>(r.right - r.left)
+}
+
+int os_window_height() {
+    if window == null { return 0 }
+    RECT r = RECT{ 0, 0, 0, 0 }
+    GetClientRect(window, &r)
+    return cast<int>(r.bottom - r.top)
+}
+
+void os_close_window() {
+    if window != null { DestroyWindow(window) }
+    window = null
+}
+
+// ---- the system ------------------------------------------------------------------------------
+
+string os_system_name() { return "windows" }
+string os_cpu_arch() { return "x86_64" }
+
+int os_cpu_count() {
+    int n = cast<int>(GetActiveProcessorCount(cast<u16>(65535)))   // ALL_PROCESSOR_GROUPS
+    if n < 1 { return 1 }
+    return n
+}
+
+string os_exe_path() {
+    u8[dynamic] buf = []
+    for i in 0..4096 { buf.push(cast<u8>(0)) }
+    u32 n = GetModuleFileNameA(null, &buf[0], cast<u32>(4096))
+    if n == cast<u32>(0) || n >= cast<u32>(4096) { return "" }
+    return substr(cast<string>(&buf[0]), 0, cast<int>(n))
+}
+
+// ---- files -----------------------------------------------------------------------------------
+
+u32 no_file() { return cast<u32>(4294967295) }   // INVALID_FILE_ATTRIBUTES
+
+bool os_path_exists(string path) { return path != "" && GetFileAttributesA(path) != no_file() }
+
+bool os_is_directory(string path) {
+    if path == "" { return false }
+    u32 a = GetFileAttributesA(path)
+    return a != no_file() && (a & cast<u32>(16)) != cast<u32>(0)   // FILE_ATTRIBUTE_DIRECTORY
+}
+
+void os_make_directory(string path) { CreateDirectoryA(path, null) }
+
+bool is_sep(char c) { return c == '/' || c == '\\' }
+
+// how much of a path names its root, not a folder: "C:" (2), "\\server\share" (to it)
+int os_path_root_length(string path) {
+    if path.len >= 2 && path[1] == ':' { return 2 }
+    if path.len >= 2 && is_sep(path[0]) && is_sep(path[1]) {
+        int seps = 0
+        int i = 2
+        while i < path.len && seps < 2 {
+            if is_sep(path[i]) { seps += 1 }
+            i += 1
+        }
+        return i
+    }
+    return 0
+}
+
+// ---- other programs ---------------------------------------------------------------------------
+// msvcrt's _spawnvp joins argv into one command line WITHOUT quoting, and the program
+// splits it again; so each argument is quoted the way the C runtime parses it back.
+
+string quote_arg(string a) {
+    bool needs = a == ""
+    for i in 0..a.len {
+        char c = a[i]
+        if c == ' ' || c == '\t' || c == '\n' || c == '"' { needs = true }
+    }
+    if !needs { return a }
+    string[dynamic] q = ["\""]
+    int slashes = 0
+    for i in 0..a.len {
+        char c = a[i]
+        if c == '\\' {
+            slashes += 1
+            q.push("\\")
+        } else {
+            if c == '"' {                     // double the backslashes, escape the quote
+                for k in 0..slashes { q.push("\\") }
+                q.push("\\")
+            }
+            slashes = 0
+            q.push(substr(a, i, 1))
+        }
+    }
+    for k in 0..slashes { q.push("\\") }      // backslashes before the closing quote
+    q.push("\"")
+    string r = ""
+    for i in 0..q.len { r = r + q[i] }
+    return r
+}
+
+int os_start_program(string[dynamic] argv) {
+    if argv.len == 0 { return 0 }
+    string[dynamic] quoted = []
+    for i in 0..argv.len { quoted.push(quote_arg(argv[i])) }
+    quoted.push(cast<string>(null))
+    fflush(null)
+    int h = _spawnvp(1, argv[0], &quoted[0])  // _P_NOWAIT
+    if h == 0 - 1 { return 0 }
+    return h
+}
+
+int os_wait_program(int handle) {
+    i32 status = 0
+    if _cwait(&status, handle, 0) == 0 - 1 { return 0 - 1 }
+    return cast<int>(status)
+}

@@ -1,2 +1,2 @@
 mods/has_code.strata:2:1: error: a module can only contain declarations; top-level code is only allowed in the main file
-modload.strata:3:1: error: cannot find module 'mods.nope' (looked for mods/nope.strata in the project folder)
+modload.strata:3:1: error: cannot find module 'mods.nope' (looked for mods/nope.strata in the project folder and in Strata's lib/)

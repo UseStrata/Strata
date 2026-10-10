@@ -1,0 +1,28 @@
+// platform.strata - the CrossPlatform library: the system, files and other programs
+// (the window: see platform_window.strata). Same code on every OS; the library loads its
+// part for the one you build for (Windows so far).
+
+import CrossPlatform
+
+print(os_name())                                      // windows
+print(cpu_arch())                                     // x86_64
+print(cpu_count() > 0)                                // 1 (true)
+print(exe_file("game") + ", " + library_file("game"))  // game.exe, game.dll
+print(path_exists(exe_path()))                        // 1: this program's own file
+
+// folders: make one with its parents (next to this program), then look
+string here = exe_path()
+int cut = 0
+for i in 0..here.len { if here[i] == '/' || here[i] == '\\' { cut = i } }
+string dir = substr(here, 0, cut) + "/platform-test/a/b"
+print(make_directories(dir))                          // 1
+print(is_directory(dir))                              // 1
+print(is_directory(substr(here, 0, cut) + "/platform-test/nope"))   // 0
+
+// other programs: run one and get its exit code
+string[dynamic] seven = ["cmd", "/c", "exit", "7"]
+print(run_program(seven))                             // 7
+string[dynamic] none = ["no-such-program-anywhere"]
+print(run_program(none))                              // -1: it couldn't start
+Running r = start_program(seven)                      // start without waiting...
+print(wait_program(r))                                // ...then wait: 7

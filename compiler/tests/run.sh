@@ -56,6 +56,7 @@ for dir in "$here"/*/; do
         name=$(basename "$exp" .expected)
         source=$examples/$name.strata
         if [ ! -f "$source" ]; then skip "$stage/$name  (no examples/$name.strata)"; continue; fi
+        if grep -q "^import CrossPlatform" "$source"; then skip "$stage/$name  (CrossPlatform has no $(uname -s) part yet)"; continue; fi
         actual=$("$strata" "$stage" "$source" | norm)   # stdout only, like run.ps1
         expected=$(norm < "$exp")
         if [ "$actual" = "$expected" ]; then ok "$stage/$name"; else bad "$stage/$name"; fi
