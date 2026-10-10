@@ -323,7 +323,55 @@ export int srt_os_exe_path(u8* buf, int size) {
     return n
 }
 
-export int srt_os_module_path(u8* buf, int size) { return srt_os_exe_path(buf, size) }   // (one static program)
+// the file of the executable or shared library this runtime is in: the mapping in
+// /proc/self/maps ("start-end perms offset dev inode path") holding its read-only data
+export int srt_os_module_path(u8* buf, int size) {
+    int me = sptr("srt")
+    int fd = sys3(2, sptr("/proc/self/maps"), 0, 0)
+    if fd < 0 { return srt_os_exe_path(buf, size) }
+    int cap = 65536
+    u8* text = malloc(cap)
+    int n = 0
+    bool more = true
+    while more {
+        if n == cap { u8* bigger = malloc(cap * 2); memcpy(bigger, text, n); free(text); text = bigger; cap = cap * 2 }
+        int r = sys3(0, fd, ptr(text) + n, cap - n)
+        if r <= 0 { more = false } else { n += r }
+    }
+    sys1(3, fd)
+    int found = 0
+    int i = 0
+    while i < n && found == 0 {
+        int start = 0
+        while i < n && text[i] != cast<u8>('-') { start = start * 16 + hex_digit(text[i]); i += 1 }
+        i += 1
+        int end = 0
+        while i < n && text[i] != cast<u8>(' ') { end = end * 16 + hex_digit(text[i]); i += 1 }
+        int line_end = i
+        while line_end < n && text[line_end] != cast<u8>(10) { line_end += 1 }
+        if me >= start && me < end {
+            int p = line_end
+            while p > i && text[p - 1] != cast<u8>(' ') { p -= 1 }       // the path: the last field
+            int len = line_end - p
+            if len > 0 && len < size && text[p] == cast<u8>('/') {
+                memcpy(buf, cast<u8*>(ptr(text) + p), len)
+                buf[len] = cast<u8>(0)
+                found = len
+            }
+        }
+        i = line_end + 1
+    }
+    free(text)
+    if found == 0 { return srt_os_exe_path(buf, size) }
+    return found
+}
+
+int hex_digit(u8 c) {
+    int v = cast<int>(c)
+    if v >= 48 && v <= 57 { return v - 48 }
+    if v >= 97 && v <= 102 { return v - 87 }
+    return 0
+}
 
 export int srt_os_cpu_count() {
     u8[dynamic] mask = []

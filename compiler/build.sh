@@ -10,12 +10,15 @@
 #   stage0  the C SEED: seed/stratac.c, a stratac already compiled to portable C (with the
 #           headers it was generated against), built with cc. See seed/README.md.
 #           Or any stratac that runs here:  sh compiler/build.sh --bootstrap <stratac>
-#   stage1  stage0 builds src/stratac.strata
-#   stage2  stage1 builds src/stratac.strata  (the compiler, built by itself)
+#   stage1  stage0 builds src/stratac.strata          (through C)
+#   stage2  stage1 builds src/stratac.strata          (through C: the compiler, built by itself)
+# and where the native backend builds programs (Linux x86-64, macOS ARM64):
+#   stage3  stage2 builds src/stratac.strata natively (after lib/srt-<target>.o)
+#   stage4  stage3 builds src/stratac.strata natively
 #
-# Fixpoint check: stage1 and stage2 must emit byte-identical C for the compiler. stage2 is
-# what ships. The seed rule matches build.ps1's: src/ may only use language features the
-# seed's compiler supports.
+# Fixpoint checks: stage1 and stage2 must emit byte-identical C for the compiler; stage3
+# and stage4 must be byte-identical programs. stage4 (else stage2) is what ships. The seed
+# rule matches build.ps1's: src/ may only use language features the seed's compiler supports.
 #
 #     sh compiler/build.sh                    bootstrap from the seed, build bin/
 #     sh compiler/build.sh --bootstrap <exe>  use that stratac as stage0
@@ -69,11 +72,11 @@ fi
 [ -x "$stage0" ] || fail "bootstrap compiler not found: $stage0"
 say "stage0: $("$stage0" version)"
 
-# Build src/stratac.strata with compiler $2; copy the result to $3. (Each stage runs from
-# its own copy, so it never overwrites the exe that is running.)
+# Build src/stratac.strata with compiler $2 (backend $4, default c); copy the result to $3.
+# (Each stage runs from its own copy, so it never overwrites the exe that is running.)
 build_stage() {
     say "building $1 ..."
-    "$2" build "$src/stratac.strata" --backend c >/dev/null || fail "$1 build failed"   # (through C: natively only on Windows so far)
+    "$2" build "$src/stratac.strata" --backend "${4:-c}" --force >/dev/null || fail "$1 build failed"
     cp "$src/stratac" "$3"
 }
 
@@ -92,25 +95,40 @@ say "fixpoint ok: stage1 and stage2 emit identical C"
 
 cp "$stage2" "$bin/stratac"
 stratac=$bin/stratac
+backend=c
+
+# --- natively, where the native backend builds programs: the runtime (lib/srt-<target>.o),
+# then the compiler built by itself twice, with its own backend ------------------------
+native=""
+case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) native=linux-x64 ;;
+    Darwin-arm64) native=macos-arm64 ;;
+esac
+if [ -n "$native" ]; then
+    rt=$lib/srt-$native.o
+    say "building lib/srt-$native.o ..."
+    "$stage2" object "$lib/srt.strata" "$rt" || fail "lib/srt-$native.o build failed"
+    stage3=$boot/stage3
+    stage4=$boot/stage4
+    build_stage "stage3 (built natively by stage2)" "$stage2" "$stage3" native
+    cp "$rt" "$boot/srt-stage2.o"
+    "$stage3" object "$lib/srt.strata" "$rt" || fail "lib/srt-$native.o build (stage3) failed"
+    cmp -s "$boot/srt-stage2.o" "$rt" || fail "fixpoint check FAILED: stage2 and stage3 compile lib/srt.strata differently"
+    build_stage "stage4 (built natively by stage3)" "$stage3" "$stage4" native
+    cmp -s "$stage3" "$stage4" || fail "fixpoint check FAILED: stage3 and stage4 differ"
+    say "fixpoint ok: stage3 and stage4 are identical (native)"
+    cp "$stage4" "$bin/stratac"
+    backend=native
+fi
 
 # --- console: built by the shipped compiler ------------------------------------
 say "building console ..."
-"$stratac" build "$src/console.strata" --backend c >/dev/null || fail "console build failed"
+"$stratac" build "$src/console.strata" --backend $backend --force >/dev/null || fail "console build failed"
 cp "$src/console" "$bin/console"
 
 # --- libstrata: the compiler as a library (api/strata.toml -> bin/) -------------
 say "building libstrata ..."
-"$stratac" build "$here/api" --backend c >/dev/null || fail "libstrata build failed"
-
-# --- the native backend's runtime, where it builds programs (Linux x86-64, macOS ARM64) ---
-if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
-    say "building lib/srt-linux-x64.o ..."
-    "$stratac" object "$lib/srt.strata" "$lib/srt-linux-x64.o" || fail "lib/srt-linux-x64.o build failed"
-fi
-if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-    say "building lib/srt-macos-arm64.o ..."
-    "$stratac" object "$lib/srt.strata" "$lib/srt-macos-arm64.o" || fail "lib/srt-macos-arm64.o build failed"
-fi
+"$stratac" build "$here/api" --backend $backend --force >/dev/null || fail "libstrata build failed"
 
 # --- the seed: this compiler as portable C, for the next bootstrap ----------------
 version=$(sed -n 's/.*return "\([0-9][0-9.]*\).*/\1/p' "$src/version.strata")   # "1.6.0 (codename)" -> 1.6.0

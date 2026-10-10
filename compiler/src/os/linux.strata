@@ -484,14 +484,20 @@ int elf_hash(string s) {
 
 // The program's entry: argc and argv from the stack, main (System V: rdi, rsi; the stack
 // 16-byte aligned), then out: srt_os_exit (a static program) or, with shared libraries,
-// srt_os_flush and the C library's exit.
+// the C library's exit (srt_os_flush registered with __cxa_atexit first).
 string start_stub(bool dynamic) {
     string[dynamic] p = []
     p.push("\t.text\n\t.globl _start\n_start:\n")
     p.push("\tmovq 0(%rsp), %rdi\n\tleaq 8(%rsp), %rsi\n")
     p.push("\tandq $-16, %rsp\n")
+    if dynamic {
+        // stdout flushed whenever the C library's exit runs (a program may call it itself)
+        p.push("\tpushq %rdi\n\tpushq %rsi\n")
+        p.push("\tleaq srt_os_flush(%rip), %rdi\n\txorl %esi, %esi\n\txorl %edx, %edx\n\tcall __cxa_atexit\n")
+        p.push("\tpopq %rsi\n\tpopq %rdi\n")
+    }
     p.push("\tcall main\n\tmovl %eax, %edi\n")
-    if dynamic { p.push("\tpushq %rdi\n\tpushq %rdi\n\tcall srt_os_flush\n\tpopq %rdi\n\tpopq %rdi\n\tcall exit\n") }
+    if dynamic { p.push("\tcall exit\n") }
     else { p.push("\tcall srt_os_exit\n") }
     return strata_join(&p)
 }
