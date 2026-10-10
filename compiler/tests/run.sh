@@ -71,7 +71,8 @@ if [ -f "$compiler/lib/srt-linux-x64.o" ]; then
     for exp in "$here"/run/*.expected; do
         name=$(basename "$exp" .expected)
         source=$examples/$name.strata
-        if grep -q '^import [<"]' "$source" || grep -q "^import CrossPlatform" "$source"; then continue; fi
+        # (C headers, CrossPlatform, foreign functions - libc's: a static program has none)
+        if grep -q '^import [<"]' "$source" || grep -q "^import CrossPlatform" "$source" || grep -q "^\(export \)\?foreign" "$source"; then continue; fi
         actual=$("$strata" run "$source" --backend native --force 2>&1 | norm)
         [ "$actual" = "$(norm < "$exp")" ] || badn="$badn $name"
     done

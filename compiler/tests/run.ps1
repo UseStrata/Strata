@@ -193,9 +193,12 @@ $sTxt = Join-Path $tmpd "direct.s"; $oTxt = Join-Path $tmpd "direct_text.o"
 $bad = @(); $count = 0
 Get-ChildItem -Path $examples -Filter *.strata | ForEach-Object {
     $srcText = Get-Content $_.FullName -Raw
-    if ($srcText -match "(?m)^\s*import\s*[<`"]" -or $srcText -match "(?m)^import raylib") { return }
+    # (C headers, C libraries: not native; modules without a main: not programs)
+    if ($srcText -match "(?m)^\s*import\s*[<`"]" -or $srcText -match "(?m)^import raylib" -or $srcText -match "(?m)^\s*link\s") { return }
     $b = [IO.Path]::GetFileNameWithoutExtension($_.Name)
+    $savedPref = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     $null = & $strata build $_.FullName --backend native --force 2>&1
+    $ErrorActionPreference = $savedPref
     $oDirect = Join-Path $examples "$b.o"
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $oDirect)) { return }
     $asmText = (& $strata asm $_.FullName --release) -join "`n"
