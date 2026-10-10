@@ -25,6 +25,7 @@
 import ast
 import ir
 import host   // strata_join
+import target // target_os: which calling convention
 
 // ---- layouts ---------------------------------------------------------------------
 
@@ -174,6 +175,126 @@ int abi_pass_ty(TInfo ti) {
     return KU64   // a pointer to a copy
 }
 bool abi_sret(TInfo ti) { return ti.kind == TK_AGG() && !abi_small(ti.size) }
+
+// ---- the calling convention (System V: Linux / macOS x86-64) -------------------------------
+// A struct of up to 16 bytes travels in registers, one per 8-byte half: an integer register
+// if any integer / pointer field touches that half, else a float register; bigger ones (and
+// ones the registers have run out for) are copied onto the stack, and a big result comes
+// back through a hidden pointer (as with Windows). Arguments use 6 integer and 8 float
+// registers, counted separately.
+
+bool sysv() { return target_os() != "windows" }
+
+int sse_class() { return 1 }
+int int_class() { return 2 }      // (merging two classes: the bigger wins - integer)
+
+void mark(int[dynamic]* c, int off, int cls) {
+    int k = off / 8
+    if k < 2 && c[0][k] < cls { c[0][k] = cls }
+}
+
+// the class of every field of type t at offset base, into c (per 8-byte half)
+void classify(Lower* l, TypeNode* t, int base, int[dynamic]* c) {
+    if t == null { return }
+    if t.kind != TyNamed { mark(c, base, int_class()); return }   // pointers, arrays: an address
+    string n = t.name
+    int d = vec_dim_of(n)
+    if d > 0 { for i in 0..d { mark(c, base + 4 * i, sse_class()) } return }
+    if n == "mat4" { for i in 0..16 { mark(c, base + 4 * i, sse_class()) } return }
+    int si = struct_index(l, n)
+    if si >= 0 {
+        layout(l, si)
+        for k in 0..l.structs[si].fields.len { classify(l, l.structs[si].fields[k].type, base + l.structs[si].fields[k].off, c) }
+        return
+    }
+    TInfo ti = tinfo(l, t)
+    if ir_is_float(ti.ty) { mark(c, base, sse_class()) } else { mark(c, base, int_class()) }
+}
+
+// How a struct (type t) travels in registers: halves + 4 * class0 + 16 * class1; 0 if it
+// goes in memory (more than 16 bytes)
+int abi_ret_spec(Lower* l, TypeNode* t, TInfo ti) {
+    if ti.size > 16 || ti.size == 0 { return 0 }
+    int[dynamic] c = [0, 0]
+    classify(l, t, 0, &c)
+    int n = (ti.size + 7) / 8
+    for k in 0..n { if c[k] == 0 { c[k] = sse_class() } }      // (padding only)
+    int spec = n + 4 * c[0]
+    if n == 2 { spec += 16 * c[1] }
+    return spec
+}
+int spec_halves(int spec) { return spec & 3 }
+int spec_class(int spec, int k) { if k == 0 { return (spec >> 2) & 3 } return (spec >> 4) & 3 }
+int spec_ints(int spec) {
+    int n = 0
+    for k in 0..spec_halves(spec) { if spec_class(spec, k) == int_class() { n += 1 } }
+    return n
+}
+
+// A call by the System V convention (see call_strata).
+LVal call_sysv(Lower* l, Decl* d, Expr* e) {
+    TInfo ri = tinfo(l, d.ret)
+    int[dynamic] args = []
+    int[dynamic] bytes = []
+    int ints = 0
+    int sses = 0
+    int out = 0 - 1
+    int buf = 0 - 1
+    int spec = 0
+    if ri.kind == TK_AGG() {
+        spec = abi_ret_spec(l, d.ret, ri)
+        if spec == 0 { out = temp(l, ri.size, ri.align); args.push(out); bytes.push(0); ints = 1 }   // the hidden pointer (rdi)
+        else { buf = temp(l, 16, 8) }
+    }
+    for i in 0..e.items.len {
+        if i < d.params.len {
+            TypeNode* pt = d.params[i].type
+            TInfo pi = tinfo(l, pt)
+            LVal v = lower_expr(l, e.items[i])
+            if pi.kind == TK_SCALAR() {
+                args.push(as_ty(l, v, pi.ty, e.line))
+                bytes.push(0)
+                if ir_is_float(pi.ty) { sses += 1 } else { ints += 1 }
+            } else if !v.agg {
+                lw_fail(l, e.line, "expected a " + type_text(pt))
+            } else {
+                int ps = abi_ret_spec(l, pt, pi)
+                int ni = spec_ints(ps)
+                int ns = spec_halves(ps) - ni
+                if ps != 0 && ints + ni <= 6 && sses + ns <= 8 {
+                    int tmp = temp(l, 16, 8)            // (whole halves can be loaded from it)
+                    copy_mem(l, tmp, v.reg, pi.size)
+                    for k in 0..spec_halves(ps) {
+                        if spec_class(ps, k) == sse_class() { args.push(load(l, KF64, tmp, 8 * k)) } else { args.push(load(l, KU64, tmp, 8 * k)) }
+                        bytes.push(0)
+                    }
+                    ints += ni
+                    sses += ns
+                } else {
+                    int copy = temp(l, pi.size, pi.align)   // onto the stack
+                    copy_mem(l, copy, v.reg, pi.size)
+                    args.push(copy)
+                    bytes.push(pi.size)
+                }
+            }
+        }
+    }
+    if buf >= 0 { args.push(buf); bytes.push(0 - 1) }
+    int rty = KVoid
+    if ri.kind == TK_SCALAR() { rty = ri.ty }
+    int r = 0 - 1
+    if rty != KVoid { r = vreg(l, rty) }
+    Ins c = new_ins(OCall, rty, r, 0 - 1, 0 - 1)
+    c.sym = d.name
+    c.args = args
+    c.arg_bytes = bytes
+    c.imm = spec
+    emit(l, c)
+    if ri.kind == TK_SCALAR() { return scalar(r, rty) }
+    if out >= 0 { return aggregate(out, d.ret) }
+    if buf >= 0 { return aggregate(buf, d.ret) }
+    return scalar(iconst(l, KI64, 0), KI64)
+}
 
 // ---- emitting -----------------------------------------------------------------------
 
@@ -1125,6 +1246,7 @@ LVal lower_math_builtin(Lower* l, Expr* e, string nm) {
 
 // A call to a Strata function, by the C calling convention.
 LVal call_strata(Lower* l, Decl* d, Expr* e) {
+    if sysv() { return call_sysv(l, d, e) }
     TInfo ri = tinfo(l, d.ret)
     int[dynamic] args = []
     int out = 0 - 1
@@ -1412,6 +1534,10 @@ void lower_return(Lower* l, Stmt* s) {
         if ri.kind == TK_SCALAR() { r = as_ty(l, v, ri.ty, s.line) }
         else if !v.agg { lw_fail(l, s.line, "expected a " + type_text(l.ret_type)) }
         else if l.sret >= 0 { copy_mem(l, l.sret, v.reg, ri.size); r = l.sret }
+        else if l.f.ret_spec != 0 {                  // System V: from a 16-byte buffer, in registers
+            r = temp(l, 16, 8)
+            copy_mem(l, r, v.reg, ri.size)
+        }
         else { r = load(l, abi_int_of(ri.size), v.reg, 0) }
         free_regions(l, 0)
         emit(l, new_ins(ORet, KVoid, 0 - 1, r, 0 - 1))
@@ -1447,40 +1573,132 @@ void lower_function(Lower* l, Decl* d) {
     scan_stmt(l, d.body)
     l.ret_type = d.ret
     TInfo ri = tinfo(l, d.ret)
-    int np = 0
-    if abi_sret(ri) {
-        l.f.param_types.push(KU64)
-        l.f.ret_ty = KU64
-        l.sret = param(l, KU64, 0)
-        np = 1
-    } else if ri.kind == TK_AGG() {
-        l.f.ret_ty = abi_int_of(ri.size)
-    } else if ri.kind == TK_SCALAR() {
-        l.f.ret_ty = ri.ty
-    }
-    // the incoming arguments first (they arrive in registers), then bind them
-    int[dynamic] incoming = []
-    for i in 0..d.params.len {
-        int pty = abi_pass_ty(tinfo(l, d.params[i].type))
-        l.f.param_types.push(pty)
-        incoming.push(param(l, pty, np + i))
-    }
-    push_scope(l)
-    for i in 0..d.params.len {
-        TypeNode* pt = d.params[i].type
-        TInfo pi = tinfo(l, pt)
-        LVar v = declare(l, d.params[i].name, pt, d.line)
-        if pi.kind == TK_SCALAR() { assign_var(l, v, scalar(incoming[i], pi.ty), d.line) }
-        else if abi_small(pi.size) { store(l, abi_int_of(pi.size), v.reg, 0, incoming[i]) }
-        else { copy_mem(l, v.reg, incoming[i], pi.size) }
+    if sysv() { lower_params_sysv(l, d, ri) } else {
+        int np = 0
+        if abi_sret(ri) {
+            l.f.param_types.push(KU64)
+            l.f.param_bytes.push(0)
+            l.f.ret_ty = KU64
+            l.sret = param(l, KU64, 0)
+            np = 1
+        } else if ri.kind == TK_AGG() {
+            l.f.ret_ty = abi_int_of(ri.size)
+        } else if ri.kind == TK_SCALAR() {
+            l.f.ret_ty = ri.ty
+        }
+        // the incoming arguments first (they arrive in registers), then bind them
+        int[dynamic] incoming = []
+        for i in 0..d.params.len {
+            int pty = abi_pass_ty(tinfo(l, d.params[i].type))
+            l.f.param_types.push(pty)
+            l.f.param_bytes.push(0)
+            incoming.push(param(l, pty, np + i))
+        }
+        push_scope(l)
+        for i in 0..d.params.len {
+            TypeNode* pt = d.params[i].type
+            TInfo pi = tinfo(l, pt)
+            LVar v = declare(l, d.params[i].name, pt, d.line)
+            if pi.kind == TK_SCALAR() { assign_var(l, v, scalar(incoming[i], pi.ty), d.line) }
+            else if abi_small(pi.size) { store(l, abi_int_of(pi.size), v.reg, 0, incoming[i]) }
+            else { copy_mem(l, v.reg, incoming[i], pi.size) }
+        }
     }
     lower_block(l, d.body)
     pop_scope(l)
     // falling off the end
     if ri.kind == TK_VOID() { emit(l, new_ins(ORet, KVoid, 0 - 1, 0 - 1, 0 - 1)) }
     else if l.sret >= 0 { emit(l, new_ins(ORet, KVoid, 0 - 1, l.sret, 0 - 1)) }
+    else if l.f.ret_spec != 0 {
+        int z = temp(l, 16, 8)
+        zero_mem(l, z, 16)
+        emit(l, new_ins(ORet, KVoid, 0 - 1, z, 0 - 1))
+    }
     else { emit(l, new_ins(ORet, KVoid, 0 - 1, iconst(l, l.f.ret_ty, 0), 0 - 1)) }
     l.prog.funcs.push(l.f)
+}
+
+// A function's incoming arguments by the System V convention (see call_sysv); opens the
+// function's scope and binds them to its parameters.
+void lower_params_sysv(Lower* l, Decl* d, TInfo ri) {
+    int index = 0
+    int ints = 0
+    int sses = 0
+    if ri.kind == TK_AGG() {
+        int spec = abi_ret_spec(l, d.ret, ri)
+        if spec == 0 {
+            l.f.param_types.push(KU64)
+            l.f.param_bytes.push(0)
+            l.f.ret_ty = KU64
+            l.sret = param(l, KU64, 0)
+            index = 1
+            ints = 1
+        } else {
+            l.f.ret_spec = spec
+            l.f.ret_ty = KVoid
+        }
+    } else if ri.kind == TK_SCALAR() {
+        l.f.ret_ty = ri.ty
+    }
+    // the incoming values first (registers, or the stack), per parameter: where they start
+    int[dynamic] first = []
+    int[dynamic] count = []
+    int[dynamic] kind = []          // 0 a value, 1 halves in registers (spec in `specs`), 2 a copy on the stack
+    int[dynamic] specs = []
+    int[dynamic] incoming = []
+    for i in 0..d.params.len {
+        TypeNode* pt = d.params[i].type
+        TInfo pi = tinfo(l, pt)
+        first.push(incoming.len)
+        if pi.kind == TK_SCALAR() {
+            l.f.param_types.push(pi.ty)
+            l.f.param_bytes.push(0)
+            incoming.push(param(l, pi.ty, index))
+            index += 1
+            if ir_is_float(pi.ty) { sses += 1 } else { ints += 1 }
+            count.push(1); kind.push(0); specs.push(0)
+        } else {
+            int ps = abi_ret_spec(l, pt, pi)
+            int ni = spec_ints(ps)
+            int ns = spec_halves(ps) - ni
+            if ps != 0 && ints + ni <= 6 && sses + ns <= 8 {
+                for k in 0..spec_halves(ps) {
+                    int ty = KU64
+                    if spec_class(ps, k) == sse_class() { ty = KF64 }
+                    l.f.param_types.push(ty)
+                    l.f.param_bytes.push(0)
+                    incoming.push(param(l, ty, index))
+                    index += 1
+                }
+                ints += ni
+                sses += ns
+                count.push(spec_halves(ps)); kind.push(1); specs.push(ps)
+            } else {
+                l.f.param_types.push(KU64)
+                l.f.param_bytes.push(pi.size)
+                incoming.push(param(l, KU64, index))
+                index += 1
+                count.push(1); kind.push(2); specs.push(0)
+            }
+        }
+    }
+    push_scope(l)
+    for i in 0..d.params.len {
+        TypeNode* pt = d.params[i].type
+        TInfo pi = tinfo(l, pt)
+        LVar v = declare(l, d.params[i].name, pt, d.line)
+        if kind[i] == 0 { assign_var(l, v, scalar(incoming[first[i]], pi.ty), d.line) }
+        else if kind[i] == 1 {
+            int tmp = temp(l, 16, 8)
+            for k in 0..count[i] {
+                int ty = KU64
+                if spec_class(specs[i], k) == sse_class() { ty = KF64 }
+                store(l, ty, tmp, 8 * k, incoming[first[i] + k])
+            }
+            copy_mem(l, v.reg, tmp, pi.size)
+        }
+        else { copy_mem(l, v.reg, incoming[first[i]], pi.size) }
+    }
 }
 
 // The top-level code: int main(int argc, char** argv)
@@ -1491,6 +1709,8 @@ void lower_main(Lower* l, Program prog) {
     l.f.ret_ty = KI32
     l.f.param_types.push(KI32)
     l.f.param_types.push(KU64)
+    l.f.param_bytes.push(0)
+    l.f.param_bytes.push(0)
     int argc = param(l, KI32, 0)
     int argv = param(l, KU64, 1)
     call2(l, "srt_set_args", KVoid, argc, argv)

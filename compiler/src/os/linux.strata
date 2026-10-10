@@ -387,27 +387,25 @@ void put64le(u8[dynamic]* b, int at, int v) {
 
 int ealign(int n, int a) { return (n + a - 1) / a * a }
 
-// The program's entry: argc and argv from the stack, main (Strata's calling convention:
-// rcx, rdx, 32 bytes of shadow space), then srt_os_exit (which flushes stdout).
+// The program's entry: argc and argv from the stack, main (System V: rdi, rsi; the stack
+// 16-byte aligned), then srt_os_exit (which flushes stdout).
 string start_stub() {
     string[dynamic] p = []
     p.push("\t.text\n\t.globl _start\n_start:\n")
-    p.push("\tmovq 0(%rsp), %rcx\n\tleaq 8(%rsp), %rdx\n")
-    p.push("\tandq $-16, %rsp\n\tsubq $32, %rsp\n")
-    p.push("\tcall main\n\tmovl %eax, %ecx\n\tcall srt_os_exit\n")
+    p.push("\tmovq 0(%rsp), %rdi\n\tleaq 8(%rsp), %rsi\n")
+    p.push("\tandq $-16, %rsp\n")
+    p.push("\tcall main\n\tmovl %eax, %edi\n\tcall srt_os_exit\n")
     return strata_join(&p)
 }
 
-// srt_syscall(n, a1 .. a6): Strata's calling convention (rcx, rdx, r8, r9, then the stack
-// above 32 bytes of shadow space) -> the kernel's (rax; rdi, rsi, rdx, r10, r8, r9).
-// rdi and rsi belong to the caller in Strata's convention: kept.
+// srt_syscall(n, a1 .. a6): System V (rdi, rsi, rdx, rcx, r8, r9, then the stack) -> the
+// kernel's (rax; rdi, rsi, rdx, r10, r8, r9).
 string syscall_stub() {
     string[dynamic] p = []
     p.push("\t.text\n\t.globl srt_syscall\nsrt_syscall:\n")
-    p.push("\tpushq %rdi\n\tpushq %rsi\n")
-    p.push("\tmovq %rcx, %rax\n\tmovq %rdx, %rdi\n\tmovq %r8, %rsi\n\tmovq %r9, %rdx\n")
-    p.push("\tmovq 56(%rsp), %r10\n\tmovq 64(%rsp), %r8\n\tmovq 72(%rsp), %r9\n")
-    p.push("\tsyscall\n\tpopq %rsi\n\tpopq %rdi\n\tret\n")
+    p.push("\tmovq %rdi, %rax\n\tmovq %rsi, %rdi\n\tmovq %rdx, %rsi\n\tmovq %rcx, %rdx\n")
+    p.push("\tmovq %r8, %r10\n\tmovq %r9, %r8\n\tmovq 8(%rsp), %r9\n")
+    p.push("\tsyscall\n\tret\n")
     return strata_join(&p)
 }
 

@@ -36,11 +36,21 @@
 // The Windows x64 convention: arguments 1-4 in rcx, rdx, r8, r9 (or xmm0-3 for floats, by
 // position), the rest on the stack; results in rax / xmm0; the stack 16-byte aligned at
 // every call; a frame bigger than a page touches each page in order (the guard page).
+//
+// System V (Linux / macOS x86-64; `sysv_mode`): integer arguments in rdi, rsi, rdx, rcx,
+// r8, r9 and float ones in xmm0-7, counted separately, the rest (and structs passed by
+// copy) on the stack, no shadow space; a struct of up to 16 bytes comes back in rax / rdx /
+// xmm0 / xmm1 (lower.strata classifies). Callee-saved: rbx, r12-r15 - no xmm register,
+// so the allocator's float registers (xmm8-15) only hold values that don't live across a
+// call.
 
 import ir
 import opt     // RegSet
 import host   // strata_join
 import asm    // the assembler this file encodes for: Asm, asm_byte, asm_fix, ...
+import target // target_os: Windows x64 or System V
+
+global bool sysv_mode       // the convention of the program being made (set by new_x64)
 
 export struct X64 {
     bool            direct      // build machine code straight into `as`; else assembly text in `out`
@@ -75,6 +85,7 @@ export X64 new_x64(bool direct, int size_hint) {
     int[dynamic] nu = []
     int[dynamic] b = []
     int[dynamic] c = []
+    sysv_mode = target_os() != "windows"
     return X64{ direct, asm_new("x64", size_hint), o, d, 0, 0, 0, a, r, lz, lv, ls, nu, b, c, 0 }
 }
 
@@ -160,15 +171,25 @@ void dline(X64* x, string s) {
 }
 
 // ---- registers --------------------------------------------------------------------------
-// Allocatable registers are numbered (see RegSet): 0-6 integer callee-saved, 7-16
-// xmm6-xmm15 (callee-saved), 17 r10, 18-19 xmm4-xmm5 (both scratch).
+// Allocatable registers are numbered (see RegSet). Windows: 0-6 integer callee-saved, 7-16
+// xmm6-xmm15 (callee-saved), 17 r10, 18-19 xmm4-xmm5 (both scratch). System V: 0-4
+// rbx, r12-r15 (callee-saved), 5 r10, 6-13 xmm8-xmm15 (scratch).
 
-export RegSet x64_regs() { return RegSet{ 7, 10, 1, 2 } }
-int x64_int_regs() { return 7 }
-int x64_saved_regs() { return 17 }   // registers below this number must be saved if used
+export RegSet x64_regs() {
+    if target_os() != "windows" { return RegSet{ 5, 0, 1, 8 } }
+    return RegSet{ 7, 10, 1, 2 }
+}
+int x64_int_regs() { if sysv_mode { return 5 } return 7 }
+int x64_saved_regs() { if sysv_mode { return 5 } return 17 }   // registers below this number must be saved if used
 
 // allocatable register k as an operand
 Opnd alloc_reg(int k) {
+    if sysv_mode {
+        if k == 0 { return hw(3, 8) }                    // rbx
+        if k <= 4 { return hw(k + 11, 8) }               // r12-r15
+        if k == 5 { return hw(10, 8) }                   // r10
+        return xmm(k - 6 + 8)                            // xmm8-xmm15
+    }
     if k == 17 { return hw(10, 8) }      // r10
     if k == 18 { return xmm(4) }
     if k == 19 { return xmm(5) }
@@ -292,6 +313,16 @@ string as_text(string s) {
 // ---- instructions ------------------------------------------------------------------------------
 
 string lbl(X64* x, int n) { return ".L" + int_to_str(x.fnum) + "_" + int_to_str(n) }
+
+// System V: the integer argument registers
+Opnd sysv_int_arg(int i) {
+    if i == 0 { return hw(7, 8) }        // rdi
+    if i == 1 { return hw(6, 8) }        // rsi
+    if i == 2 { return rdx() }
+    if i == 3 { return rcx() }
+    if i == 4 { return r8() }
+    return hw(9, 8)                      // r9
+}
 
 Opnd int_reg_arg(int i) {
     if i == 0 { return rcx() }
@@ -555,10 +586,21 @@ void emit_ins(X64* x, IrFunc* f, int k, string epilogue) {
         case OZeroMem:
             get(x, i.a, rax())
             copy_bytes(x, i.imm, true)
-        case OParam: emit_param(x, i)
+        case OParam: if sysv_mode { emit_param_sysv(x, f, i) } else { emit_param(x, i) }
         case OCall: emit_call(x, f, i)
         case ORet:
-            if i.a >= 0 {
+            if i.a >= 0 && f.ret_spec != 0 {
+                // System V: a small struct, from the buffer at a, in rax / rdx / xmm0 / xmm1
+                get(x, i.a, r11())
+                int ni = 0
+                int ns = 0
+                for h in 0..(f.ret_spec & 3) {
+                    int cls = (f.ret_spec >> 2) & 3
+                    if h == 1 { cls = (f.ret_spec >> 4) & 3 }
+                    if cls == 1 { ins2(x, "movsd", mem(11, 8 * h), xmm(ns)); ns += 1 }
+                    else { if ni == 0 { ins2(x, "movq", mem(11, 8 * h), rax()) } else { ins2(x, "movq", mem(11, 8 * h), rdx()) }; ni += 1 }
+                }
+            } else if i.a >= 0 {
                 int rt = f.ret_ty
                 if ir_is_float(rt) { fget(x, rt, i.a, xmm(0)) } else { get(x, i.a, rax()) }
             }
@@ -643,6 +685,40 @@ void emit_conv(X64* x, Ins i) {
     }
 }
 
+// System V: where incoming argument k is - 0 an integer register, 1 a float register, 2 the
+// stack (number: the register, or the byte offset above the return address)
+int sysv_place(IrFunc* f, int k, int* where) {
+    int ni = 0
+    int ns = 0
+    int st = 0
+    int place = 0
+    for j in 0..(k + 1) {
+        int bytes = 0
+        if j < f.param_bytes.len { bytes = f.param_bytes[j] }
+        int t = f.param_types[j]
+        int p = 2
+        int at = st
+        if bytes > 0 { st += (bytes + 7) / 8 * 8 }
+        else if ir_is_float(t) && ns < 8 { p = 1; at = ns; ns += 1 }
+        else if !ir_is_float(t) && ni < 6 { p = 0; at = ni; ni += 1 }
+        else { st += 8 }
+        if j == k { place = p; where[0] = at }
+    }
+    return place
+}
+
+void emit_param_sysv(X64* x, IrFunc* f, Ins i) {
+    int t = i.ty
+    int at = 0
+    int place = sysv_place(f, i.imm, &at)
+    bool copy = i.imm < f.param_bytes.len && f.param_bytes[i.imm] > 0
+    if place == 0 { Opnd r = sysv_int_arg(at); norm(x, t, r); put(x, r, i.dst) }
+    else if place == 1 { fput(x, t, xmm(at), i.dst) }
+    else if copy { ins2(x, "leaq", mem(5, 16 + at), rax()); put(x, rax(), i.dst) }      // a struct's copy: its address
+    else if ir_is_float(t) { ins2(x, "mov" + fsuf(t), mem(5, 16 + at), xmm(0)); fput(x, t, xmm(0), i.dst) }
+    else { ins2(x, "movq", mem(5, 16 + at), rax()); norm(x, t, rax()); put(x, rax(), i.dst) }
+}
+
 void emit_param(X64* x, Ins i) {
     int t = i.ty
     int k = i.imm
@@ -660,7 +736,89 @@ void emit_param(X64* x, Ins i) {
     }
 }
 
+// System V: the stack bytes a call's arguments take (those that don't fit in registers,
+// structs passed by copy)
+int sysv_stack_bytes(IrFunc* f, Ins i) {
+    int ni = 0
+    int ns = 0
+    int st = 0
+    for k in 0..i.args.len {
+        int bytes = 0
+        if k < i.arg_bytes.len { bytes = i.arg_bytes[k] }
+        int t = f.vtypes[i.args[k]]
+        if bytes > 0 { st += (bytes + 7) / 8 * 8 }
+        else if bytes == 0 {
+            if ir_is_float(t) && ns < 8 { ns += 1 }
+            else if !ir_is_float(t) && ni < 6 { ni += 1 }
+            else { st += 8 }
+        }
+    }
+    return st
+}
+
+void emit_call_sysv(X64* x, IrFunc* f, Ins i) {
+    int n = i.args.len
+    // the stack first: arguments beyond the registers, structs passed by copy (copied with
+    // rax / rcx / rdx / r8 - before any register argument is loaded)
+    int ni = 0
+    int ns = 0
+    int st = 0
+    int buf = 0 - 1
+    for k in 0..n {
+        int a = i.args[k]
+        int bytes = 0
+        if k < i.arg_bytes.len { bytes = i.arg_bytes[k] }
+        int at = f.vtypes[a]
+        if bytes < 0 { buf = a }
+        else if bytes > 0 {
+            get(x, a, rcx())
+            ins2(x, "leaq", mem(4, st), rax())
+            copy_bytes(x, bytes, false)
+            st += (bytes + 7) / 8 * 8
+        } else if ir_is_float(at) {
+            if ns < 8 { ns += 1 }
+            else { fget(x, at, a, xmm(0)); ins2(x, "mov" + fsuf(at), xmm(0), mem(4, st)); st += 8 }
+        } else {
+            if ni < 6 { ni += 1 }
+            else if x.lazy[a] == 1 { ins2(x, "movq", src(x, a), mem(4, st)); st += 8 }
+            else { get(x, a, rax()); ins2(x, "movq", rax(), mem(4, st)); st += 8 }
+        }
+    }
+    // then the registers
+    ni = 0
+    ns = 0
+    for k in 0..n {
+        int a = i.args[k]
+        int bytes = 0
+        if k < i.arg_bytes.len { bytes = i.arg_bytes[k] }
+        int at = f.vtypes[a]
+        if bytes == 0 {
+            if ir_is_float(at) { if ns < 8 { fget(x, at, a, xmm(ns)); ns += 1 } }
+            else { if ni < 6 { get(x, a, sysv_int_arg(ni)); ni += 1 } }
+        }
+    }
+    ins1(x, "call", target(i.sym))
+    if buf >= 0 {
+        // a small struct came back in registers: into its buffer
+        Opnd b = r11()
+        get(x, buf, b)
+        int ri = 0
+        int rs = 0
+        for h in 0..(i.imm & 3) {
+            int cls = (i.imm >> 2) & 3
+            if h == 1 { cls = (i.imm >> 4) & 3 }
+            if cls == 1 { ins2(x, "movsd", xmm(rs), mem(11, 8 * h)); rs += 1 }
+            else { if ri == 0 { ins2(x, "movq", rax(), mem(11, 8 * h)) } else { ins2(x, "movq", rdx(), mem(11, 8 * h)) }; ri += 1 }
+        }
+    }
+    if i.dst >= 0 {
+        if ir_is_float(i.ty) { fput(x, i.ty, xmm(0), i.dst) }
+        else { norm(x, i.ty, rax()); put(x, rax(), i.dst) }
+    }
+}
+
 void emit_call(X64* x, IrFunc* f, Ins i) {
+    if sysv_mode { emit_call_sysv(x, f, i); return }
     int n = i.args.len
     // arguments 5+ go on the stack, above the shadow space
     for k in 4..n {
@@ -778,9 +936,14 @@ export void x64_function(X64* x, IrFunc* f, int[dynamic] regs) {
         so.push(0 - cur)
     }
     x.slot_off = so
-    int outgoing = 32
+    int outgoing = 32                    // Windows: the shadow space, at least
+    if sysv_mode { outgoing = 0 }
     for k in 0..f.code.len {
-        if f.code[k].op == OCall && 8 * f.code[k].args.len > outgoing { outgoing = 8 * f.code[k].args.len }
+        if f.code[k].op == OCall {
+            int need = 8 * f.code[k].args.len
+            if sysv_mode { need = sysv_stack_bytes(f, f.code[k]) }
+            if need > outgoing { outgoing = need }
+        }
     }
     // everything below rbp (pushes + frame) is a multiple of 16: rsp stays aligned
     int frame = align_to(cur + outgoing, 16) - 8 * nint
@@ -840,7 +1003,9 @@ export void x64_function(X64* x, IrFunc* f, int[dynamic] regs) {
 }
 
 export void x64_begin(X64* x) {
-    if !x.direct { x.out.push("# Generated by stratac (x86-64, Windows). Do not edit.\n") }
+    string conv = "Windows x64"
+    if sysv_mode { conv = "System V" }
+    if !x.direct { x.out.push("# Generated by stratac (x86-64, " + conv + "). Do not edit.\n") }
     dline(x, ".text")
 }
 

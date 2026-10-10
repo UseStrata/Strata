@@ -103,6 +103,10 @@ export struct Ins {
     int    imm2     // OBr: the else label
     string sym      // OFConst: literal text; OSymAddr / OCall: symbol
     int[dynamic] args   // OCall: argument vregs
+    // OCall, per argument: 0 a value; > 0 the address of a struct of that many bytes to
+    // copy onto the stack (System V); -1 not an argument: the address of a 16-byte buffer
+    // for a struct the callee returns in registers (`imm`: how, see abi_ret_spec)
+    int[dynamic] arg_bytes
 }
 
 export struct IrSlot { int size; int align }
@@ -114,7 +118,9 @@ export struct IrFunc {
     IrSlot[dynamic]  slots
     Ins[dynamic]     code
     int[dynamic]     param_types   // the incoming arguments' types (as passed: scalars)
+    int[dynamic]     param_bytes   // per incoming argument: 0 a value; > 0 a struct of that many bytes the caller copied onto the stack (its value: the copy's address)
     int              ret_ty        // KVoid, or the type returned in a register
+    int              ret_spec      // a struct returned in registers (System V; see abi_ret_spec): ORet's a is its address
     int              labels        // label numbers handed out
 }
 
@@ -134,7 +140,8 @@ export struct IrProgram {
 
 export Ins new_ins(int op, int ty, int dst, int a, int b) {
     int[dynamic] args = []
-    return Ins{ op, ty, 0, dst, a, b, 0, 0, "", args }
+    int[dynamic] ab = []
+    return Ins{ op, ty, 0, dst, a, b, 0, 0, "", args, ab }
 }
 
 export IrFunc new_ir_func(string name, bool global) {
@@ -142,7 +149,8 @@ export IrFunc new_ir_func(string name, bool global) {
     IrSlot[dynamic] sl = []
     Ins[dynamic] code = []
     int[dynamic] pt = []
-    return IrFunc{ name, global, vt, sl, code, pt, KVoid, 0 }
+    int[dynamic] pb = []
+    return IrFunc{ name, global, vt, sl, code, pt, pb, KVoid, 0, 0 }
 }
 
 export IrProgram new_ir_program() {
