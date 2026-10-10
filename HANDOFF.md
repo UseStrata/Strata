@@ -56,6 +56,15 @@ plus releases, and approve releases when asked.
   (`linker.strata`) + one file per OS (`os/windows.strata`); outputs byte-identical to
   2.5.0. Grow them only when needed (the ABI rules stay in `lower` until a second
   convention arrives).
+- **On `main` (unreleased): native Linux x86-64** (step 2 of the agreed order): `--target
+  linux-x64` (`src/target.strata`), `src/os/linux.strata` (ELF objects + a static ELF
+  linker, `_start` / `srt_syscall` stubs), `lib/srt/linux.strata` (the runtime on system
+  calls; `lib/srt.strata` `when`-imports `srt/windows` or `srt/linux`). Strata's own
+  calling convention is used inside Linux programs too (no C on the other side yet);
+  System V comes with dynamic linking (libc, X11: step 3's CrossPlatform/linux needs it).
+  CI's Linux job runs every run golden natively. On Linux, `auto` uses C for programs with
+  foreign functions / libraries / shared libraries; the compiler itself still builds
+  through C there (build.sh `--backend c`).
 - **On `main` (unreleased): the CrossPlatform library in Strata** (user's idea and
   naming): `import CrossPlatform` → `lib/CrossPlatform.strata` (the API, same on every OS)
   + `lib/CrossPlatform/windows.strata` (user32 / kernel32 / msvcrt), which the main file
@@ -79,7 +88,8 @@ plus releases, and approve releases when asked.
    while the C backend exists, but once the compiler is native they serve only `--backend c`.
 4. **`lib/srt.strata` still calls msvcrt.dll** (memory, files, puts, sinf/cosf/tanf) — an
    OS DLL, acceptable per the user's goal; going to kernel32 directly is optional polish.
-5. **macOS / Linux** have no native backend (C only). ARM64 + Mach-O / ELF + SysV ABI are
+5. **macOS** has no native backend (C only); **Linux x86-64** has one for plain programs
+   (static, syscalls; dynamic linking + System V next). ARM64 + Mach-O are
    the future targets (the user's Mac is Apple Silicon).
 6. ~~**gcc links** native programs that link C libraries~~ — done for DLLs: `pelink`
    finds `link "x"` as x.dll / libx.dll (System32, lib_dirs, PATH) and reads its exports.

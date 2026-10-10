@@ -7,6 +7,15 @@ and a GitHub Release.
 ## [Unreleased]
 
 ### Added
+- **Native Linux x86-64**: Strata builds Linux programs with its own backend, assembler
+  and linker - on Linux, or cross-compiled from Windows (`--target linux-x64`). No C
+  compiler and no C library: `src/os/linux.strata` writes ELF objects and links static
+  ELF executables (a `_start` stub and a `srt_syscall` stub come with every program), and
+  the runtime's Linux layer, `lib/srt/linux.strata`, talks to the kernel with system calls
+  (an mmap allocator, buffered stdout, files, sin / cos / tan, the environment, paths,
+  folders, fork / execve / wait4). Every run golden passes natively on Linux (CI). Plain
+  programs for now: programs that call C functions or build shared libraries use the C
+  backend there until dynamic linking lands.
 - **The CrossPlatform library, in Strata**: `import CrossPlatform` - a window
   (`create_window`, `poll_events`, `set_window_title` / `size`, `window_width` /
   `height`, `close_window`), the system (`os_name`, `cpu_arch`, `cpu_count`, `exe_path`,
