@@ -7,7 +7,7 @@
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
 **Current:** stratac **2.5.0** (native dlls + import libraries; no C compiler anywhere on Windows), released 2026-10-09
-· tests **76/76** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
+· tests **77/77** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
 · installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.5.0)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
@@ -237,7 +237,7 @@ Project builds are **incremental and parallel** (§4, "Split builds").
 A strict one-way pipeline, one file per phase, phases talking only through data:
 
 ```
-file.strata → lexer → parser → (module loader) → checker ─┬→ lower → opt → arch/x64 → asm → .o → linker (os/windows, + srt.o) → exe / dll   (native)
+file.strata → lexer → parser → (module loader) → checker ─┬→ lower → opt → arch/x64 ⇒ machine code (asm) → .o → linker (os/windows, + srt.o) → exe / dll   (native)
                                                           └→ codegen → C → gcc/cc → exe / dll       (C)
 ```
 
@@ -254,7 +254,7 @@ file.strata → lexer → parser → (module loader) → checker ─┬→ lower
 | `lower` | typed AST → IR: C's arithmetic conversions (results match the C backend), vector math inline, `srt_*` runtime calls, regions, the Windows x64 struct-passing rules (`abi_*`); refuses C headers (→ C backend) |
 | `opt` | fold, slot forwarding + dead stores, CSE, copy propagation, DCE, flow cleanup, LICM, coalescing; `alloc_regs` (liveness + linear scan over a target `RegSet`) |
 | `asm` | **the** assembler (any CPU): GNU-as text → bytes, symbols, relocations (`ObjFile`); sections, directives, labels, fixups; `assemble(text, arch)` hands each instruction to `arch/<arch>` |
-| `arch/x64` | **everything x86-64** (one file per CPU): IR → GNU-as AT&T assembly, Windows x64 ABI; immediates / folded addresses ("lazy" vregs), cmp+branch fusion, stack probes; the encoder (`x64_instruction`, `x64_fixup`, rel32 jumps always) |
+| `arch/x64` | **everything x86-64** (one file per CPU): IR → instructions as `Opnd`s, encoded straight to machine code (`ins2` → `x64_encode`; printed as GNU-as AT&T text only for `stratac asm`), Windows x64 ABI; immediates / folded addresses ("lazy" vregs), cmp+branch fusion, stack probes; the encoder (`x64_instruction`, `x64_fixup`, rel32 jumps always) |
 | `linker` | **the** linker entry (any OS): `write_object`, `new_link` / `link_object` / `link_lib` / `link_program`, handed to `os/<os>` |
 | `os/windows` | **everything Windows** (one file per OS): COFF objects; Strata's linker: COFF objects (the program's, the runtime's `srt.o`, any gcc-made COFF) → a PE `.exe`; section merge, symbols, relocations (REL32±, ADDR64, ADDR32NB, ADDR32), imports resolved from DLLs' export tables (the system's, and `link "x"`'s found by `link_library`; no import libs), jump stubs, the `_strata_start` stub (`__getmainargs` → `main` → `exit`), fixed base 0x140000000; dlls (`link_dll`): export table, `.reloc` base relocations, base 0x180000000; import libraries, Microsoft format (`<name>.dll.a` for GNU ld, `<name>.lib` for MSVC) |
 | `native` | the native driver (`native_compile`, `native_target_why`) |
@@ -407,7 +407,7 @@ arithmetic, shifts, floats, short-circuiting, pointers).
 
 ---
 
-## 9. Tests (`compiler/tests/run.ps1`: 76 checks; `run.sh`: the same on macOS / Linux, minus the native ones)
+## 9. Tests (`compiler/tests/run.ps1`: 77 checks; `run.sh`: the same on macOS / Linux, minus the native ones)
 
 1. **Bootstrap + fixpoint** (runs `build.ps1`: native stages, stage2 == stage3).
 2. **Goldens:** `tests/<stage>/<name>.expected` vs `stratac <stage> examples/<name>.strata`,

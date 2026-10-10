@@ -10,6 +10,11 @@
 // (`assemble(text, "x64")` -> arch/x64.strata's x64_instruction), which encodes it with the
 // helpers here (asm_byte, asm_fix, ...). Anything unknown is an error naming the line.
 //
+// Two ways in: `assemble(text, arch)` reads GNU-as text (stratac assemble, hand-written
+// assembly), and a code generator can drive it directly - asm_new, then each instruction
+// straight to its CPU's encoder (arch/x64.strata's x64_encode, no text), labels with
+// asm_label_here, the odd directive with asm_line - then asm_finish.
+//
 // Fixups: an instruction that refers to a label records a Fix; once every label is known,
 // the CPU's file patches the ones in .text (it knows its instruction formats), and a .quad
 // of an address in .data becomes a 64-bit relocation here. What can't be resolved in this
@@ -259,7 +264,8 @@ void directive(Asm* a, string s) {
 
 // ---- labels and symbols ---------------------------------------------------------------------------
 
-void define_label(Asm* a, string name) {
+// define label `name` at the current position
+export void asm_label_here(Asm* a, string name) {
     idx_add(&a.lidx, name, a.lnames.len)
     a.lnames.push(name)
     a.lsec.push(a.sec)
@@ -308,6 +314,22 @@ export ObjFile assemble(string src, string arch) {
     int lines = 1
     int n = src.len
     for i in 0..n { if src[i] == '\n' { lines += 1 } }
+    Asm a = asm_new(arch, lines)
+    int start = 0
+    int i = 0
+    while i <= n && a.o.ok {
+        if i == n || src[i] == '\n' {
+            asm_line(&a, substr(src, start, i - start))
+            start = i + 1
+        }
+        i += 1
+    }
+    return asm_finish(&a)
+}
+
+// A new assembly for the CPU `arch` (`size_hint`: about how many lines it will have).
+export Asm asm_new(string arch, int size_hint) {
+    int lines = size_hint
     u8[dynamic] t = []
     u8[dynamic] r = []
     u8[dynamic] dt = []
@@ -319,32 +341,33 @@ export ObjFile assemble(string src, string arch) {
     string[dynamic] gl = []
     Fix[dynamic] fx = []
     Asm a = Asm{ ObjFile{ true, "", t, r, dt, rl, sy }, arch, 1, ln, ls, lo, new_idx(lines / 2 + 16), gl, fx, new_idx(lines / 8 + 16), 0, "" }
-    if arch != "x64" { asm_fail(&a, "no assembler for the CPU " + arch); return a.o }
+    if arch != "x64" { asm_fail(&a, "no assembler for the CPU " + arch) }
+    return a
+}
 
-    int start = 0
-    int i = 0
-    while i <= n && a.o.ok {
-        if i == n || src[i] == '\n' {
-            a.line += 1
-            string s = trim(substr(src, start, i - start))
-            a.text = s
-            if s.len > 0 && s[0] != '#' {
-                if s[s.len - 1] == ':' { define_label(&a, substr(s, 0, s.len - 1)) }
-                else if s[0] == '.' { directive(&a, s) }
-                else {
-                    int sp = 0 - 1
-                    for k in 0..s.len { if sp < 0 && is_space(s[k]) { sp = k } }
-                    string mn = s
-                    string ops = ""
-                    if sp >= 0 { mn = substr(s, 0, sp); ops = substr(s, sp, s.len - sp) }
-                    if a.sec != 1 { asm_fail(&a, "instruction outside .text") }
-                    else { x64_instruction(&a, mn, split_operands(ops)) }
-                }
-            }
-            start = i + 1
-        }
-        i += 1
+// One line of text: a label, a directive or an instruction (or blank / a # comment).
+export void asm_line(Asm* a, string line) {
+    if !a.o.ok { return }
+    a.line += 1
+    string s = trim(line)
+    a.text = s
+    if s.len == 0 || s[0] == '#' { return }
+    if s[s.len - 1] == ':' { asm_label_here(a, substr(s, 0, s.len - 1)) }
+    else if s[0] == '.' { directive(a, s) }
+    else {
+        int sp = 0 - 1
+        for k in 0..s.len { if sp < 0 && is_space(s[k]) { sp = k } }
+        string mn = s
+        string ops = ""
+        if sp >= 0 { mn = substr(s, 0, sp); ops = substr(s, sp, s.len - sp) }
+        if a.sec != 1 { asm_fail(a, "instruction outside .text") }
+        else { x64_instruction(a, mn, split_operands(ops)) }
     }
+}
+
+// The object: symbols for the labels that are functions / data, fixups resolved.
+export ObjFile asm_finish(Asm* a_in) {
+    Asm a = a_in[0]
     if !a.o.ok { return a.o }
 
     // symbols for the functions and data (non-local .text / .data labels)

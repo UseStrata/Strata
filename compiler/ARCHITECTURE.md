@@ -34,8 +34,8 @@ typed AST
    │                               │
    ▼  opt      IR → better IR,     ▼  gcc / cc / clang
    │           registers          native executable
-   ▼  arch/x64 IR → assembly       (the native backend, the default where it can)
- foo.s  →  asm (assembler, + arch/x64's encoder) → foo.o  →  linker (os/windows, + srt.o)  →  foo.exe
+   ▼  arch/x64 IR → instructions → machine code (asm + arch/x64's encoder; text only for `stratac asm`)
+ foo.o  →  linker (os/windows, + srt.o)  →  foo.exe   (the native backend, the default where it can)
 ```
 
 Two backends share everything up to the typed AST. The native one is Strata's own, laid

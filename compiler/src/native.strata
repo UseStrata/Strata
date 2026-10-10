@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright © 2026 Connor Rutberg
 //
-// src/native.strata - the native backend's driver: checked program -> assembly. CORE.
+// src/native.strata - the native backend's driver: checked program -> machine code. CORE.
 //
 //     lower.strata (AST -> IR) -> opt.strata (optimize, allocate registers) -> arch/x64.strata
 //
@@ -13,13 +13,20 @@ import ir
 import lower
 import opt
 import arch.x64
+import asm      // ObjFile
 
 export struct NativeResult {
-    bool   ok
-    string why       // when not ok: why the native backend can't build this
-    string asm_text  // the assembly
-    string ir        // the IR as text (after optimization if `optimize`)
+    bool    ok
+    string  why       // when not ok: why the native backend can't build this
+    ObjFile obj       // the machine code (view 0)
+    string  text      // view 1: the assembly; view 2: the IR (after optimization if `optimize`)
 }
+
+// What native_compile makes: the machine code (straight from the code generator, no text:
+// a build), the assembly as text (`stratac asm`) or the IR as text (`stratac ir`).
+export int view_object() { return 0 }
+export int view_asm() { return 1 }
+export int view_ir() { return 2 }
 
 // The CPU's file in arch/ for a host CPU name ("x86_64" -> "x64")
 export string arch_name(string host_arch) {
@@ -33,10 +40,18 @@ export string native_target_why(string os, string arch) {
     return "the native backend targets x86-64 Windows so far (this is " + arch + " " + os + ")"
 }
 
-export NativeResult native_compile(Program prog, bool with_main, bool optimize_code) {
+export NativeResult native_compile(Program prog, bool with_main, bool optimize_code, int view) {
     Lower* l = new_lower()
-    if !lower_program(l, prog, with_main) { return NativeResult{ false, l.err, "", "" } }
-    X64 x = new_x64()
+    u8[dynamic] t0 = []
+    u8[dynamic] r0 = []
+    u8[dynamic] d0 = []
+    ObjReloc[dynamic] rl0 = []
+    ObjSymbol[dynamic] sy0 = []
+    ObjFile none = ObjFile{ false, "", t0, r0, d0, rl0, sy0 }
+    if !lower_program(l, prog, with_main) { return NativeResult{ false, l.err, none, "" } }
+    int size = 0
+    for i in 0..l.prog.funcs.len { size += l.prog.funcs[i].code.len }
+    X64 x = new_x64(view == view_object(), size + 64)
     x64_begin(&x)
     string[dynamic] irt = []
     for i in 0..l.prog.funcs.len {
@@ -48,6 +63,9 @@ export NativeResult native_compile(Program prog, bool with_main, bool optimize_c
         }
         x64_function(&x, f, regs)
     }
-    string asm_text = x64_finish(&x, &l.prog)
-    return NativeResult{ true, "", asm_text, ir_program_text(&l.prog) }
+    if view == view_ir() { return NativeResult{ true, "", none, ir_program_text(&l.prog) } }
+    if view == view_asm() { return NativeResult{ true, "", none, x64_finish(&x, &l.prog) } }
+    ObjFile o = x64_finish_object(&x, &l.prog)
+    if !o.ok { return NativeResult{ false, "internal error in the assembler: " + o.err, none, "" } }
+    return NativeResult{ true, "", o, "" }
 }

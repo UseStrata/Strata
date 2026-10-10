@@ -185,6 +185,28 @@ if (Get-Command objdump -ErrorAction SilentlyContinue) {
     Write-Host "SKIP  backend/assembler (no objdump)" -ForegroundColor Yellow
 }
 
+# Machine code straight from the code generator (a build: no assembly text) must be the
+# very bytes the text path makes (`stratac asm` + `stratac assemble`), for every example.
+$tmpd = Join-Path $here "embed\build"
+if (-not (Test-Path $tmpd)) { New-Item -ItemType Directory -Path $tmpd | Out-Null }
+$sTxt = Join-Path $tmpd "direct.s"; $oTxt = Join-Path $tmpd "direct_text.o"
+$bad = @(); $count = 0
+Get-ChildItem -Path $examples -Filter *.strata | ForEach-Object {
+    $srcText = Get-Content $_.FullName -Raw
+    if ($srcText -match "(?m)^\s*import\s*[<`"]" -or $srcText -match "(?m)^import raylib") { return }
+    $b = [IO.Path]::GetFileNameWithoutExtension($_.Name)
+    $null = & $strata build $_.FullName --backend native --force 2>&1
+    $oDirect = Join-Path $examples "$b.o"
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $oDirect)) { return }
+    $asmText = (& $strata asm $_.FullName --release) -join "`n"
+    [IO.File]::WriteAllText($sTxt, $asmText + "`n")
+    $null = & $strata assemble $sTxt $oTxt
+    $count++
+    if ((Get-FileHash $oDirect).Hash -ne (Get-FileHash $oTxt).Hash) { $bad += $b }
+}
+if ($bad.Count -eq 0 -and $count -gt 0) { Write-Host "PASS  backend/direct-encoding ($count examples: the same bytes as through assembly text)" -ForegroundColor Green; $pass++ }
+else { Write-Host "FAIL  backend/direct-encoding ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
+
 # No C compiler at all: with gcc off PATH, native programs still build and run (Strata
 # compiles, assembles and links them; the runtime is the prebuilt lib/srt.o).
 $savedPath = $env:Path

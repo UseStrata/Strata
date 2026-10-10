@@ -205,14 +205,9 @@ export bool run_build(BuildSpec s, string libdir) {
         string why = native_target_why(host_os(), host_arch())
         if why == "" && !strata_file_exists(libdir + "/srt.o") { why = "its runtime, lib/srt.o, is missing (build.ps1 makes it from lib/srt.strata)" }
         if why == "" {
-            NativeResult nr = native_compile(prog, !s.dll, s.release)   // a dll has no main
-            if nr.ok {
-                ObjFile ob = assemble(nr.asm_text, arch_name(host_arch()))   // Strata's own assembler
-                if ob.ok { return native_build(s, libdir, prog, nr.asm_text, &ob) }
-                why = "internal error in the assembler: " + ob.err
-            } else {
-                why = nr.why
-            }
+            NativeResult nr = native_compile(prog, !s.dll, s.release, view_object())   // a dll has no main
+            if nr.ok { return native_build(s, libdir, prog, &nr.obj) }
+            why = nr.why
         }
         if s.backend == "native" {
             strata_report(basename_of(s.entry) + ": error: can't build natively: " + why + " (use --backend c)")
@@ -293,7 +288,22 @@ export bool run_build(BuildSpec s, string libdir) {
 // A dll exports its entry module's `export`ed functions, and gets a C header (<name>.h)
 // and an import library (<name>.dll.a for GNU ld, <name>.lib for MSVC) beside it.
 
-bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, ObjFile* ob) {
+// a fingerprint of an object's contents (bytes, relocations, symbols): for the build cache
+string object_fingerprint(ObjFile* o) {
+    u64 h = 1469598103934665603
+    for i in 0..o.text.len { h = (h ^ cast<u64>(o.text[i])) * 1099511628211 }
+    for i in 0..o.rdata.len { h = (h ^ cast<u64>(o.rdata[i])) * 1099511628211 }
+    for i in 0..o.data.len { h = (h ^ cast<u64>(o.data[i])) * 1099511628211 }
+    for i in 0..o.relocs.len {
+        ObjReloc r = o.relocs[i]
+        h = (h ^ cast<u64>(r.section * 7 + r.offset * 131 + r.symbol * 8191 + r.after * 31 + r.kind)) * 1099511628211
+    }
+    string[dynamic] names = []
+    for i in 0..o.symbols.len { names.push(o.symbols[i].name + ":" + int_to_str(o.symbols[i].section) + ":" + int_to_str(o.symbols[i].value) + "\n") }
+    return int_to_str(cast<int>(h)) + fingerprint(strata_join(&names))
+}
+
+bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
     string obj_file = stem_of(s.out_c) + ".o"
     string[dynamic] argv = []
     argv.push(strata_cc())
@@ -351,7 +361,7 @@ bool native_build(BuildSpec s, string libdir, Program prog, string asm_text, Obj
 
     string key = ""
     if s.cache_file != "" {
-        string all = asm_text + "\n" + cmd + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.strata")
+        string all = object_fingerprint(ob) + "\n" + cmd + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.strata")
         for i in 0..s.c_sources.len { all = all + "\n" + read_file(s.c_sources[i]) }
         key = fingerprint(all)
         if !s.force && read_file(s.cache_file) == key && file_present(s.out_bin) {

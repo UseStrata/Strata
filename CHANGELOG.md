@@ -34,6 +34,13 @@ and a GitHub Release.
   user, `when` on both backends.
 
 ### Changed
+- **Machine code straight from the code generator**: `arch/x64.strata` builds its
+  instructions as operands (`Opnd`) and hands them to the encoder directly - no assembly
+  text in a build (it's printed only for `stratac asm`, and the IR text only for
+  `stratac ir`). Native builds ~33% faster (the compiler: 431 -> 290 ms), with the very
+  same bytes: a test checks that every example's object is identical to the one made
+  through assembly text. `asm.strata` can be driven directly (`asm_new`, `asm_line`,
+  `asm_label_here`, `asm_finish`); the encoder's entry is `x64_encode`. Tests: 77.
 - `examples/crossplatform.strata` is now `crossplatform_header.strata` (the C-header
   version; `import CrossPlatform` would find it first on Windows' case-blind file system).
 - **The native backend's layout** (internal; outputs byte-identical): one assembler,
