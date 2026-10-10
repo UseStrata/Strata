@@ -83,7 +83,8 @@ if [ -n "$native_rt" ]; then
         actual=$("$strata" run "$source" --backend native --force 2>&1 | norm)
         if [ "$actual" != "$(norm < "$want")" ]; then
             badn="$badn $name"
-            printf '%s\n' "$actual" | head -5 | sed "s/^/    $name: /"
+            printf '%s\n' "$actual" > "$compiler/build/native-actual.txt"
+            norm < "$want" | diff - "$compiler/build/native-actual.txt" | head -12 | sed "s/^/    $name: /"
         fi
     done
     if [ -z "$badn" ]; then ok "backend/native (every run golden, $native_name)"; else bad "backend/native:$badn"; fi
@@ -211,9 +212,12 @@ cxx=${CXX:-c++}
 cd "$embed" || exit 1
 test_host() {   # name, expected file, compile command...
     name=$1; want=$2; shift 2
-    if "$@" >/dev/null 2>&1; then
-        out=$("./build/$name" | norm)
+    if built=$("$@" 2>&1); then
+        out=$("./build/$name" 2>&1 | norm)
         if [ "$out" = "$(norm < "$want")" ]; then ok "embed/$name"; return; fi
+        printf '%s\n' "$out" | head -8 | sed "s/^/    $name: /"
+    else
+        printf '%s\n' "$built" | head -8 | sed "s/^/    $name (build): /"
     fi
     bad "embed/$name"
 }
