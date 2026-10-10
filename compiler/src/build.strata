@@ -210,15 +210,9 @@ export bool run_build(BuildSpec s, string libdir) {
         string why = native_target_why(target_os(), target_arch())
         if why == "" && !strata_file_exists(runtime_object(libdir)) { why = "its runtime, " + runtime_object(libdir) + ", is missing (build.ps1 makes it from lib/srt.strata)" }
         if why == "" && target_os() != "windows" {
-            // natively, only plain programs for now: C sources, libraries and foreign
-            // functions (libc's too: a static program has none) need a C toolchain there,
-            // and so do shared libraries
-            bool links = s.c_sources.len > 0 || s.libs.len > 0 || s.frameworks.len > 0
-            for i in 0..prog.decls.len {
-                Decl* d = prog.decls[i]
-                if d.kind == DcLink || (d.kind == DcFunc && d.is_foreign) { links = true }
-            }
-            if links { why = "it calls C code or libraries (natively on " + target_os() + ": plain programs only, so far)" }
+            // natively: programs and the shared libraries they call; C sources (they need a
+            // C compiler) and making shared libraries: the C backend, for now
+            if s.c_sources.len > 0 || s.frameworks.len > 0 { why = "it has C sources (natively on " + target_os() + ": not yet)" }
             if s.dll { why = "shared libraries for " + target_os() + " aren't made natively yet" }
         }
         if why == "" {

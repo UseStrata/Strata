@@ -33,6 +33,9 @@ export void srt_os_init(i32 argc, string* argv) {
     environ_v = cast<string*>(cast<int>(cast<u8*>(argv)) + 8 * (cast<int>(argc) + 1))
 }
 
+// write out what's buffered (the program's start code calls it before the C library's exit)
+export void srt_os_flush() { flush_out() }
+
 export void srt_os_exit(int code) {
     flush_out()
     sys1(231, code)                       // exit_group

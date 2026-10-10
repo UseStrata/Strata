@@ -4,11 +4,21 @@
 
 foreign <stdlib.h> {
     struct div_t  { i32 quot; i32 rem }      // 8 bytes: returned in a register
-    struct ldiv_t { i32 quot; i32 rem }      // (long is 32 bits on Windows)
     div_t  div(i32 numer, i32 denom)
-    ldiv_t ldiv(i32 numer, i32 denom)
     const i32 EXIT_SUCCESS = 0
     const i32 EXIT_FAILURE = 1
+}
+// C's `long` is 32 bits on Windows, 64 elsewhere: declare what this target has
+when target_os == "windows" {
+    foreign <stdlib.h> {
+        struct ldiv_t { i32 quot; i32 rem }  // 8 bytes: returned in rax
+        ldiv_t ldiv(i32 numer, i32 denom)
+    }
+} else {
+    foreign <stdlib.h> {
+        struct ldiv_t { int quot; int rem }  // 16 bytes: returned in rax + rdx (System V)
+        ldiv_t ldiv(int numer, int denom)
+    }
 }
 
 // no header: the C backend declares the struct and uses the constant's value

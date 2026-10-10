@@ -6,12 +6,13 @@
 // linker.strata calls it for the target OS "linux":
 //   1. ELF object files (.o): an assembled ObjFile (asm.strata) as an x86-64 ELF
 //      relocatable - also what the linker below takes;
-//   2. the linker: ELF objects -> a static x86-64 ELF executable. No C library, no dynamic
-//      loader: the runtime (lib/srt/linux.strata) talks to the kernel with system calls.
+//   2. the linker: ELF objects -> an x86-64 ELF executable: static (no C library, no
+//      dynamic loader - the runtime, lib/srt/linux.strata, talks to the kernel with system
+//      calls), or, when the program calls functions of shared libraries, dynamic.
 //      Two small stubs come with every program: `_start` (the entry: argc / argv off the
 //      stack, main, then srt_os_exit) and `srt_syscall` (a Strata call -> a system call).
 //
-// Shared libraries (.so) and dynamic linking (libc, X11, ...) come later.
+// Making shared libraries (.so) comes later.
 
 import asm      // ObjFile, assemble (the stubs)
 import hashidx
@@ -265,6 +266,8 @@ export struct ElfLinker {
     NameIdx         gidx
     int[dynamic]    osize     // per output section
     int[dynamic]    oaddr
+    string[dynamic] needed    // the shared libraries (SONAMEs)
+    string[dynamic] imports   // the functions they provide this program
 }
 
 export ElfLinker* new_elf_linker() {
@@ -275,7 +278,9 @@ export ElfLinker* new_elf_linker() {
     int[dynamic] gv = []
     int[dynamic] a = []
     int[dynamic] b = []
-    return alloc(ElfLinker{ true, "", o, s, gn, gs, gv, new_idx(4096), a, b })
+    string[dynamic] nd = []
+    string[dynamic] im = []
+    return alloc(ElfLinker{ true, "", o, s, gn, gs, gv, new_idx(4096), a, b, nd, im })
 }
 
 void ek_fail(ElfLinker* l, string msg) {
@@ -372,6 +377,7 @@ int esym_addr(ElfLinker* l, int oi, int si) {
     }
     int g = find_eglobal(l, s.name)
     if g < 0 { ek_fail(l, "undefined symbol '" + s.name + "' (in " + o.name + ")"); return 0 }
+    if l.gsec[g] < 0 { return l.gval[g] }                      // an import: its stub
     ESec gs = l.secs[l.gsec[g]]
     return l.oaddr[gs.out] + gs.at + l.gval[g]
 }
@@ -387,14 +393,106 @@ void put64le(u8[dynamic]* b, int at, int v) {
 
 int ealign(int n, int a) { return (n + a - 1) / a * a }
 
+// ---- shared libraries (dynamic linking) --------------------------------------------------------
+// A program that calls functions it doesn't define (foreign functions, `link "x"`) gets
+// them from shared libraries at startup: the executable names the dynamic loader
+// (PT_INTERP) and its libraries (DT_NEEDED), each call goes through an 8-byte stub
+// `jmp *slot(%rip)`, and the loader fills the slots (R_X86_64_GLOB_DAT, all at startup:
+// BIND_NOW). The C library is always among them then; and the program exits through its
+// `exit` (flushing C's buffers too).
+
+// the file a `link "name"` stands for, as the loader knows it (its SONAME)
+string known_soname(string name) {
+    if name == "c" { return "libc.so.6" }
+    if name == "m" { return "libm.so.6" }
+    if name == "dl" { return "libdl.so.2" }
+    if name == "pthread" { return "libpthread.so.0" }
+    if name == "rt" { return "librt.so.1" }
+    if name == "X11" { return "libX11.so.6" }
+    if name == "Xext" { return "libXext.so.6" }
+    if name == "Xrandr" { return "libXrandr.so.2" }
+    if name == "Xi" { return "libXi.so.6" }
+    if name == "Xcursor" { return "libXcursor.so.1" }
+    if name == "GL" { return "libGL.so.1" }
+    if name == "EGL" { return "libEGL.so.1" }
+    if name == "asound" { return "libasound.so.2" }
+    if name == "raylib" { return "libraylib.so.550" }
+    return ""
+}
+
+// DT_SONAME of the ELF shared library in b ("" if it isn't one / has none)
+string soname_of(u8[dynamic] b) {
+    if b.len < 64 || rd32le(b, 0) != 1179403647 { return "" }
+    int shoff = rd64le(b, 40)
+    int shnum = rd16le(b, 60)
+    for k in 0..shnum {
+        int h = shoff + 64 * k
+        if rd32le(b, h + 4) == 6 {                                // SHT_DYNAMIC
+            int off = rd64le(b, h + 24)
+            int size = rd64le(b, h + 32)
+            int stroff = rd64le(b, shoff + 64 * rd32le(b, h + 40) + 24)
+            int e = 0
+            while e + 16 <= size {
+                if rd64le(b, off + e) == 14 { return cstr_at(b, stroff + rd64le(b, off + e + 8)) }   // DT_SONAME
+                e += 16
+            }
+        }
+    }
+    return ""
+}
+
+// Note the shared library `name` (`link "name"`): libname.so in `dirs` or the system's
+// library folders gives its SONAME; else a well-known one; else "libname.so".
+export bool elf_library(ElfLinker* l, string name, string[dynamic] dirs) {
+    string[dynamic] where = []
+    for i in 0..dirs.len { where.push(dirs[i]) }
+    where.push("/lib/x86_64-linux-gnu")
+    where.push("/usr/lib/x86_64-linux-gnu")
+    where.push("/lib64")
+    where.push("/usr/lib64")
+    where.push("/usr/local/lib")
+    where.push("/usr/lib")
+    where.push("/lib")
+    string so = ""
+    if strata_host_os() == "linux" {
+        int w = 0
+        while so == "" && w < where.len {
+            string p = where[w] + "/lib" + name + ".so"
+            if strata_file_exists(p) { so = soname_of(strata_read_bytes(p)) }
+            w += 1
+        }
+    }
+    if so == "" { so = known_soname(name) }
+    if so == "" { so = "lib" + name + ".so" }
+    bool have = false
+    for i in 0..l.needed.len { if l.needed[i] == so { have = true } }
+    if !have { l.needed.push(so) }
+    return true
+}
+
+// the System V hash of a symbol name (DT_HASH)
+int elf_hash(string s) {
+    int h = 0
+    for i in 0..s.len {
+        h = (h << 4) + cast<int>(s[i])
+        int g = h & 4026531840
+        if g != 0 { h = h ^ (g >> 24) }
+        h = h & 268435455
+    }
+    return h
+}
+
 // The program's entry: argc and argv from the stack, main (System V: rdi, rsi; the stack
-// 16-byte aligned), then srt_os_exit (which flushes stdout).
-string start_stub() {
+// 16-byte aligned), then out: srt_os_exit (a static program) or, with shared libraries,
+// srt_os_flush and the C library's exit.
+string start_stub(bool dynamic) {
     string[dynamic] p = []
     p.push("\t.text\n\t.globl _start\n_start:\n")
     p.push("\tmovq 0(%rsp), %rdi\n\tleaq 8(%rsp), %rsi\n")
     p.push("\tandq $-16, %rsp\n")
-    p.push("\tcall main\n\tmovl %eax, %edi\n\tcall srt_os_exit\n")
+    p.push("\tcall main\n\tmovl %eax, %edi\n")
+    if dynamic { p.push("\tpushq %rdi\n\tpushq %rdi\n\tcall srt_os_flush\n\tpopq %rdi\n\tpopq %rdi\n\tcall exit\n") }
+    else { p.push("\tcall srt_os_exit\n") }
     return strata_join(&p)
 }
 
@@ -409,19 +507,51 @@ string syscall_stub() {
     return strata_join(&p)
 }
 
+// every symbol a kept section refers to that no object defines: imports
+void find_elf_imports(ElfLinker* l) {
+    for oi in 0..l.objs.len {
+        EObj o = l.objs[oi]
+        for r in 0..o.rela_at.len {
+            ESec tgt = l.secs[o.first + o.rela_to[r]]
+            if tgt.out >= 0 {
+                for k in 0..o.rela_n[r] {
+                    int info = rd64le(o.b, o.rela_at[r] + 24 * k + 8)
+                    int si = cast<int>(cast<u64>(info) >> cast<u64>(32))
+                    ESym s = o.syms[si]
+                    if s.shndx == 0 && s.name != "" && find_eglobal(l, s.name) < 0 {
+                        bool have = false
+                        for i in 0..l.imports.len { if l.imports[i] == s.name { have = true } }
+                        if !have { l.imports.push(s.name) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Link everything added so far into the executable `path`. False (with l.err) on failure.
 export bool elf_link_exe(ElfLinker* l, string path) {
-    ObjFile st = assemble(start_stub(), "x64")
-    if !st.ok { ek_fail(l, "start: " + st.err); return false }
-    elf_add(l, "start", elf_bytes(&st))
+    if find_eglobal(l, "main") < 0 { ek_fail(l, "no main"); return false }
+    // imports from shared libraries? (then: dynamic, with the C library)
+    for k in 0..4 { l.osize.push(0); l.oaddr.push(0) }
     ObjFile sc = assemble(syscall_stub(), "x64")
     if !sc.ok { ek_fail(l, "syscall: " + sc.err); return false }
     elf_add(l, "syscall", elf_bytes(&sc))
+    find_elf_imports(l)
+    bool dynamic = l.imports.len > 0
+    ObjFile st = assemble(start_stub(dynamic), "x64")
+    if !st.ok { ek_fail(l, "start: " + st.err); return false }
+    elf_add(l, "start", elf_bytes(&st))
     if !l.ok { return false }
-    if find_eglobal(l, "main") < 0 { ek_fail(l, "no main"); return false }
+    if dynamic {
+        string[dynamic] none = []
+        elf_library(l, "c", none)
+        l.imports = []
+        find_elf_imports(l)                      // (now with the stub's `exit`)
+    }
+    int ni = l.imports.len
 
     // place the input sections
-    for k in 0..4 { l.osize.push(0); l.oaddr.push(0) }
     for si in 0..l.secs.len {
         int out = l.secs[si].out
         if out >= 0 {
@@ -430,25 +560,71 @@ export bool elf_link_exe(ElfLinker* l, string path) {
             l.osize[out] = at + l.secs[si].size
         }
     }
-    // the segments: headers + .text (r-x), .rodata (r--), .data + .bss (rw-); each starts
-    // on a page, its address = the base + its file offset
+    int stubs_at = ealign(l.osize[0], 16)        // the import stubs, after the code
+    l.osize[0] = stubs_at + 8 * ni
+
+    // the dynamic linking tables (in the first segment, before the code): the loader's
+    // name, .hash, .dynsym, .dynstr, .rela.dyn; in the data segment: the slots, .dynamic
+    string interp = "/lib64/ld-linux-x86-64.so.2"
+    u8[dynamic] dsb = []
+    StrTab dynstr = StrTab{ dsb }
+    dynstr.b.push(cast<u8>(0))
+    int[dynamic] need_off = []
+    for i in 0..l.needed.len { need_off.push(strtab_add(&dynstr, l.needed[i])) }
+    int[dynamic] name_off = []
+    for i in 0..ni { name_off.push(strtab_add(&dynstr, l.imports[i])) }
+    int nsym = ni + 1
     int base = 4194304                                      // 0x400000
     int nph = 4                                             // 3 PT_LOAD + PT_GNU_STACK
-    int text_off = ealign(64 + 56 * nph, 16)
+    if dynamic { nph = 7 }                                  // + PT_PHDR, PT_INTERP, PT_DYNAMIC
+    int at = 64 + 56 * nph
+    int interp_off = at
+    int hash_off = 0
+    int dynsym_off = 0
+    int dynstr_off = 0
+    int rela_off = 0
+    if dynamic {
+        at = ealign(interp_off + interp.len + 1, 8)
+        hash_off = at
+        at = hash_off + 4 * (2 + 1 + nsym)                  // nbucket, nchain, 1 bucket, the chains
+        at = ealign(at, 8)
+        dynsym_off = at
+        at = dynsym_off + 24 * nsym
+        dynstr_off = at
+        at = dynstr_off + dynstr.b.len
+        at = ealign(at, 8)
+        rela_off = at
+        at = rela_off + 24 * ni
+    }
+    int text_off = ealign(at, 16)
     int ro_off = ealign(text_off + l.osize[0], 4096)
     int data_off = ealign(ro_off + l.osize[1], 4096)
-    int bss_at = ealign(l.osize[2], 16)
+    int got_at = ealign(l.osize[2], 8)                      // the slots, after the data
+    int dyn_at = got_at + 8 * ni                            // then .dynamic
+    int ndyn = l.needed.len + 13
+    int data_size = l.osize[2]
+    if dynamic { data_size = dyn_at + 16 * ndyn }
+    int bss_at = ealign(data_size, 16)
     l.oaddr[0] = base + text_off
     l.oaddr[1] = base + ro_off
     l.oaddr[2] = base + data_off
     l.oaddr[3] = base + data_off + bss_at
+    int got_addr = base + data_off + got_at
+    int stubs_addr = l.oaddr[0] + stubs_at
+    // the imports, as symbols: their stubs
+    for i in 0..ni {
+        idx_add(&l.gidx, l.imports[i], l.gname.len)
+        l.gname.push(l.imports[i])
+        l.gsec.push(0 - 1)                                  // (marks an import)
+        l.gval.push(stubs_addr + 8 * i)
+    }
 
     u8[dynamic] text = []
     u8[dynamic] ro = []
     u8[dynamic] data = []
     for i in 0..l.osize[0] { text.push(cast<u8>(204)) }    // int3 between functions
     for i in 0..l.osize[1] { ro.push(cast<u8>(0)) }
-    for i in 0..l.osize[2] { data.push(cast<u8>(0)) }
+    for i in 0..data_size { data.push(cast<u8>(0)) }
     for si in 0..l.secs.len {
         ESec s = l.secs[si]
         if s.out >= 0 && s.out != 3 {
@@ -460,6 +636,13 @@ export bool elf_link_exe(ElfLinker* l, string path) {
             }
         }
     }
+    // import stubs: jmp *slot(%rip)
+    for i in 0..ni {
+        int p = stubs_at + 8 * i
+        text[p] = cast<u8>(255)
+        text[p + 1] = cast<u8>(37)
+        put32le(&text, p + 2, (got_addr + 8 * i) - (l.oaddr[0] + p + 6))
+    }
     // relocations
     for oi in 0..l.objs.len {
         EObj o = l.objs[oi]
@@ -467,10 +650,10 @@ export bool elf_link_exe(ElfLinker* l, string path) {
             ESec tgt = l.secs[o.first + o.rela_to[r]]
             if tgt.out >= 0 {
                 for k in 0..o.rela_n[r] {
-                    int at = o.rela_at[r] + 24 * k
-                    int off = rd64le(o.b, at)
-                    int info = rd64le(o.b, at + 8)
-                    int addend = rd64le(o.b, at + 16)
+                    int ra = o.rela_at[r] + 24 * k
+                    int off = rd64le(o.b, ra)
+                    int info = rd64le(o.b, ra + 8)
+                    int addend = rd64le(o.b, ra + 16)
                     int typ = info & 4294967295
                     int si = cast<int>(cast<u64>(info) >> cast<u64>(32))
                     int sv = esym_addr(l, oi, si)
@@ -491,6 +674,23 @@ export bool elf_link_exe(ElfLinker* l, string path) {
         }
     }
     if !l.ok { return false }
+    // .dynamic: the libraries, then where the tables are
+    if dynamic {
+        int d = dyn_at
+        for i in 0..l.needed.len { put64le(&data, d, 1); put64le(&data, d + 8, need_off[i]); d += 16 }   // DT_NEEDED
+        put64le(&data, d, 4); put64le(&data, d + 8, base + hash_off); d += 16           // DT_HASH
+        put64le(&data, d, 5); put64le(&data, d + 8, base + dynstr_off); d += 16         // DT_STRTAB
+        put64le(&data, d, 6); put64le(&data, d + 8, base + dynsym_off); d += 16         // DT_SYMTAB
+        put64le(&data, d, 10); put64le(&data, d + 8, dynstr.b.len); d += 16             // DT_STRSZ
+        put64le(&data, d, 11); put64le(&data, d + 8, 24); d += 16                       // DT_SYMENT
+        put64le(&data, d, 7); put64le(&data, d + 8, base + rela_off); d += 16           // DT_RELA
+        put64le(&data, d, 8); put64le(&data, d + 8, 24 * ni); d += 16                   // DT_RELASZ
+        put64le(&data, d, 9); put64le(&data, d + 8, 24); d += 16                        // DT_RELAENT
+        put64le(&data, d, 30); put64le(&data, d + 8, 8); d += 16                        // DT_FLAGS: BIND_NOW
+        put64le(&data, d, 1879048187); put64le(&data, d + 8, 1); d += 16                // DT_FLAGS_1: NOW
+        put64le(&data, d, 21); put64le(&data, d + 8, 0); d += 16                        // DT_DEBUG
+        put64le(&data, d, 0); put64le(&data, d + 8, 0)                                  // DT_NULL
+    }
     int g = find_eglobal(l, "_start")
     ESec es = l.secs[l.gsec[g]]
     int entry = l.oaddr[es.out] + es.at + l.gval[g]
@@ -500,13 +700,44 @@ export bool elf_link_exe(ElfLinker* l, string path) {
     EOut o = EOut{ fb }
     elf_header(&o, 2, entry, 64, nph, 0, 0, 0)
     // program headers: type, flags, offset, vaddr, paddr, filesz, memsz, align
+    if dynamic {
+        e32(&o, 6); e32(&o, 4); e64(&o, 64); e64(&o, base + 64); e64(&o, base + 64)                                   // PT_PHDR
+        e64(&o, 56 * nph); e64(&o, 56 * nph); e64(&o, 8)
+        e32(&o, 3); e32(&o, 4); e64(&o, interp_off); e64(&o, base + interp_off); e64(&o, base + interp_off)          // PT_INTERP
+        e64(&o, interp.len + 1); e64(&o, interp.len + 1); e64(&o, 1)
+    }
     e32(&o, 1); e32(&o, 5); e64(&o, 0); e64(&o, base); e64(&o, base)
     e64(&o, text_off + l.osize[0]); e64(&o, text_off + l.osize[0]); e64(&o, 4096)
     e32(&o, 1); e32(&o, 4); e64(&o, ro_off); e64(&o, base + ro_off); e64(&o, base + ro_off)
     e64(&o, l.osize[1]); e64(&o, l.osize[1]); e64(&o, 4096)
     e32(&o, 1); e32(&o, 6); e64(&o, data_off); e64(&o, base + data_off); e64(&o, base + data_off)
-    e64(&o, l.osize[2]); e64(&o, bss_at + l.osize[3]); e64(&o, 4096)
+    e64(&o, data_size); e64(&o, bss_at + l.osize[3]); e64(&o, 4096)
+    if dynamic {
+        e32(&o, 2); e32(&o, 6); e64(&o, data_off + dyn_at); e64(&o, base + data_off + dyn_at); e64(&o, base + data_off + dyn_at)   // PT_DYNAMIC
+        e64(&o, 16 * ndyn); e64(&o, 16 * ndyn); e64(&o, 8)
+    }
     e32(&o, 1685382481); e32(&o, 6); e64(&o, 0); e64(&o, 0); e64(&o, 0); e64(&o, 0); e64(&o, 0); e64(&o, 16)   // PT_GNU_STACK: not executable
+    if dynamic {
+        // the loader's name; .hash (one bucket); .dynsym (the imports: undefined functions);
+        // .dynstr; .rela.dyn (fill each slot with its symbol's address)
+        for i in 0..interp.len { e8(&o, cast<int>(interp[i])) }
+        e8(&o, 0)
+        while o.b.len < hash_off { e8(&o, 0) }
+        e32(&o, 1)
+        e32(&o, nsym)
+        int[dynamic] chain = []
+        for i in 0..nsym { chain.push(0) }
+        int head = 0
+        for i in 1..nsym { chain[i] = head; head = i }
+        e32(&o, head)
+        for i in 0..nsym { e32(&o, chain[i]) }
+        while o.b.len < dynsym_off { e8(&o, 0) }
+        ezero(&o, 24)
+        for i in 0..ni { e32(&o, name_off[i]); e8(&o, 18); e8(&o, 0); e16(&o, 0); e64(&o, 0); e64(&o, 0) }   // GLOBAL FUNC, undefined
+        ebytes(&o, dynstr.b)
+        while o.b.len < rela_off { e8(&o, 0) }
+        for i in 0..ni { e64(&o, got_addr + 8 * i); e64(&o, (i + 1) * 4294967296 + 6); e64(&o, 0) }        // R_X86_64_GLOB_DAT
+    }
     while o.b.len < text_off { e8(&o, 0) }
     ebytes(&o, text)
     while o.b.len < ro_off { e8(&o, 0) }

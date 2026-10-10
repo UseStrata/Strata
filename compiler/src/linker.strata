@@ -46,12 +46,15 @@ export void link_object(Link* k, string name, u8[dynamic] bytes) {
 // the library `name` of a `link "name"` (a shared library the program will load); false
 // if the OS's linker can't use it (then a C toolchain must link, on Windows)
 export bool link_lib(Link* k, string name, string[dynamic] dirs) {
-    if k.os == "linux" { return false }            // (no dynamic linking on Linux yet)
+    if k.os == "linux" { return elf_library(k.lin, name, dirs) }
     return link_library(k.win, name, dirs)
 }
 
-// where the libraries added so far were found
-export string[dynamic] link_lib_paths(Link* k) { return k.win.dll_path }
+// where the libraries added so far were found (Linux: their names)
+export string[dynamic] link_lib_paths(Link* k) {
+    if k.os == "linux" { return k.lin.needed }
+    return k.win.dll_path
+}
 
 export bool link_failed(Link* k) {
     if k.os == "linux" { return !k.lin.ok }
