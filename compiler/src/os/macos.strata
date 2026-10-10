@@ -441,13 +441,27 @@ export void mach_add(MachLinker* l, string name, u8[dynamic] b) {
     }
 }
 
-// Note a dylib the program loads (`link "name"`): libSystem's parts are libSystem; else
+// the install name of a library every Mac has ("" if it isn't one): the Objective-C
+// runtime, and the frameworks (`link "AppKit"`)
+string system_dylib(string name) {
+    if name == "objc" { return "/usr/lib/libobjc.A.dylib" }
+    string[dynamic] cee = ["AppKit", "Foundation", "CoreServices", "Carbon"]          // version C
+    for i in 0..cee.len { if name == cee[i] { return "/System/Library/Frameworks/" + name + ".framework/Versions/C/" + name } }
+    string[dynamic] aye = ["Cocoa", "CoreFoundation", "CoreGraphics", "QuartzCore", "Metal", "IOKit",
+                           "AudioToolbox", "CoreAudio", "CoreVideo", "GameController", "OpenGL", "Security"]
+    for i in 0..aye.len { if name == aye[i] { return "/System/Library/Frameworks/" + name + ".framework/Versions/A/" + name } }
+    return ""
+}
+
+// Note a dylib the program loads (`link "name"`): libSystem's parts are libSystem; the
+// Objective-C runtime and the system frameworks are where every Mac has them; else
 // lib<name>.dylib found in `dirs` (macOS: also /usr/local/lib, /opt/homebrew/lib) gives
 // its install name, or it's @rpath/lib<name>.dylib.
 export bool mach_library(MachLinker* l, string name, string[dynamic] dirs) {
     if name == "c" || name == "m" || name == "System" || name == "pthread" || name == "dl" { return true }
     string install = "@rpath/lib" + name + ".dylib"
-    if strata_host_os() == "macos" {
+    if system_dylib(name) != "" { install = system_dylib(name) }
+    if strata_host_os() == "macos" && system_dylib(name) == "" {
         string[dynamic] where = []
         for i in 0..dirs.len { where.push(dirs[i]) }
         where.push("/usr/local/lib")

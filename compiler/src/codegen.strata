@@ -16,6 +16,16 @@
 import parser
 import host   // strata_join
 import ast
+import target   // target_os: Mach-O symbols start with _
+
+// A foreign function under another name (`= "objc_msgSend"`): its symbol, as a GCC / Clang
+// asm label on the prototype
+string link_label(Decl* d) {
+    if d.link_name == "" { return "" }
+    string prefix = ""
+    if target_os() == "macos" { prefix = "_" }
+    return " __asm__(\"" + prefix + d.link_name + "\")"
+}
 
 // Output is collected as a list of pieces and joined once at the end: appending to one
 // growing string copies all of it every time (Strata strings are immutable C strings),
@@ -846,7 +856,7 @@ export string generate(Codegen* cg, Program prog) {
     // function from a header is declared by the header
     for i in 0..prog.decls.len {
         Decl* d = prog.decls[i]
-        if d.kind == DcFunc && !(d.is_foreign && d.path != "") { cg_out(cg, export_prefix(cg, d) + func_sig(d) + ";\n"); }
+        if d.kind == DcFunc && !(d.is_foreign && d.path != "" && d.link_name == "") { cg_out(cg, export_prefix(cg, d) + func_sig(d) + link_label(d) + ";\n"); }
     }
     cg_out(cg, "\n")
     gen_globals(cg, prog, 0 - 1)
@@ -918,14 +928,14 @@ export SplitOutput generate_split(Codegen* cg, Program prog, string header_name,
             // exported functions this module can call: its own and those of modules it sees
             for i in 0..prog.decls.len {
                 Decl* d = prog.decls[i]
-                if d.kind == DcFunc && d.is_exported && (d.module == m || module_sees(prog, m, d.module)) && !(d.is_foreign && d.path != "") {
-                    cg_out(cg, export_prefix(cg, d) + func_sig(d) + ";\n")
+                if d.kind == DcFunc && d.is_exported && (d.module == m || module_sees(prog, m, d.module)) && !(d.is_foreign && d.path != "" && d.link_name == "") {
+                    cg_out(cg, export_prefix(cg, d) + func_sig(d) + link_label(d) + ";\n")
                 }
             }
             for i in 0..prog.decls.len {
                 Decl* d = prog.decls[i]
-                if d.module == m && d.kind == DcFunc && !d.is_exported && !(d.is_foreign && d.path != "") {
-                    if d.is_foreign { cg_out(cg, func_sig(d) + ";\n") }   // a symbol from elsewhere: not static
+                if d.module == m && d.kind == DcFunc && !d.is_exported && !(d.is_foreign && d.path != "" && d.link_name == "") {
+                    if d.is_foreign { cg_out(cg, func_sig(d) + link_label(d) + ";\n") }   // a symbol from elsewhere: not static
                     else { cg_out(cg, "static " + func_sig(d) + ";\n") }
                 }
             }

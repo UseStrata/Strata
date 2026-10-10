@@ -1,0 +1,183 @@
+// Copyright © 2026 Connor Rutberg
+// lib/CrossPlatform/macos.strata - CrossPlatform's macOS part: the os_* functions
+// CrossPlatform.strata calls, on top of Cocoa (AppKit, through the Objective-C runtime)
+// and libSystem. CrossPlatform imports it when building for macOS
+// (`when target_os == "macos" { import CrossPlatform.macos }`).
+//
+// Objective-C methods are called through objc_msgSend, which is called with the method's
+// own C signature (on ARM64 it must be): each signature used is a foreign function under
+// its own name, `= "objc_msgSend"`.
+//
+// Part of the Strata RUNTIME (compiler/lib): GPL-3.0 WITH the runtime linking exception
+// (see ../../../LICENSE-RUNTIME.md) - programs built with Strata are not covered by the GPL.
+
+link "objc"
+link "AppKit"
+
+foreign {   // libobjc
+    struct NSRect { f64 x; f64 y; f64 w; f64 h }    // (CGRect: four doubles, in float registers)
+    struct NSSize { f64 w; f64 h }
+    u8* objc_getClass(string name)
+    u8* sel_registerName(string name)
+    u8* objc_autoreleasePoolPush()
+    void objc_autoreleasePoolPop(u8* pool)
+    u8* msg(u8* obj, u8* sel) = "objc_msgSend"
+    u8* msg_p(u8* obj, u8* sel, u8* a) = "objc_msgSend"
+    u8* msg_i(u8* obj, u8* sel, int a) = "objc_msgSend"
+    u8* msg_s(u8* obj, u8* sel, string a) = "objc_msgSend"
+    u8 msg_bool(u8* obj, u8* sel) = "objc_msgSend"
+    NSRect msg_rect(u8* obj, u8* sel) = "objc_msgSend"
+    void msg_size(u8* obj, u8* sel, NSSize s) = "objc_msgSend"
+    u8* msg_init_window(u8* obj, u8* sel, NSRect frame, u64 style, u64 backing, i32 defer) = "objc_msgSend"
+    u8* msg_next_event(u8* obj, u8* sel, u64 mask, u8* until, u8* mode, i32 dequeue) = "objc_msgSend"
+}
+
+foreign {   // libSystem
+    i32 _NSGetExecutablePath(u8* buf, u32* size)
+    int sysconf(i32 name)
+    i32 stat(string path, u8* buf)
+    i32 mkdir(string path, u16 mode)
+    i32 posix_spawnp(i32* pid, string file, u8* actions, u8* attrs, string* argv, string* envp)
+    string** _NSGetEnviron()
+    i32 waitpid(i32 pid, i32* status, i32 options)
+    i32 fflush(u8* file)
+}
+
+// ---- the window ------------------------------------------------------------------------------
+
+global u8* app             // NSApp
+global u8* window          // the NSWindow (null: none)
+
+u8* cls(string name) { return objc_getClass(name) }
+u8* sel(string name) { return sel_registerName(name) }
+u8* nsstring(string s) { return msg_s(cls("NSString"), sel("stringWithUTF8String:"), s) }
+
+export bool os_create_window(int width, int height, string title) {
+    if window != null { return true }
+    u8* pool = objc_autoreleasePoolPush()
+    app = msg(cls("NSApplication"), sel("sharedApplication"))
+    msg_i(app, sel("setActivationPolicy:"), 0)                          // regular: a Dock icon, a menu bar
+    NSRect frame = NSRect{ 0.0, 0.0, cast<f64>(width), cast<f64>(height) }
+    u8* w = msg(cls("NSWindow"), sel("alloc"))
+    // titled | closable | miniaturizable | resizable; buffered
+    window = msg_init_window(w, sel("initWithContentRect:styleMask:backing:defer:"), frame, cast<u64>(15), cast<u64>(2), 0)
+    if window != null {
+        msg_i(window, sel("setReleasedWhenClosed:"), 0)                 // closing hides it (poll_events notices)
+        msg_p(window, sel("setTitle:"), nsstring(title))
+        msg(window, sel("center"))
+        msg_p(window, sel("makeKeyAndOrderFront:"), null)
+        msg_i(app, sel("activateIgnoringOtherApps:"), 1)
+        msg(app, sel("finishLaunching"))
+    }
+    objc_autoreleasePoolPop(pool)
+    return window != null
+}
+
+export bool os_poll_events() {
+    if window == null { return false }
+    u8* pool = objc_autoreleasePoolPush()
+    u8* past = msg(cls("NSDate"), sel("distantPast"))
+    u8* mode = nsstring("kCFRunLoopDefaultMode")                         // NSDefaultRunLoopMode
+    bool more = true
+    while more {
+        u8* ev = msg_next_event(app, sel("nextEventMatchingMask:untilDate:inMode:dequeue:"), cast<u64>(0 - 1), past, mode, 1)
+        if ev == null { more = false } else { msg_p(app, sel("sendEvent:"), ev) }
+    }
+    msg(app, sel("updateWindows"))
+    bool open = msg_bool(window, sel("isVisible")) != cast<u8>(0)
+    objc_autoreleasePoolPop(pool)
+    if !open { os_close_window() }
+    return window != null
+}
+
+export void os_set_window_title(string title) {
+    if window == null { return }
+    u8* pool = objc_autoreleasePoolPush()
+    msg_p(window, sel("setTitle:"), nsstring(title))
+    objc_autoreleasePoolPop(pool)
+}
+
+export void os_set_window_size(int width, int height) {
+    if window != null { msg_size(window, sel("setContentSize:"), NSSize{ cast<f64>(width), cast<f64>(height) }) }
+}
+
+NSRect content_frame() { return msg_rect(msg(window, sel("contentView")), sel("frame")) }
+
+export int os_window_width() {
+    if window == null { return 0 }
+    return cast<int>(content_frame().w)
+}
+
+export int os_window_height() {
+    if window == null { return 0 }
+    return cast<int>(content_frame().h)
+}
+
+export void os_close_window() {
+    if window != null {
+        msg(window, sel("close"))
+        msg(window, sel("release"))
+    }
+    window = null
+}
+
+// ---- the system ------------------------------------------------------------------------------
+
+export string os_system_name() { return "macos" }
+export string os_cpu_arch() { return "arm64" }
+
+export int os_cpu_count() {
+    int n = sysconf(58)                                                  // _SC_NPROCESSORS_ONLN
+    if n < 1 { return 1 }
+    return n
+}
+
+export string os_exe_path() {
+    u8[dynamic] buf = []
+    for i in 0..4096 { buf.push(cast<u8>(0)) }
+    u32 size = cast<u32>(4096)
+    if _NSGetExecutablePath(&buf[0], &size) != 0 { return "" }
+    return substr(cast<string>(&buf[0]), 0, cast<string>(&buf[0]).len)
+}
+
+// ---- files -----------------------------------------------------------------------------------
+
+// 0: nothing there, 1: a file, 2: a folder
+int path_kind(string path) {
+    if path == "" { return 0 }
+    u8[dynamic] st = []
+    for i in 0..144 { st.push(cast<u8>(0)) }                                // a struct stat
+    if stat(path, &st[0]) != 0 { return 0 }
+    int mode = cast<int>(st[4]) | (cast<int>(st[5]) << 8)                // st_mode (u16, at 4)
+    if (mode & 61440) == 16384 { return 2 }                              // S_IFDIR
+    return 1
+}
+
+export bool os_path_exists(string path) { return path_kind(path) != 0 }
+export bool os_is_directory(string path) { return path_kind(path) == 2 }
+export void os_make_directory(string path) { mkdir(path, cast<u16>(511)) }   // 0777 (less the umask)
+export int os_path_root_length(string path) { return 0 }                 // ("/" is where folders start)
+
+// ---- other programs ---------------------------------------------------------------------------
+// posix_spawnp searches PATH and reports a program it can't run (macOS: before returning).
+
+export int os_start_program(string[dynamic] argv) {
+    if argv.len == 0 { return 0 }
+    string[dynamic] args = []
+    for i in 0..argv.len { args.push(argv[i]) }
+    args.push(cast<string>(null))
+    fflush(null)
+    i32 pid = 0
+    string** env = _NSGetEnviron()
+    if posix_spawnp(&pid, args[0], null, null, &args[0], env[0]) != 0 { return 0 }
+    return cast<int>(pid)
+}
+
+// its exit code (128 + the signal if one ended it), -1 if waiting failed
+export int os_wait_program(int handle) {
+    i32 status = 0
+    if waitpid(cast<i32>(handle), &status, 0) < 0 { return 0 - 1 }
+    int s = cast<int>(status)
+    if (s & 127) == 0 { return (s >> 8) & 255 }
+    return 128 + (s & 127)
+}

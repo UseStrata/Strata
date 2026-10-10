@@ -21,6 +21,12 @@ when target_os == "windows" {
     }
 }
 
+// another name for a C function: `= "symbol"` (one C function can be declared under
+// several Strata names and signatures - objc_msgSend, say)
+foreign {
+    i32 absolute(i32 x) = "abs"
+}
+
 // no header: the C backend declares the struct and uses the constant's value
 foreign {
     struct Tint { u8 r; u8 g; u8 b; u8 a }
@@ -37,6 +43,7 @@ ldiv_t r = ldiv(-17, 5)
 print(r.quot)                 // -3
 print(r.rem)                  // -2
 print(EXIT_FAILURE - EXIT_SUCCESS)   // 1
+print(absolute(-42))          // 42
 
 Tint t = GOLD
 t.a = 128

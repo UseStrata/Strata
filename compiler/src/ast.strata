@@ -159,6 +159,9 @@ export struct Decl {
     // DcConst  (`const T NAME = init` in a foreign block): the same; uses are replaced by
     //          the value (or, on the C backend with a header, name the header's macro)
     Expr*      init
+    // a foreign function's symbol, when it isn't its name (`u8* send(u8* o, u8* s) =
+    // "objc_msgSend"`: one C function seen through several Strata signatures); "" = name
+    string     link_name
 }
 
 export Decl* new_decl(DeclKind k, int line, int col) {
@@ -174,7 +177,8 @@ export Decl* new_decl(DeclKind k, int line, int col) {
         "", false,               // path, is_system
         false,                   // is_exported
         0,                       // module
-        false, null              // is_foreign, init
+        false, null,             // is_foreign, init
+        ""                       // link_name
     })
 }
 

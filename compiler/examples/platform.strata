@@ -1,13 +1,13 @@
 // platform.strata - the CrossPlatform library: the system, files and other programs
 // (the window: see platform_window.strata). Same code on every OS; the library loads its
-// part for the one you build for (Windows, Linux).
+// part for the one you build for (Windows, Linux, macOS).
 
 import CrossPlatform
 
 print(os_name())                                      // windows (linux, ...)
 print(cpu_arch())                                     // x86_64
 print(cpu_count() > 0)                                // 1 (true)
-print(exe_file("game") + ", " + library_file("game"))  // game.exe, game.dll (game, libgame.so)
+print(exe_file("game") + ", " + library_file("game"))  // game.exe, game.dll (game, libgame.so / .dylib)
 print(path_exists(exe_path()))                        // 1: this program's own file
 
 // folders: make one with its parents (next to this program), then look

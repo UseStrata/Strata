@@ -117,6 +117,35 @@ if [ -f "$compiler/lib/srt-linux-x64.o" ] && command -v Xvfb >/dev/null 2>&1 && 
     if [ $winok -eq 1 ]; then ok "library/CrossPlatform-window (X11, natively: opened, closed from outside)"; else bad "library/CrossPlatform-window"; fi
 fi
 
+# --- the CrossPlatform library's window on macOS (lib/CrossPlatform/macos.strata: Cocoa) ---
+# Natively: open it, let it run a few frames, close it; the program must notice and end.
+# (A machine with no window server can't open one: then it's skipped.)
+if [ -f "$compiler/lib/srt-macos-arm64.o" ]; then
+    wdir=$(mktemp -d)
+    cat > "$wdir/win.strata" <<'EOF'
+import CrossPlatform
+if !create_window(320, 200, "Strata - CrossPlatform test") {
+    print("couldn't open a window")
+} else {
+    var frames = 0
+    set_window_title("Strata - frames")
+    set_window_size(400, 300)
+    while poll_events() {
+        frames += 1
+        if frames == 30 { print(window_width() > 0); close_window() }
+    }
+    print("window closed")
+}
+EOF
+    wout=$("$strata" run "$wdir/win.strata" --backend native --force 2>&1 | norm)
+    case "$wout" in
+        "couldn't open a window") skip "library/CrossPlatform-window (no window server here)" ;;
+        "$(printf '1\nwindow closed')") ok "library/CrossPlatform-window (Cocoa, natively: opened, run, closed)" ;;
+        *) printf '%s\n' "$wout" | head -8 | sed "s/^/    window: /"; bad "library/CrossPlatform-window" ;;
+    esac
+    rm -rf "$wdir"
+fi
+
 # --- projects (strata.toml): the build system ---------------------------------
 # tests/projects/<name>/ is a project. If it has expected.txt, `stratac run <dir> --force`
 # must print exactly that (a failing project's expected.txt holds its errors); otherwise

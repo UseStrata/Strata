@@ -286,6 +286,8 @@ Decl* foreign_func(Parser* p) {
         }
     }
     p_expect(p, TkRParen)
+    // `= "symbol"`: the C function it is, under another name (and signature)
+    if p_match(p, TkAssign) { fd.link_name = p_expect(p, TkString).text }
     return fd
 }
 

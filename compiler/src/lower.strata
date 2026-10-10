@@ -291,6 +291,12 @@ int spec_elem(int spec) {
 }
 int spec_step(int spec) { return ir_size(spec_elem(spec)) }
 
+// the symbol a call to d calls: its name, or a foreign function's link name
+string link_sym(Decl* d) {
+    if d.link_name != "" { return d.link_name }
+    return d.name
+}
+
 // A call by the Apple ARM64 convention (see call_strata).
 LVal call_aapcs(Lower* l, Decl* d, Expr* e) {
     TInfo ri = tinfo(l, d.ret)
@@ -349,7 +355,7 @@ LVal call_aapcs(Lower* l, Decl* d, Expr* e) {
     int r = 0 - 1
     if rty != KVoid { r = vreg(l, rty) }
     Ins c = new_ins(OCall, rty, r, 0 - 1, 0 - 1)
-    c.sym = d.name
+    c.sym = link_sym(d)
     c.args = args
     c.arg_bytes = bytes
     c.imm = spec
@@ -489,7 +495,7 @@ LVal call_sysv(Lower* l, Decl* d, Expr* e) {
     int r = 0 - 1
     if rty != KVoid { r = vreg(l, rty) }
     Ins c = new_ins(OCall, rty, r, 0 - 1, 0 - 1)
-    c.sym = d.name
+    c.sym = link_sym(d)
     c.args = args
     c.arg_bytes = bytes
     c.imm = spec
@@ -1475,15 +1481,15 @@ LVal call_strata(Lower* l, Decl* d, Expr* e) {
         }
     }
     if ri.kind == TK_VOID() {
-        call(l, d.name, KVoid, args)
+        call(l, link_sym(d), KVoid, args)
         return scalar(iconst(l, KI64, 0), KI64)
     }
-    if ri.kind == TK_SCALAR() { return scalar(call(l, d.name, ri.ty, args), ri.ty) }
+    if ri.kind == TK_SCALAR() { return scalar(call(l, link_sym(d), ri.ty, args), ri.ty) }
     if out >= 0 {
-        call(l, d.name, KVoid, args)
+        call(l, link_sym(d), KVoid, args)
         return aggregate(out, d.ret)
     }
-    int bits = call(l, d.name, abi_int_of(ri.size), args)
+    int bits = call(l, link_sym(d), abi_int_of(ri.size), args)
     int box = temp(l, ri.size, ri.align)
     store(l, abi_int_of(ri.size), box, 0, bits)
     return aggregate(box, d.ret)
