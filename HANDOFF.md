@@ -212,10 +212,14 @@ ships as `bin/stratac.exe`; `console.exe` and `libstrata.dll` (natively) are bui
 
 **macOS / Linux** (needs `cc`; X11 headers on Linux for the test projects):
 ```
-sh compiler/build.sh            # stage0 = seed/stratac.c compiled with cc, then stage1 → stage2
+sh compiler/build.sh            # stage0 = seed/stratac.c compiled with cc, then stage1 → stage2 (C),
+                                # then natively stage3 → stage4 (Linux x86-64, macOS ARM64)
 sh compiler/tests/run.sh        # build + the same checks as run.ps1
 sh compiler/install.sh          # ~/.local/share/strata, linked as ~/.local/bin/stratac
 ```
+On Linux x86-64 and macOS ARM64, stage2 then builds `lib/srt-<target>.o` and stage3
+natively, stage3 rebuilds the runtime (must match) and builds stage4; **stage3 and stage4
+must be byte-identical**; stage4 ships, and console / libstrata are built natively by it.
 `build.sh --bootstrap <stratac>` uses another stage0; `--write-seed` (and `build.ps1
 -WriteSeed`, via `stratac emit src/stratac.strata seed/stratac.c`) refreshes `seed/`. The seed is the compiler's own C (the
 fixpoint output) plus the `strata_host.h` and `lib/*.h` it was made against, so it is the
