@@ -799,9 +799,7 @@ bool mach_link(MachLinker* l, string path, bool dylib, string[dynamic] exports) 
                                 int d = target - pa
                                 if d < 0 - 134217728 || d >= 134217728 { mk_fail(l, "a call too far, to " + strata_name(tname)) }
                                 w = w | ((d >> 2) & 67108863)
-                            } else if is_import {
-                                mk_fail(l, "'" + strata_name(tname) + "' (a shared library's) used as data")
-                            } else if typ == 3 {          // PAGE21
+                            } else if typ == 3 {          // (an import: its stub - a function's address)          // PAGE21
                                 int pg = ((target >> 12) - (pa >> 12)) & 2097151
                                 w = w | ((pg & 3) << 29) | ((pg >> 2) << 5)
                             } else if typ == 4 {          // PAGEOFF12, scaled by the access size

@@ -38,14 +38,32 @@ export void print_tokens(Token[dynamic] toks) {
 string repeat2(int n) { string r = ""; for i in 0..n { r = r + "  "; } return r; }
 void pr(int ind, string s) { print(repeat2(ind) + s); }
 
+string ast_elem_str(TypeNode* t) {
+    if t != null && t.kind == TyFunc { return "(" + ast_type_str(t) + ")" }
+    return ast_type_str(t)
+}
+
 string ast_type_str(TypeNode* t) {
     if (t == null) { return "<none>"; }
     switch (t.kind) {
         case TyNamed:      return t.name
-        case TyArray:      return ast_type_str(t.elem) + "[]"
-        case TyFixedArray: return ast_type_str(t.elem) + "[" + t.size + "]"
-        case TyDynArray:   return ast_type_str(t.elem) + "[dynamic]"
-        case TyPointer:    return ast_type_str(t.elem) + "*"
+        case TyArray:      return ast_elem_str(t.elem) + "[]"
+        case TyFixedArray: return ast_elem_str(t.elem) + "[" + t.size + "]"
+        case TyDynArray:   return ast_elem_str(t.elem) + "[dynamic]"
+        case TyPointer:    return ast_elem_str(t.elem) + "*"
+        case TyFunc:
+            {
+                string s = "fn("
+                TypeNode* a = t.args
+                while a != null {
+                    s = s + ast_type_str(a)
+                    if a.next != null { s = s + ", " }
+                    a = a.next
+                }
+                s = s + ")"
+                if t.elem != null { s = s + " -> " + ast_type_str(t.elem) }
+                return s
+            }
     }
     return "?"
 }

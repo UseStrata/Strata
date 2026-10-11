@@ -6,3 +6,22 @@ export float lib_lerp(float a, float b, float t) { return a + (b - a) * t }
 // somewhere else than where it asked (embed/host_reloc.c makes it)
 global string title = "mathlib, written in Strata"
 export string lib_name() { return title }
+
+// an engine-style interface: a table of functions the host calls through, and a function
+// that calls back into the host
+export struct MathOps {
+    fn(int, int) -> int combine
+    fn(float) -> float twice
+}
+float twice(float x) { return x * 2.0 }
+global MathOps ops
+export MathOps* lib_ops() {
+    ops.combine = lib_add
+    ops.twice = twice            // (a private function: reachable only through the table)
+    return &ops
+}
+export int lib_fold(fn(int, int) -> int f, int start, int n) {
+    int acc = start
+    for i in 0..n { acc = f(acc, i) }
+    return acc
+}

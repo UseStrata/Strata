@@ -1,3 +1,6 @@
 lib_add(2, 3) = 5
 lib_lerp(0, 10, 0.25) = 2.5
 lib_name() = mathlib, written in Strata
+ops->combine(4, 5) = 9
+ops->twice(1.5) = 3
+lib_fold(sum, 100, 5) = 110

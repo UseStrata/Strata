@@ -66,6 +66,21 @@ plus releases, and approve releases when asked.
   DT_SONAME, DT_FINI_ARRAY -> srt_os_flush; no srt_os_init, so getenv is null there).
   CI's Linux job runs every run golden natively. On Linux, `auto` uses C only for projects
   with C sources; the compiler itself still builds through C there (build.sh `--backend c`).
+- **On `main` (unreleased): function pointers** (the user needs them for an engine
+  project): `TypeKind.TyFunc` (TypeNode `elem` = result, `args` / `next` = the parameter
+  chain), parsed by `parse_fn_type` (`fn(` in a type position; `(fn ...)` groups); the
+  checker's `TcFunc` keeps the node (`Type.sig`) and compares signatures as text
+  (`node_str`); a function name as a value -> `ty_fn(func_node)`; calls through variables,
+  globals, struct fields (`ck_fn_field`) and any expression go to `ck_call_ind`, which
+  sets the call's `e.type` = the signature - the backends' marker for an indirect call.
+  lower: `call_indirect` (callee evaluated first, a synthetic Decl from the signature,
+  `l.ind` = the target vreg, taken by the convention's call builder before it lowers the
+  arguments) -> `OCall` with `a` >= 0; x64 `call *%r11` (FF /2), ARM64 `blr x16`, both
+  loaded last; Mach-O / ELF / PE resolve a foreign function's address to its stub.
+  codegen: `fn_typedef` (`strata_fn<N>`, slot after the struct forward declarations;
+  split builds fill the header slot after the units). Tested by run/callbacks (both
+  backends, qsort calling back) and embed/strata-dll (a C host calling through a
+  Strata-filled `MathOps` table and passing a C callback), on all three OSes.
 - **On `main` (unreleased): native macOS ARM64** (step 4 of the agreed order):
   `src/arch/arm64.strata` (one file: the code generator - IR -> LLVM-syntax ARM64 text,
   then assembled; x19-x28 / d8-d15 allocated, x13-x15 / d18-d23 for values not living

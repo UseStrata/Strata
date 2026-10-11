@@ -92,8 +92,19 @@ void skip_newlines(Parser* p) {
 
 TypeNode* parse_type(Parser* p) {
     Token nt = p_peek(p)
-    TypeNode* t = new_type(TyNamed, nt.line, nt.col)
-    t.name = p_expect(p, TkIdent).text
+    TypeNode* t = null
+    if p_check(p, TkIdent) && nt.text == "fn" && p.toks[p.pos + 1].kind == TkLParen { t = parse_fn_type(p) }
+    else if p_check(p, TkLParen) && p.toks[p.pos + 1].kind == TkIdent && p.toks[p.pos + 1].text == "fn" {
+        // `(fn(int) -> int)[dynamic]`: parentheses group a function type (its result
+        // type would take the [dynamic] otherwise)
+        p_advance(p)
+        t = parse_type(p)
+        p_expect(p, TkRParen)
+    }
+    else {
+        t = new_type(TyNamed, nt.line, nt.col)
+        t.name = p_expect(p, TkIdent).text
+    }
     while (p_check(p, TkLBracket) || p_check(p, TkStar)) {
         if (p_check(p, TkLBracket)) {
             p_advance(p)
@@ -118,12 +129,62 @@ TypeNode* parse_type(Parser* p) {
     return t
 }
 
+// `fn(int, float) -> int`: a function's address (parameters may be named: `fn(int key)`;
+// no `->`: it returns nothing)
+TypeNode* parse_fn_type(Parser* p) {
+    Token kw = p_advance(p)
+    TypeNode* t = new_type(TyFunc, kw.line, kw.col)
+    p_expect(p, TkLParen)
+    TypeNode* last = null
+    if !p_check(p, TkRParen) {
+        bool more = true
+        while more {
+            TypeNode* pt = parse_type(p)
+            if p_check(p, TkIdent) { p_advance(p) }      // a parameter's name (documentation)
+            if last == null { t.args = pt } else { last.next = pt }
+            last = pt
+            more = p_match(p, TkComma)
+        }
+    }
+    p_expect(p, TkRParen)
+    if p_check(p, TkMinus) && p.toks[p.pos + 1].kind == TkGt {
+        p_advance(p)
+        p_advance(p)
+        t.elem = parse_type(p)
+    }
+    return t
+}
+
 // ---- lookahead ---------------------------------------------------------
 // Skip a type starting at token index i; return the index just past it, or -1 if
 // there is no type there.
 int skip_type_at(Parser* p, int i) {
-    if (p.toks[i].kind != TkIdent) { return 0 - 1; }
-    i += 1
+    if p.toks[i].kind == TkLParen && p.toks[i + 1].kind == TkIdent && p.toks[i + 1].text == "fn" && p.toks[i + 2].kind == TkLParen {
+        i = skip_type_at(p, i + 1)                   // `(fn(...) -> T)`
+        if i < 0 || p.toks[i].kind != TkRParen { return 0 - 1 }   // (skipped just below)
+    } else if (p.toks[i].kind != TkIdent) { return 0 - 1; }
+    if p.toks[i].kind == TkRParen {
+        i += 1
+    } else if p.toks[i].text == "fn" && p.toks[i + 1].kind == TkLParen {
+        i += 2
+        if p.toks[i].kind != TkRParen {
+            bool more = true
+            while more {
+                i = skip_type_at(p, i)
+                if i < 0 { return 0 - 1 }
+                if p.toks[i].kind == TkIdent { i += 1 }     // a parameter's name
+                if p.toks[i].kind == TkComma { i += 1 } else { more = false }
+            }
+        }
+        if p.toks[i].kind != TkRParen { return 0 - 1 }
+        i += 1
+        if p.toks[i].kind == TkMinus && p.toks[i + 1].kind == TkGt {
+            i = skip_type_at(p, i + 2)
+            if i < 0 { return 0 - 1 }
+        }
+    } else {
+        i += 1
+    }
     while (p.toks[i].kind == TkLBracket || p.toks[i].kind == TkStar) {
         if (p.toks[i].kind == TkStar) { i += 1; }
         else {

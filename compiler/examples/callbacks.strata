@@ -1,0 +1,63 @@
+// callbacks.strata - function pointers: `fn(...) -> ...` types, functions passed around,
+// a struct of them (a vtable, the way engines plug code in), and C calling back into
+// Strata (qsort with a Strata comparison).
+
+int add(int a, int b) { return a + b }
+int mul(int a, int b) { return a * b }
+
+// a function's address, as a parameter
+int apply(fn(int, int) -> int op, int x, int y) { return op(x, y) }
+
+print(apply(add, 3, 4))           // 7
+print(apply(mul, 3, 4))           // 12
+
+// ... in a variable (and inferred with var)
+fn(int, int) -> int f = add
+print(f(10, 5))                   // 15
+f = mul
+print(f(10, 5))                   // 50
+var g = add
+print(g(1, 2))                    // 3
+
+// ... in struct fields: a table of behaviours
+struct Shape {
+    string name
+    fn(f32 size) -> f32 area      // (parameters may be named)
+}
+f32 square(f32 s) { return s * s }
+f32 circle(f32 r) { return 3.0 * r * r }
+
+Shape[dynamic] shapes = []
+shapes.push(Shape{ "square", square })
+shapes.push(Shape{ "circle", circle })
+for i in 0..shapes.len {
+    print(shapes[i].name)         // square / circle
+    print(shapes[i].area(2.0))    // 4 / 12
+}
+
+// ... through a pointer to the struct, and an array of them
+Shape* first = &shapes[0]
+print(first.area(3.0))            // 9
+(fn(int, int) -> int)[dynamic] ops = [add, mul]   // (parentheses: an array OF them)
+print(ops[1](6, 7))               // 42
+
+// null, and comparing
+fn(int) none = null
+print(none == null)               // 1
+none = report
+print(none != null)               // 1
+none(5)                           // reported 5
+void report(int n) { print("reported " + int_to_str(n)) }
+
+// C calls back into Strata: the C library's qsort, with a Strata comparison
+foreign {
+    void sort_items(u8* base, int count, int size, fn(u8* a, u8* b) -> i32 compare) = "qsort"
+}
+i32 by_value(u8* a, u8* b) {
+    i32* x = cast<i32*>(a)
+    i32* y = cast<i32*>(b)
+    return x[0] - y[0]
+}
+i32[dynamic] xs = [5, 2, 9, 1, 7]
+sort_items(cast<u8*>(&xs[0]), xs.len, 4, by_value)
+for i in 0..xs.len { print(xs[i]) }   // 1 2 5 7 9

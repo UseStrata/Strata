@@ -20,18 +20,50 @@ import host   // strata_report: where messages go (see strata_host.h)
 
 // ---- checker types -----------------------------------------------------
 
-enum TCat { TcInt, TcFloat, TcBool, TcChar, TcStr, TcVoid, TcStruct, TcArray, TcPointer, TcVec, TcMat, TcQuat, TcDynArray, TcUnknown }
+enum TCat { TcInt, TcFloat, TcBool, TcChar, TcStr, TcVoid, TcStruct, TcArray, TcPointer, TcVec, TcMat, TcQuat, TcDynArray, TcUnknown, TcFunc }
 
 struct Type {
     TCat  cat
     string   name// display name; struct name for TcStruct
     Type* elem// element (Array) / pointee (Pointer)
+    TypeNode* sig// TcFunc: its `fn(...) -> ...` type, as written (parameter and result types resolved)
 }
 
-Type* ty(TCat c, string n)  { return alloc(Type{ c, n, null }); }
-Type* ty_arr(Type* e)    { return alloc(Type{ TcArray, "array", e }); }
-Type* ty_dynarr(Type* e) { return alloc(Type{ TcDynArray, "array", e }); }
-Type* ty_ptr(Type* e)    { return alloc(Type{ TcPointer, "pointer", e }); }
+Type* ty(TCat c, string n)  { return alloc(Type{ c, n, null, null }); }
+Type* ty_arr(Type* e)    { return alloc(Type{ TcArray, "array", e, null }); }
+Type* ty_dynarr(Type* e) { return alloc(Type{ TcDynArray, "array", e, null }); }
+Type* ty_ptr(Type* e)    { return alloc(Type{ TcPointer, "pointer", e, null }); }
+Type* ty_fn(TypeNode* sig) { return alloc(Type{ TcFunc, "fn", null, sig }) }
+
+// an element type as written: a function type in parentheses
+string elem_str(TypeNode* t) {
+    if t != null && t.kind == TyFunc { return "(" + node_str(t) + ")" }
+    return node_str(t)
+}
+
+// a type as written: `fn(int, Entity*) -> f32` (two function types are the same type when
+// they read the same)
+string node_str(TypeNode* t) {
+    if t == null { return "void" }
+    if t.kind == TyPointer { return elem_str(t.elem) + "*" }
+    if t.kind == TyArray || t.kind == TyFixedArray { return elem_str(t.elem) + "[]" }
+    if t.kind == TyDynArray { return elem_str(t.elem) + "[dynamic]" }
+    if t.kind == TyFunc {
+        string s = "fn("
+        TypeNode* a = t.args
+        bool first = true
+        while a != null {
+            if !first { s = s + ", " }
+            s = s + node_str(a)
+            first = false
+            a = a.next
+        }
+        s = s + ")"
+        if t.elem != null && !(t.elem.kind == TyNamed && t.elem.name == "void") { s = s + " -> " + node_str(t.elem) }
+        return s
+    }
+    return t.name
+}
 
 bool t_is_numeric(Type* t) { return t.cat == TcInt || t.cat == TcFloat; }
 bool t_is_integer(Type* t) { return t.cat == TcInt; }
@@ -50,12 +82,18 @@ string t_str(Type* t) {
         case TcVec:     return t.name
         case TcMat:     return t.name
         case TcQuat:    return t.name
-        case TcArray:   if (t.elem != null) { return t_str(t.elem) + "[]"; } return "?[]"
-        case TcDynArray: if (t.elem != null) { return t_str(t.elem) + "[dynamic]"; } return "?[dynamic]"
-        case TcPointer: if (t.elem != null) { return t_str(t.elem) + "*"; } return "?*"
+        case TcArray:   if (t.elem != null) { return t_elem_str(t.elem) + "[]"; } return "?[]"
+        case TcDynArray: if (t.elem != null) { return t_elem_str(t.elem) + "[dynamic]"; } return "?[dynamic]"
+        case TcPointer: if (t.elem != null) { return t_elem_str(t.elem) + "*"; } return "?*"
+        case TcFunc:    return node_str(t.sig)
         default:        return "?"
     }
     return "?"
+}
+
+string t_elem_str(Type* t) {
+    if t.cat == TcFunc { return "(" + t_str(t) + ")" }
+    return t_str(t)
 }
 
 // Convert a checker Type back to an AST TypeNode, so `var` inference can annotate the
@@ -76,6 +114,7 @@ TypeNode* type_to_node(Type* t) {
         case TcPointer:  { TypeNode* n = new_type(TyPointer, 0, 0);  n.elem = type_to_node(t.elem); return n; }
         case TcArray:    { TypeNode* n = new_type(TyArray, 0, 0);    n.elem = type_to_node(t.elem); return n; }
         case TcDynArray: { TypeNode* n = new_type(TyDynArray, 0, 0); n.elem = type_to_node(t.elem); return n; }
+        case TcFunc:     return t.sig
         default:        return null// unknown -> leave codegen's __auto_type fallback
     }
     return null
@@ -313,6 +352,12 @@ Type* ck_type(Checker* c, TypeNode* t) {
     if (t.kind == TyDynArray) { return ty_dynarr(ck_type(c, t.elem)); }
     if (t.kind == TyArray || t.kind == TyFixedArray) { return ty_arr(ck_type(c, t.elem)); }
     if (t.kind == TyPointer) { return ty_ptr(ck_type(c, t.elem)); }
+    if t.kind == TyFunc {
+        TypeNode* a = t.args
+        while a != null { ck_type(c, a); a = a.next }
+        if t.elem != null { ck_type(c, t.elem) }
+        return ty_fn(t)
+    }
     Type* p = ck_prim(t.name)
     if (p != null) { return p; }
     // a user type: resolve it, and give the node its C name for codegen
@@ -320,6 +365,9 @@ Type* ck_type(Checker* c, TypeNode* t) {
     if si >= 0 { t.name = c.structs[si].cname; return ty(TcStruct, t.name) }
     int ei = ck_enum_index(c, t.name)
     if ei >= 0 { t.name = c.enums[ei].cname; return ty(TcInt, t.name) }
+    // (a node resolved before: a function type's, seen again - its names are C names now)
+    if ck_struct_by_cname(c, t.name) >= 0 { return ty(TcStruct, t.name) }
+    for k in 0..c.enums.len { if c.enums[k].cname == t.name { return ty(TcInt, t.name) } }
     string why = ck_hidden(c, t.name)
     if why != "" { ck_error(c, t.line, t.col, why) }
     else { ck_error(c, t.line, t.col, "unknown type '" + t.name + "'") }
@@ -370,6 +418,9 @@ bool ck_assignable(Type* target, Type* value) {
             if (value.cat != TcPointer) { return false; }
             if (value.elem != null && value.elem.cat == TcUnknown) { return true; }
             return target.elem != null && value.elem != null && ck_assignable(target.elem, value.elem)
+        case TcFunc:
+            if value.cat == TcPointer && value.elem != null && value.elem.cat == TcUnknown { return true }   // null
+            return value.cat == TcFunc && node_str(value.sig) == node_str(target.sig)
         default: return false
     }
     return false
@@ -384,6 +435,9 @@ bool ck_castable(Type* from, Type* to) {
     if (t_is_scalar(from) && t_is_scalar(to)) { return true; }
     if (from.cat == TcPointer && (to.cat == TcPointer || to.cat == TcInt)) { return true; }
     if (to.cat == TcPointer && from.cat == TcInt) { return true; }
+    // a function's address converts to / from a pointer, an integer, another function type
+    if from.cat == TcFunc && (to.cat == TcPointer || to.cat == TcInt || to.cat == TcFunc) { return true }
+    if to.cat == TcFunc && (from.cat == TcPointer || from.cat == TcInt) { return true }
     // a string is a C `const char*`: it converts to / from a pointer (e.g. a byte buffer)
     if (from.cat == TcStr && to.cat == TcPointer) || (from.cat == TcPointer && to.cat == TcStr) { return true }
     return false
@@ -518,7 +572,8 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
         return c.t_bool
     }
     if (op == "==" || op == "!=") {
-        if (!t_is_unknown(lt) && !t_is_unknown(rt) && lt.cat != rt.cat && !(t_ordered(lt) && t_ordered(rt))) {
+        bool fn_null = (lt.cat == TcFunc && rt.cat == TcPointer) || (lt.cat == TcPointer && rt.cat == TcFunc)
+        if (!t_is_unknown(lt) && !t_is_unknown(rt) && lt.cat != rt.cat && !(t_ordered(lt) && t_ordered(rt)) && !fn_null) {
             ck_error(c, e.line, e.col, "cannot compare " + t_str(lt) + " and " + t_str(rt))
         }
         return c.t_bool
@@ -574,6 +629,12 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 if mi >= 0 {
                     e.text = c.enum_members[mi].cname
                     return ty(TcInt, c.enum_members[mi].enum_name)
+                }
+                // a function, not called: its address
+                int fi = ck_func_index(c, e.text)
+                if fi >= 0 {
+                    e.text = c.funcs[fi].cname
+                    return ty_fn(func_node(c, fi))
                 }
                 if (e.text == "PI") { return c.t_float; }        // prelude constant
                 if (e.text == "null") { return ty_ptr(c.t_unknown); }  // null pointer
@@ -800,14 +861,27 @@ Type* ck_call(Checker* c, Expr* e) {
             }
             return c.t_void
         }
+        // a struct's field holding a function's address: call it
+        Type* recv = ck_expr(c, callee.a)
+        Type* ft = ck_fn_field(c, recv, callee.field)
+        if ft != null { callee.rtype = ck_node(c, ft); return ck_call_ind(c, e, ft) }
         // other method-style calls: not resolved yet (UFCS/methods are backlog).
-        ck_expr(c, callee.a)
         for i in 0..e.items.len { ck_expr(c, e.items[i]); }
         return c.t_unknown
     }
 
     if (callee.kind == ExName) {
         string name = callee.text
+
+        // a variable holding a function's address: call it
+        LookupResult lv = ck_lookup(c, name)
+        if lv.found && lv.type.cat == TcFunc { callee.rtype = ck_node(c, lv.type); return ck_call_ind(c, e, lv.type) }
+        int gv = ck_global_index(c, name)
+        if !lv.found && gv >= 0 && c.globals[gv].type.cat == TcFunc {
+            callee.text = c.globals[gv].cname
+            callee.rtype = ck_node(c, c.globals[gv].type)
+            return ck_call_ind(c, e, c.globals[gv].type)
+        }
 
         // arena() -> a fresh arena (the region memory root)
         if (name == "arena") {
@@ -1013,8 +1087,64 @@ Type* ck_call(Checker* c, Expr* e) {
         return c.t_unknown
     }
 
+    // any other expression: callable if it's a function's address (`handlers[i](x)`)
+    Type* ct = ck_expr(c, callee)
+    if ct.cat == TcFunc { return ck_call_ind(c, e, ct) }
+    if !t_is_unknown(ct) { ck_error(c, e.line, e.col, "a " + t_str(ct) + " can't be called") }
     for i in 0..e.items.len { ck_expr(c, e.items[i]); }
     return c.t_unknown
+}
+
+// A call through a function's address (type ft): checked against its parameters. The
+// call records the function type (e.type) - the backends call through the value.
+Type* ck_call_ind(Checker* c, Expr* e, Type* ft) {
+    e.type = ft.sig
+    Type*[dynamic] ps = []
+    TypeNode* a = ft.sig.args
+    while a != null { ps.push(ck_type(c, a)); a = a.next }
+    if e.items.len != ps.len { ck_error(c, e.line, e.col, "a " + t_str(ft) + " takes " + int_to_str(ps.len) + " argument(s), got " + int_to_str(e.items.len)) }
+    for i in 0..e.items.len {
+        if i < ps.len {
+            Type* at = ck_expr_as(c, e.items[i], ps[i])
+            if !ck_assignable(ps[i], at) { ck_error(c, e.items[i].line, e.items[i].col, "argument " + int_to_str(i + 1) + " expects " + t_str(ps[i]) + ", got " + t_str(at)) }
+        } else {
+            ck_expr(c, e.items[i])
+        }
+    }
+    return ck_type(c, ft.sig.elem)
+}
+
+// the type of field `name` of struct value recv (or of what pointer recv points to), if
+// it holds a function's address; else null
+Type* ck_fn_field(Checker* c, Type* recv, string name) {
+    Type* r = recv
+    if r.cat == TcPointer && r.elem != null { r = r.elem }
+    if r.cat != TcStruct { return null }
+    int si = ck_struct_by_cname(c, r.name)
+    if si < 0 { return null }
+    for k in 0..c.structs[si].fields.len {
+        if c.structs[si].fields[k].name == name && c.structs[si].fields[k].type.cat == TcFunc { return c.structs[si].fields[k].type }
+    }
+    return null
+}
+
+// function fi's type, as a `fn(...) -> ...` node
+TypeNode* func_node(Checker* c, int fi) {
+    TypeNode* t = new_type(TyFunc, 0, 0)
+    TypeNode* last = null
+    for k in 0..c.funcs[fi].params.len {
+        TypeNode* p = type_to_node(c.funcs[fi].params[k])
+        if p == null { p = named_node("int") }
+        TypeNode* own = new_type(p.kind, 0, 0)              // (its own node: `next` chains it)
+        own.name = p.name
+        own.elem = p.elem
+        own.size = p.size
+        own.args = p.args
+        if last == null { t.args = own } else { last.next = own }
+        last = own
+    }
+    if c.funcs[fi].ret.cat != TcVoid { t.elem = type_to_node(c.funcs[fi].ret) }
+    return t
 }
 
 // ---- statements --------------------------------------------------------

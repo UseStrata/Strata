@@ -82,7 +82,7 @@ export enum IrOp {
     OCopyMem,   // memcpy(a, b, imm)                 (dst, src, size)
     OZeroMem,   // memset(a, 0, imm)
     OParam,     // dst = incoming argument number imm
-    OCall,      // dst = sym(args...)                (dst -1 if void; ty: the result type)
+    OCall,      // dst = sym(args...)                (dst -1 if void; ty: the result type; a >= 0: through a's address)
     ORet,       // return a                          (a -1: return nothing)
     OLabel,     // label imm:
     OJmp,       // goto label imm
@@ -252,7 +252,7 @@ export string ir_ins_text(Ins i) {
         case OCall:
             {
                 string[dynamic] p = []
-                p.push(d + "call." + t + " " + i.sym + "(")
+                if i.a >= 0 { p.push(d + "call." + t + " *" + v(i.a) + "(") } else { p.push(d + "call." + t + " " + i.sym + "(") }
                 for k in 0..i.args.len {
                     if k > 0 { p.push(", ") }
                     p.push(v(i.args[k]))

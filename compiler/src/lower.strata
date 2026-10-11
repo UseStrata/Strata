@@ -71,6 +71,7 @@ export struct Lower {
     TypeNode*         ret_type
     int               sret          // vreg of the hidden result pointer, or -1
     int               fn_index
+    int               ind           // the next call goes through this vreg's address (-1: by name)
 }
 
 void lw_fail(Lower* l, int line, string msg) {
@@ -110,7 +111,7 @@ int vec_dim_of(string n) {
 
 export TInfo tinfo(Lower* l, TypeNode* t) {
     if t == null { return TInfo{ TK_VOID(), KVoid, 0, 1 } }
-    if t.kind == TyPointer || t.kind == TyArray || t.kind == TyFixedArray { return scalar_info(KU64) }
+    if t.kind == TyPointer || t.kind == TyArray || t.kind == TyFixedArray || t.kind == TyFunc { return scalar_info(KU64) }
     if t.kind == TyDynArray { return agg_info(32, 8) }
     string n = t.name
     if n == "void" { return TInfo{ TK_VOID(), KVoid, 0, 1 } }
@@ -299,6 +300,8 @@ string link_sym(Decl* d) {
 
 // A call by the Apple ARM64 convention (see call_strata).
 LVal call_aapcs(Lower* l, Decl* d, Expr* e) {
+    int target = l.ind                      // (taken before the arguments: they may call too)
+    l.ind = 0 - 1
     TInfo ri = tinfo(l, d.ret)
     int[dynamic] args = []
     int[dynamic] bytes = []
@@ -354,7 +357,7 @@ LVal call_aapcs(Lower* l, Decl* d, Expr* e) {
     if ri.kind == TK_SCALAR() { rty = ri.ty }
     int r = 0 - 1
     if rty != KVoid { r = vreg(l, rty) }
-    Ins c = new_ins(OCall, rty, r, 0 - 1, 0 - 1)
+    Ins c = new_ins(OCall, rty, r, target, 0 - 1)
     c.sym = link_sym(d)
     c.args = args
     c.arg_bytes = bytes
@@ -443,6 +446,8 @@ void lower_params_aapcs(Lower* l, Decl* d, TInfo ri) {
 
 // A call by the System V convention (see call_strata).
 LVal call_sysv(Lower* l, Decl* d, Expr* e) {
+    int target = l.ind                      // (taken before the arguments: they may call too)
+    l.ind = 0 - 1
     TInfo ri = tinfo(l, d.ret)
     int[dynamic] args = []
     int[dynamic] bytes = []
@@ -494,7 +499,7 @@ LVal call_sysv(Lower* l, Decl* d, Expr* e) {
     if ri.kind == TK_SCALAR() { rty = ri.ty }
     int r = 0 - 1
     if rty != KVoid { r = vreg(l, rty) }
-    Ins c = new_ins(OCall, rty, r, 0 - 1, 0 - 1)
+    Ins c = new_ins(OCall, rty, r, target, 0 - 1)
     c.sym = link_sym(d)
     c.args = args
     c.arg_bytes = bytes
@@ -613,10 +618,12 @@ void branch(Lower* l, int cond, int then_l, int else_l) {
 int new_label(Lower* l) { return ir_label(&l.f) }
 
 // A call; `ret` KVoid for none. Returns the result vreg (or -1).
-int call(Lower* l, string name, int ret, int[dynamic] args) {
+int call(Lower* l, string name, int ret, int[dynamic] args) { return call_at(l, name, ret, args, 0 - 1) }
+// `target` >= 0: through that vreg's address, not to `name`
+int call_at(Lower* l, string name, int ret, int[dynamic] args, int target) {
     int r = 0 - 1
     if ret != KVoid { r = vreg(l, ret) }
-    Ins i = new_ins(OCall, ret, r, 0 - 1, 0 - 1)
+    Ins i = new_ins(OCall, ret, r, target, 0 - 1)
     i.sym = name
     i.args = args
     emit(l, i)
@@ -654,6 +661,7 @@ int as_ty(Lower* l, LVal v, int ty, int line) {
 string type_text(TypeNode* t) {
     if t == null { return "?" }
     if t.kind == TyPointer { return type_text(t.elem) + "*" }
+    if t.kind == TyFunc { return "function address" }
     if t.kind == TyDynArray { return type_text(t.elem) + "[dynamic]" }
     return t.name
 }
@@ -922,6 +930,8 @@ LVal lower_name(Lower* l, Expr* e) {
     }
     if e.text == "PI" { return scalar(fconst(l, KF32, "3.14159265358979323846"), KF32) }
     if e.text == "null" { return scalar(iconst(l, KU64, 0), KU64) }
+    Decl* fd = find_func(l, e.text)
+    if fd != null { return scalar(sym_addr(l, link_sym(fd)), KU64) }   // a function's address
     lw_fail(l, e.line, "'" + e.text + "' is not a Strata name (C names need the C backend for now)")
     return scalar(iconst(l, KI64, 0), KI64)
 }
@@ -1252,7 +1262,20 @@ int vec_dot(Lower* l, int a, int b, int n) {
     return s
 }
 
+// A call through a function's address (the checker gave the call its type, e.type): the
+// callee is evaluated first, then the arguments by the convention.
+LVal call_indirect(Lower* l, Expr* e) {
+    LVal f = lower_expr(l, e.a)
+    Decl* d = new_decl(DcFunc, e.line, e.col)
+    d.ret = e.type.elem
+    TypeNode* a = e.type.args
+    while a != null { d.params.push(Param{ "", a }); a = a.next }
+    l.ind = f.reg
+    return call_strata(l, d, e)
+}
+
 LVal lower_call(Lower* l, Expr* e) {
+    if e.type != null { return call_indirect(l, e) }
     Expr* callee = e.a
     if callee.kind == ExField {
         if callee.field == "new" && e.items.len == 1 {
@@ -1458,6 +1481,8 @@ LVal lower_math_builtin(Lower* l, Expr* e, string nm) {
 LVal call_strata(Lower* l, Decl* d, Expr* e) {
     if aapcs() { return call_aapcs(l, d, e) }
     if sysv() { return call_sysv(l, d, e) }
+    int target = l.ind                      // (taken before the arguments: they may call too)
+    l.ind = 0 - 1
     TInfo ri = tinfo(l, d.ret)
     int[dynamic] args = []
     int out = 0 - 1
@@ -1481,15 +1506,15 @@ LVal call_strata(Lower* l, Decl* d, Expr* e) {
         }
     }
     if ri.kind == TK_VOID() {
-        call(l, link_sym(d), KVoid, args)
+        call_at(l, link_sym(d), KVoid, args, target)
         return scalar(iconst(l, KI64, 0), KI64)
     }
-    if ri.kind == TK_SCALAR() { return scalar(call(l, link_sym(d), ri.ty, args), ri.ty) }
+    if ri.kind == TK_SCALAR() { return scalar(call_at(l, link_sym(d), ri.ty, args, target), ri.ty) }
     if out >= 0 {
-        call(l, link_sym(d), KVoid, args)
+        call_at(l, link_sym(d), KVoid, args, target)
         return aggregate(out, d.ret)
     }
-    int bits = call(l, link_sym(d), abi_int_of(ri.size), args)
+    int bits = call_at(l, link_sym(d), abi_int_of(ri.size), args, target)
     int box = temp(l, ri.size, ri.align)
     store(l, abi_int_of(ri.size), box, 0, bits)
     return aggregate(box, d.ret)
@@ -1949,7 +1974,7 @@ export Lower* new_lower() {
     int[dynamic] lr = []
     int[dynamic] rg = []
     return alloc(Lower{ true, "", new_ir_program(), fs, ss, es, ms, mv, gl, new_ir_func("", false),
-                        vs, sc, at, bl, cl, lr, rg, null, 0 - 1, 0 })
+                        vs, sc, at, bl, cl, lr, rg, null, 0 - 1, 0, 0 - 1 })
 }
 
 // Lower a checked program. `with_main`: also the top-level code (not for a dll).

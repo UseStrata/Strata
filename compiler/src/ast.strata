@@ -16,7 +16,7 @@
 
 // ---- types -------------------------------------------------------------
 
-export enum TypeKind { TyNamed, TyArray, TyFixedArray, TyPointer, TyDynArray }
+export enum TypeKind { TyNamed, TyArray, TyFixedArray, TyPointer, TyDynArray, TyFunc }
 
 export struct TypeNode {
     TypeKind  kind
@@ -25,10 +25,14 @@ export struct TypeNode {
     string       size// TyFixedArray: N as written
     i32       line
     i32       col
+    // TyFunc (`fn(int, float) -> int`): elem is the result type (null: none), args the
+    // first parameter's type, and each parameter's `next` the one after it
+    TypeNode* args
+    TypeNode* next
 }
 
 export TypeNode* new_type(TypeKind k, int line, int col) {
-    return alloc(TypeNode{ k, "", null, "", line, col })
+    return alloc(TypeNode{ k, "", null, "", line, col, null, null })
 }
 
 // ---- expressions -------------------------------------------------------

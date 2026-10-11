@@ -282,8 +282,16 @@ foreign {                            // no header: found when linking (e.g. a sy
   a C function under another name - and so one C function under several signatures, which
   is how Objective-C's `objc_msgSend` must be called on ARM64 (each method's own C
   signature). The native backend calls the symbol; the C backend gives the prototype a
-  GCC / Clang asm label. (CrossPlatform's macOS window is Cocoa this way.) Function
-  pointers can come later, when callbacks need them.
+  GCC / Clang asm label. (CrossPlatform's macOS window is Cocoa this way.)
+- **Function pointers (2026-10-11, the user needed them for an engine project):** the type
+  is `fn(int, float) -> int` (`fn` is a type only before `(`; no `->` = returns nothing;
+  parameter names allowed and ignored; `(fn(...) -> T)[dynamic]` groups one, since the
+  result type would take a suffix otherwise). A function's name used as a value is its
+  address; any expression of a function type can be called. Two function types are the
+  same when they read the same (`fn(int) -> int` is not `fn(i32) -> i32`). Strata
+  functions follow the platform C convention, so the same values cross to and from C
+  (callbacks; a dll's table of functions for a host). The C backend gives each signature a
+  typedef (`strata_fn<N>`), in programs and in a dll's generated header.
 - Free targets: **any C engine** (raylib, SDL, sokol, Box2D) and **Godot via
   GDExtension** (its C API). **Unreal needs a C++ shim** — stated honestly.
 

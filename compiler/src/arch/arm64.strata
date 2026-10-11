@@ -784,7 +784,8 @@ void emit_call(A64* x, IrFunc* f, Ins i) {
         if kd == 0 || kd == 4 { iget(x, a, p.at[k]) }
         else if kd == 1 { fget(x, at, a, p.at[k]) }
     }
-    ins(x, "bl " + i.sym)
+    if i.a >= 0 { iget(x, i.a, 16); ins(x, "blr x16") }   // through the address (loaded last)
+    else { ins(x, "bl " + i.sym) }
     if buf >= 0 { store_spec(x, i.imm, buf) }   // a small struct came back in registers
     if i.dst >= 0 {
         if ir_is_float(i.ty) { fput(x, i.ty, 0, i.dst) }

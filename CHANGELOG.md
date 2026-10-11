@@ -7,6 +7,17 @@ and a GitHub Release.
 ## [Unreleased]
 
 ### Added
+- **Function pointers**: `fn(int, float) -> int` is the type of a function's address
+  (no `->`: it returns nothing; parameters may be named, `fn(int key)`; parentheses group
+  one, `(fn(int) -> int)[dynamic]`). A function's name, not called, is its address;
+  anything of a function type is called like a function - a variable, a parameter, a
+  struct field (`shape.area(2.0)`, through a pointer too), an array element
+  (`ops[1](6, 7)`). They take `null`, compare, and `cast` to and from pointers. Strata
+  functions use the platform's C calling convention, so C can call them back (a callback
+  in a foreign declaration: `qsort` sorting with a Strata comparison) and a dll can hand a
+  host a struct of function pointers - an engine's plugin table (the generated header
+  declares a typedef per function type). Native on every target (x86-64 `call *%r11`,
+  ARM64 `blr x16`) and on the C backend. `examples/callbacks.strata`.
 - **Native macOS ARM64**: Strata builds Mac programs with its own backend, assembler and
   linker - on a Mac, or cross-compiled from Windows (`--target macos-arm64`). No C
   compiler, no Xcode tools: `src/arch/arm64.strata` turns the IR into ARM64 machine code

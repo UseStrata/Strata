@@ -154,6 +154,7 @@ void ins2(X64* x, string mn, Opnd s, Opnd d) {
 }
 void ins1(X64* x, string mn, Opnd o) {
     if x.direct { x64_encode(&x.as, mn, 1, o, no_opnd()) }
+    else if mn == "call" && o.kind == 1 { x.out.push("\tcall *" + opnd_text(o) + "\n") }   // through a register
     else { x.out.push("\t" + mn + " " + opnd_text(o) + "\n") }
 }
 void ins0(X64* x, string mn) {
@@ -797,7 +798,7 @@ void emit_call_sysv(X64* x, IrFunc* f, Ins i) {
             else { if ni < 6 { get(x, a, sysv_int_arg(ni)); ni += 1 } }
         }
     }
-    ins1(x, "call", target(i.sym))
+    call_insn(x, i)
     if buf >= 0 {
         // a small struct came back in registers: into its buffer
         Opnd b = r11()
@@ -815,6 +816,13 @@ void emit_call_sysv(X64* x, IrFunc* f, Ins i) {
         if ir_is_float(i.ty) { fput(x, i.ty, xmm(0), i.dst) }
         else { norm(x, i.ty, rax()); put(x, rax(), i.dst) }
     }
+}
+
+// the call itself: to i.sym, or through the address in vreg i.a (loaded last, into r11 -
+// no argument register)
+void call_insn(X64* x, Ins i) {
+    if i.a >= 0 { get(x, i.a, r11()); ins1(x, "call", r11()) }
+    else { ins1(x, "call", target(i.sym)) }
 }
 
 void emit_call(X64* x, IrFunc* f, Ins i) {
@@ -836,7 +844,7 @@ void emit_call(X64* x, IrFunc* f, Ins i) {
             else { get(x, a, int_reg_arg(k)) }
         }
     }
-    ins1(x, "call", target(i.sym))
+    call_insn(x, i)
     if i.dst >= 0 {
         if ir_is_float(i.ty) { fput(x, i.ty, xmm(0), i.dst) }
         else { norm(x, i.ty, rax()); put(x, rax(), i.dst) }
@@ -1131,6 +1139,7 @@ bool parse_reg(string name, Opnd* o) {
 Opnd parse_opnd(Asm* a, string s) {
     Opnd o = no_opnd()
     if s.len == 0 { asm_fail(a, "missing operand"); return o }
+    if s[0] == '*' { return parse_opnd(a, substr(s, 1, s.len - 1)) }   // call *%r11: the register's address
     if s[0] == '%' {
         if !parse_reg(substr(s, 1, s.len - 1), &o) { asm_fail(a, "unknown register " + s) }
         return o
@@ -1346,6 +1355,7 @@ export void x64_encode(Asm* a, string mn, int n, Opnd x, Opnd y) {
 
     // jumps and calls
     if mn == "jmp" { need(a, n, 1); asm_byte(a, 233); rel32(a, x.sym); return }
+    if mn == "call" && x.kind == 1 { need(a, n, 1); enc(a, 0, false, 255, 0 - 1, 0 - 1, 2, false, x, 0, 0); return }   // FF /2
     if mn == "call" { need(a, n, 1); asm_byte(a, 232); rel32(a, x.sym); return }
     if ml >= 2 && mn[0] == 'j' {
         int cc = cc_code(substr(mn, 1, ml - 1))
