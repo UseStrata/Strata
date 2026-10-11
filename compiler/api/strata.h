@@ -42,7 +42,7 @@ extern "C" {
 /* The compiler version, e.g. "1.3.0 (embedding)". */
 STRATA_API const char* strata_version(void);
 
-/* ---- checking (fast; no C compiler needed) ---------------------------------------- */
+/* ---- checking (fast) ------------------------------------------------------------------ */
 
 /* Type-check the program rooted at `path`. True if it has no errors. */
 STRATA_API bool strata_check(const char* path);
@@ -51,18 +51,11 @@ STRATA_API bool strata_check(const char* path);
  * it imports are still read from disk, relative to `path`'s folder. */
 STRATA_API bool strata_check_source(const char* path, const char* source);
 
-/* ---- compiling to C (no C compiler needed) ---------------------------------------- */
-
-/* The program rooted at `path`, compiled to C. Returns "" on errors (see diagnostics).
- * To compile the C yourself, add Strata's lib/ folder to the include path. */
-STRATA_API const char* strata_emit(const char* path);
-STRATA_API const char* strata_emit_source(const char* path, const char* source);
-
-/* ---- building (uses gcc) ------------------------------------------------------------ */
+/* ---- building (natively: Strata's own backend and linker, no C compiler) ------------ */
 
 /* Build `target` into an exe or dll. `target` is a .strata file, a project folder, or a
- * strata.toml. Projects are cached: an unchanged project skips the C compiler.
- * release: optimize (-O2). force: rebuild even if cached. True on success. */
+ * strata.toml. Projects are cached: an unchanged project skips the link.
+ * release: optimize. force: rebuild even if cached. True on success. */
 STRATA_API bool strata_build(const char* target, bool release, bool force);
 
 /* Where strata_build(target, ...) writes its exe or dll ("" if the target isn't valid). */

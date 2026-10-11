@@ -1,6 +1,9 @@
-// interop.strata - calling C directly via `import`.
-import <stdio.h>
-import <stdlib.h>
+// interop.strata - calling C functions: declare them in a foreign block (the C library's
+// functions are found when linking).
+foreign {
+    i32 puts(string s)
+    i32 abs(i32 x)
+}
 
 puts("hello from C's puts")
 print(abs(0 - 42))                  // 42

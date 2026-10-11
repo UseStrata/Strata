@@ -1,45 +1,37 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright © 2026 Connor Rutberg
 //
-// src/build.strata - the build pipeline: Strata source -> C -> a native exe or dll.
+// src/build.strata - the build pipeline: Strata source -> a native exe or dll.
 // Part of the build system (on top of the compiler core; front-ends call it).
 //
 // A BuildSpec says what to build and how. A single .strata file gets the classic spec
-// (output next to the source, -O2, no cache); a project (strata.toml) gets its settings
-// from the project file, output in its out_dir, and a CACHE: a fingerprint of everything
-// that affects the binary (generated C, the gcc command, extra C sources, the compiler
-// version). If it matches the last successful build and the binary is still there, gcc
-// is skipped ("up to date").
+// (output next to the source, no cache); a project (strata.toml) gets its settings from
+// the project file, output in its out_dir, and a CACHE: a fingerprint of everything that
+// affects the binary (the machine code, the libraries it links, the runtime, the compiler
+// version). If it matches the last successful build and the binary is still there, the
+// link is skipped ("up to date").
 //
-// Known gap: C headers the program includes (`import "x.h"`) aren't part of the
-// fingerprint; `--force` rebuilds regardless.
-//
-// Platforms: whatever differs between Windows, macOS and Linux (file names, starting the
-// C compiler, making folders, shared-library flags) goes through strata_host.h, which
-// uses lib/crossplatform.h. The C compiler is gcc (Windows) or cc, or $STRATA_CC.
+// Every build is native: the backend (native.strata) makes the machine code, Strata's
+// linker (linker.strata, for the target OS) links it with the runtime (lib/srt-*.o, made
+// from lib/srt.strata) and the shared libraries it calls. No C compiler anywhere.
 
 import core
 import project
-import host   // strata_report, strata_cc, strata_run_argv, ... (see strata_host.h)
+import cheader   // generate_header: a dll's C header
+import host      // strata_report, strata_make_dirs, strata_read_bytes, ...
 
 export struct BuildSpec {
     string entry            // the root .strata file
-    string out_c            // where the generated C goes
+    string out_obj          // where the object file goes
     string out_bin          // the exe / dll
     bool   dll
-    bool   release          // -O2 (else -O0 -g)
-    string[dynamic] defines
-    string[dynamic] include_dirs
+    bool   release          // optimize
     string[dynamic] lib_dirs
     string[dynamic] libs
-    string[dynamic] c_sources
-    string[dynamic] frameworks
     string cache_file       // "" = no cache
     bool   force            // ignore the cache
     bool   quiet            // don't print "built ..." / "up to date ..."
     string tool_version     // part of the fingerprint: a new compiler rebuilds everything
-    bool   split            // one C file per module, compiled in parallel (projects)
-    string backend          // "auto" (native when it can), "native" or "c"
 }
 
 string[dynamic] no_strings() {
@@ -60,12 +52,11 @@ export string dll_ext() {
     return ".so"
 }
 
-// The classic single-file build: foo.strata -> foo.c + foo(.exe) beside it.
+// The classic single-file build: foo.strata -> foo.o + foo(.exe) beside it.
 export BuildSpec spec_for_file(string path, string version, bool quiet) {
     string stem = stem_of(path)
-    return BuildSpec{ path, stem + ".c", stem + exe_ext(), false, true,
-                      no_strings(), no_strings(), no_strings(), no_strings(), no_strings(), no_strings(),
-                      "", false, quiet, version, false, "auto" }
+    return BuildSpec{ path, stem + ".o", stem + exe_ext(), false, true,      // (optimized)
+                      no_strings(), no_strings(), "", false, quiet, version }
 }
 
 // A project build: paths in the project file are relative to its folder.
@@ -74,13 +65,11 @@ export BuildSpec spec_for_project(Project p, string version, bool release, bool 
     string out = root + "/" + p.out_dir
     string ext = exe_ext()
     if p.output == "dll" { ext = dll_ext() }
-    BuildSpec s = BuildSpec{ root + "/" + p.entry, out + "/" + p.name + ".c", out + "/" + p.name + ext,
+    BuildSpec s = BuildSpec{ root + "/" + p.entry, out + "/" + p.name + ".o", out + "/" + p.name + ext,
                              p.output == "dll", release || p.release,
-                             p.defines, no_strings(), no_strings(), p.libs, no_strings(), p.frameworks,
-                             out + "/.strata-cache", force, quiet, version, p.split, "auto" }
-    for i in 0..p.include_dirs.len { s.include_dirs.push(root + "/" + p.include_dirs[i]) }
-    for i in 0..p.lib_dirs.len     { s.lib_dirs.push(root + "/" + p.lib_dirs[i]) }
-    for i in 0..p.c_sources.len    { s.c_sources.push(root + "/" + p.c_sources[i]) }
+                             no_strings(), p.libs, out + "/.strata-cache", force, quiet, version }
+    for i in 0..p.frameworks.len { s.libs.push(p.frameworks[i]) }   // (macOS: Strata's linker knows them)
+    for i in 0..p.lib_dirs.len { s.lib_dirs.push(root + "/" + p.lib_dirs[i]) }
     return s
 }
 
@@ -96,9 +85,7 @@ export string win_path(string p) {
     return r
 }
 
-string quoted(string s) { return "\"" + s + "\"" }
-
-// FNV-1a over the text, as a decimal string. (The length is read once: `.len` is O(n).)
+// FNV-1a over the text, as a decimal string.
 string fingerprint(string s) {
     u64 h = 1469598103934665603
     int n = s.len
@@ -111,68 +98,9 @@ string fingerprint(string s) {
 
 bool file_present(string p) { return read_file(p).len > 0 }
 
-// The pieces joined with spaces (for fingerprints and messages; not run by a shell)
-string spaced(string[dynamic] pieces) {
-    string[dynamic] parts = []
-    for i in 0..pieces.len {
-        if i > 0 { parts.push(" ") }
-        parts.push(pieces[i])
-    }
-    return strata_join(&parts)
-}
-
-// Compiling code for a shared library: position-independent (Windows dlls don't need it)
-bool needs_pic(BuildSpec s) { return s.dll && host_os() != "windows" }
-
-// Linking a shared library. Windows also writes an import library (<name>.dll.a) for C
-// programs to link against. macOS (an @rpath install name) and Linux (a soname) record
-// just the library's file name in programs that link it, so they find it through their
-// rpath / the loader's search path, not by the path it was built at. `in_rsp`: the
-// arguments go in a gcc response file, where paths are quoted.
-string[dynamic] dll_link_args(string out_bin, bool in_rsp) {
-    string[dynamic] a = []
-    a.push("-shared")
-    string os = host_os()
-    if os == "windows" {
-        string implib = stem_of(out_bin) + ".dll.a"
-        if in_rsp { implib = rsp_arg(implib) }
-        a.push("-Wl,--out-implib," + implib)
-    } else if os == "macos" {
-        a.push("-Wl,-install_name,@rpath/" + basename_of(out_bin))
-    } else {
-        a.push("-Wl,-soname," + basename_of(out_bin))
-    }
-    return a
-}
-
-// lib/crossplatform.h's Window section calls the OS's windowing library, so a program
-// that imports the header links it automatically: user32 on Windows, Cocoa on macOS, X11
-// on Linux. (Not if the project defines STRATA_CROSSPLATFORM_NO_WINDOW.) One argument per
-// element; a response file can take them one per line.
-string[dynamic] os_link_args(Program prog, BuildSpec s) {
-    string[dynamic] a = []
-    bool window = false
-    for i in 0..prog.decls.len {
-        Decl* d = prog.decls[i]
-        if d.kind == DcInclude && basename_of(d.path) == "crossplatform.h" { window = true }
-    }
-    for i in 0..s.defines.len {
-        string def = s.defines[i]
-        if def == "STRATA_CROSSPLATFORM_NO_WINDOW" || (def.len > 31 && substr(def, 0, 31) == "STRATA_CROSSPLATFORM_NO_WINDOW=") { window = false }
-    }
-    if window {
-        string os = host_os()
-        if os == "windows" { a.push("-luser32") }
-        else if os == "macos" { a.push("-framework"); a.push("Cocoa") }
-        else { a.push("-lX11") }
-    }
-    return a
-}
-
 // "mathlib" -> "MATHLIB_H": an include guard from a file name
 string guard_for(string name) {
     string upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    string lower = "abcdefghijklmnopqrstuvwxyz"
     string g = ""
     int n = name.len
     for i in 0..n {
@@ -184,122 +112,8 @@ string guard_for(string name) {
     return g + "_H"
 }
 
-// ---- the pipeline -------------------------------------------------------------
-
-// Build per `s`, using the runtime headers in `libdir`. Prints errors; returns success.
-export bool run_build(BuildSpec s, string libdir) {
-    LoadResult lr = load_program(s.entry)
-    if !lr.ok { return false }
-    Program prog = lr.prog
-    Checker* ck = new_checker(basename_of(s.entry))
-    ck_check(ck, prog)
-    if ck.had_error { return false }
-    if s.dll && prog.main.len > 0 {
-        Stmt* st = prog.main[0]
-        strata_report(basename_of(s.entry) + ":" + int_to_str(st.line) + ":" + int_to_str(st.col) +
-              ": error: a dll has no main, so its entry file can't contain top-level code")
-        return false
-    }
-    // cross-compiling (another OS / CPU than this machine's): only the native backend can
-    if !target_is_host() && s.backend == "c" {
-        strata_report(basename_of(s.entry) + ": error: the C backend builds only for this machine (" + target_name() + " needs the native backend)")
-        return false
-    }
-    // the native backend, when it can build this (else the C backend below)
-    if s.backend != "c" {
-        string why = native_target_why(target_os(), target_arch())
-        if why == "" && !strata_file_exists(runtime_object(libdir)) { why = "its runtime, " + runtime_object(libdir) + ", is missing (build.ps1 makes it from lib/srt.strata)" }
-        if why == "" && target_os() != "windows" {
-            // natively: programs, shared libraries, and the shared libraries they call; C
-            // sources (they need a C compiler): the C backend, for now
-            if s.c_sources.len > 0 || s.frameworks.len > 0 { why = "it has C sources (natively on " + target_os() + ": not yet)" }
-        }
-        if why == "" {
-            NativeResult nr = native_compile(prog, !s.dll, s.release, view_object())   // a dll has no main
-            if nr.ok { return native_build(s, libdir, prog, &nr.obj) }
-            why = nr.why
-        }
-        if s.backend == "native" || !target_is_host() {
-            strata_report(basename_of(s.entry) + ": error: can't build natively: " + why + " (use --backend c)")
-            return false
-        }
-    }
-    if s.split { return run_split_build(s, libdir, prog) }
-    Codegen cg = new_codegen()
-    cg.no_main = s.dll
-    string c = generate(&cg, prog)
-    if cg.had_error { strata_report("codegen: program uses features not supported yet"); return false }
-
-    // the C compiler's command line (run directly, one argument each: nothing to quote)
-    string[dynamic] argv = []
-    argv.push(strata_cc())
-    argv.push("-std=gnu11")
-    if s.release { argv.push("-O2") } else { argv.push("-O0"); argv.push("-g") }
-    if needs_pic(s) { argv.push("-fPIC") }
-    argv.push(s.out_c)
-    for i in 0..s.c_sources.len    { argv.push(s.c_sources[i]) }
-    argv.push("-I" + libdir)
-    for i in 0..s.include_dirs.len { argv.push("-I" + s.include_dirs[i]) }
-    for i in 0..s.defines.len      { argv.push("-D" + s.defines[i]) }
-    for i in 0..s.lib_dirs.len     { argv.push("-L" + s.lib_dirs[i]) }
-    for i in 0..prog.decls.len {   // `link "..."` directives in the source
-        if prog.decls[i].kind == DcLink { argv.push("-l" + prog.decls[i].path) }
-    }
-    for i in 0..s.libs.len         { argv.push("-l" + s.libs[i]) }
-    for i in 0..s.frameworks.len   { argv.push("-framework"); argv.push(s.frameworks[i]) }
-    string[dynamic] oa = os_link_args(prog, s)
-    for i in 0..oa.len             { argv.push(oa[i]) }
-    if s.dll {
-        string[dynamic] da = dll_link_args(s.out_bin, false)
-        for i in 0..da.len { argv.push(da[i]) }
-    }
-    argv.push("-o")
-    argv.push(s.out_bin)
-    argv.push("-lm")
-    string cmd = spaced(argv)
-
-    // a dll gets a C header declaring its entry points (kept current even on a cache hit)
-    string header = ""
-    if s.dll { header = generate_header(prog, guard_for(basename_of(stem_of(s.out_bin))), basename_of(s.entry)) }
-
-    // the cache: skip gcc if nothing that affects the binary changed
-    string key = ""
-    if s.cache_file != "" {
-        string all = c + "\n" + cmd + "\n" + s.tool_version
-        for i in 0..s.c_sources.len { all = all + "\n" + read_file(s.c_sources[i]) }
-        key = fingerprint(all)
-        if !s.force && read_file(s.cache_file) == key && file_present(s.out_bin) {
-            if s.dll && read_file(stem_of(s.out_bin) + ".h") != header { write_file(stem_of(s.out_bin) + ".h", header) }
-            if !s.quiet { strata_report("up to date: " + s.out_bin) }
-            return true
-        }
-        string dir = dirname_of(s.out_c)
-        if dir != "." { strata_make_dirs(dir) }
-    }
-
-    write_file(s.out_c, c)
-    if s.dll { write_file(stem_of(s.out_bin) + ".h", header) }
-    int rc = strata_run_argv(&argv)
-    if rc != 0 { return false }
-    if s.cache_file != "" { write_file(s.cache_file, key) }
-    if !s.quiet { strata_report("built " + s.out_bin) }
-    return true
-}
-
-// ---- native builds ------------------------------------------------------------------
-// The program as machine code: Strata's assembler (asm.strata) turns the backend's
-// assembly into an object file (<name>.o beside where the C would go), and Strata's
-// linker (linker.strata, for the target OS: os/windows.strata) links it with the runtime
-// (lib/srt.o, written in Strata: lib/srt.strata), the system DLLs and the DLLs of the
-// libraries it links (`link "x"`,
-// `libs`: x.dll / libx.dll, found in System32, lib_dirs or on PATH). A program with C
-// sources, or a library that's no DLL (a static one), is linked by the C toolchain
-// instead (with the same lib/srt.o).
-// A dll exports its entry module's `export`ed functions, and gets a C header (<name>.h)
-// and an import library (<name>.dll.a for GNU ld, <name>.lib for MSVC) beside it.
-
 // The native runtime for the target, compiled from lib/srt.strata: lib/srt.o for Windows
-// x64, lib/srt-<target>.o for the others (lib/srt-linux-x64.o).
+// x64, lib/srt-<target>.o for the others (lib/srt-linux-x64.o, lib/srt-macos-arm64.o).
 export string runtime_object(string libdir) {
     if target_os() == "windows" && target_arch() == "x86_64" { return libdir + "/srt.o" }
     return libdir + "/srt-" + target_name() + ".o"
@@ -320,31 +134,38 @@ string object_fingerprint(ObjFile* o) {
     return int_to_str(cast<int>(h)) + fingerprint(strata_join(&names))
 }
 
-bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
-    string obj_file = stem_of(s.out_c) + ".o"
-    string[dynamic] argv = []
-    argv.push(strata_cc())
-    argv.push("-O2")
-    argv.push(obj_file)
-    argv.push(runtime_object(libdir))
-    for i in 0..s.c_sources.len    { argv.push(s.c_sources[i]) }
-    for i in 0..s.include_dirs.len { argv.push("-I" + s.include_dirs[i]) }
-    for i in 0..s.defines.len      { argv.push("-D" + s.defines[i]) }
-    for i in 0..s.lib_dirs.len     { argv.push("-L" + s.lib_dirs[i]) }
-    for i in 0..prog.decls.len {
-        if prog.decls[i].kind == DcLink { argv.push("-l" + prog.decls[i].path) }
-    }
-    for i in 0..s.libs.len         { argv.push("-l" + s.libs[i]) }
-    string[dynamic] oa = os_link_args(prog, s)
-    for i in 0..oa.len             { argv.push(oa[i]) }
-    if s.dll {
-        string[dynamic] da = dll_link_args(s.out_bin, false)
-        for i in 0..da.len { argv.push(da[i]) }
-    }
-    argv.push("-o")
-    argv.push(s.out_bin)
-    string cmd = spaced(argv)
+// ---- the pipeline -------------------------------------------------------------
 
+// Build per `s`, with the runtime in `libdir`. Prints errors; returns success.
+export bool run_build(BuildSpec s, string libdir) {
+    LoadResult lr = load_program(s.entry)
+    if !lr.ok { return false }
+    Program prog = lr.prog
+    Checker* ck = new_checker(basename_of(s.entry))
+    ck_check(ck, prog)
+    if ck.had_error { return false }
+    if s.dll && prog.main.len > 0 {
+        Stmt* st = prog.main[0]
+        strata_report(basename_of(s.entry) + ":" + int_to_str(st.line) + ":" + int_to_str(st.col) +
+              ": error: a dll has no main, so its entry file can't contain top-level code")
+        return false
+    }
+    string why = native_target_why(target_os(), target_arch())
+    if why == "" && !strata_file_exists(runtime_object(libdir)) { why = "its runtime, " + runtime_object(libdir) + ", is missing (build.ps1 / build.sh make it from lib/srt.strata)" }
+    if why == "" {
+        NativeResult nr = native_compile(prog, !s.dll, s.release, view_object())   // a dll has no main
+        if nr.ok { return native_build(s, libdir, prog, &nr.obj) }
+        why = nr.why
+    }
+    strata_report(basename_of(s.entry) + ": error: can't build: " + why)
+    return false
+}
+
+// The program as machine code (ob) -> its object file (s.out_obj) -> linked by Strata's
+// linker with the runtime and the shared libraries it calls (`link "x"`, `libs`). A dll
+// exports its entry module's `export`ed functions, and gets a C header (<name>.h) beside
+// it (on Windows also import libraries: <name>.dll.a for GNU ld, <name>.lib for MSVC).
+bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
     // a dll: what it exports (the entry module's exported functions), its C header
     string[dynamic] exports = []
     if s.dll {
@@ -356,202 +177,40 @@ bool native_build(BuildSpec s, string libdir, Program prog, ObjFile* ob) {
         if read_file(stem_of(s.out_bin) + ".h") != header { write_file(stem_of(s.out_bin) + ".h", header) }
     }
 
-    // Strata's own linker, when the program needs nothing but the runtime (lib/srt.o,
-    // made by build.ps1) and DLLs; else the C toolchain links
     Link lk = new_link(target_os())
-    bool own = s.c_sources.len == 0 && s.frameworks.len == 0
     string[dynamic] libs = []
     for i in 0..prog.decls.len { if prog.decls[i].kind == DcLink { libs.push(prog.decls[i].path) } }
     for i in 0..s.libs.len { libs.push(s.libs[i]) }
-    for i in 0..oa.len {
-        if oa[i].len > 2 && substr(oa[i], 0, 2) == "-l" { libs.push(substr(oa[i], 2, oa[i].len - 2)) } else { own = false }
-    }
-    string dlls = ""
     for i in 0..libs.len {
-        if own && !link_lib(&lk, libs[i], s.lib_dirs) { own = false }
+        if !link_lib(&lk, libs[i], s.lib_dirs) {
+            strata_report(basename_of(s.entry) + ": error: can't find the library '" + libs[i] + "' (a shared library: .dll / .so / .dylib)")
+            return false
+        }
     }
-    if own {
-        string[dynamic] found = link_lib_paths(&lk)
-        for i in 0..found.len { dlls = dlls + " " + found[i] }
-        cmd = "strata-link " + runtime_object(libdir) + dlls
-    }
+    string[dynamic] found = link_lib_paths(&lk)
+    string inputs = "strata-link " + runtime_object(libdir)
+    for i in 0..found.len { inputs = inputs + " " + found[i] }
 
     string key = ""
     if s.cache_file != "" {
-        string all = object_fingerprint(ob) + "\n" + cmd + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.strata")
-        for i in 0..s.c_sources.len { all = all + "\n" + read_file(s.c_sources[i]) }
+        string all = object_fingerprint(ob) + "\n" + inputs + "\n" + s.tool_version + "\n" + read_file(libdir + "/srt.strata")
         key = fingerprint(all)
         if !s.force && read_file(s.cache_file) == key && file_present(s.out_bin) {
             if !s.quiet { strata_report("up to date: " + s.out_bin) }
             return true
         }
-        string dir = dirname_of(obj_file)
+        string dir = dirname_of(s.out_obj)
         if dir != "." { strata_make_dirs(dir) }
     }
-    if !write_object(target_os(), obj_file, ob) { strata_report("error: can't write " + obj_file); return false }
-    bool linked = false
-    if own {
-        link_object(&lk, obj_file, object_bytes(target_os(), ob))
-        link_object(&lk, basename_of(runtime_object(libdir)), strata_read_bytes(runtime_object(libdir)))
-        linked = link_program(&lk, s.out_bin, s.dll, exports)
-        // --backend native: no C toolchain behind it (e.g. an undefined symbol is an error)
-        if !linked && s.backend == "native" {
-            strata_report(basename_of(s.entry) + ": error: can't link: " + link_error(&lk))
-            return false
-        }
-    }
-    if !linked && target_os() != "windows" {
-        // (a C toolchain can't finish these: they use Strata's own startup and calling convention)
-        if own { strata_report(basename_of(s.entry) + ": error: can't link: " + link_error(&lk)) }
-        else { strata_report(basename_of(s.entry) + ": error: libraries and C sources can't be linked into a native " + target_name() + " program yet") }
+    if !write_object(target_os(), s.out_obj, ob) { strata_report("error: can't write " + s.out_obj); return false }
+    link_object(&lk, s.out_obj, object_bytes(target_os(), ob))
+    link_object(&lk, basename_of(runtime_object(libdir)), strata_read_bytes(runtime_object(libdir)))
+    if !link_program(&lk, s.out_bin, s.dll, exports) {
+        strata_report(basename_of(s.entry) + ": error: can't link: " + link_error(&lk))
         return false
     }
-    if !linked && strata_run_argv(&argv) != 0 { return false }
     if s.cache_file != "" { write_file(s.cache_file, key) }
-    if !s.quiet {
-        if linked { strata_report("built " + s.out_bin + " (native)") }
-        else { strata_report("built " + s.out_bin + " (native, linked by " + strata_cc() + ")") }
-    }
-    return true
-}
-
-// ---- split builds ------------------------------------------------------------------
-// One C file per module (see generate_split), each cached on its own: a module's file is
-// recompiled only if its text, the shared header, or the compile flags changed. Changed
-// files compile in parallel, one per core; then everything links.
-
-// Write `text` to `path` unless it already holds exactly that (keeps timestamps quiet).
-void write_if_changed(string path, string text) {
-    if read_file(path) != text { write_file(path, text) }
-}
-
-// For gcc response files: gcc reads `\` there as an escape, so paths use `/`.
-string fwd_path(string p) {
-    string r = ""
-    int n = p.len
-    for i in 0..n {
-        if p[i] == '\\' { r = r + "/" } else { r = r + substr(p, i, 1) }
-    }
-    return r
-}
-string rsp_arg(string p) { return quoted(fwd_path(p)) }
-
-bool run_split_build(BuildSpec s, string libdir, Program prog) {
-    string out_dir = dirname_of(s.out_bin)
-    string name = basename_of(stem_of(s.out_bin))
-    string mode = "debug"
-    string opt = " -O0 -g"
-    if s.release { mode = "release"; opt = " -O2" }
-    string obj = out_dir + "/obj/" + mode
-    strata_make_dirs(obj)
-
-    Codegen cg = new_codegen()
-    cg.no_main = s.dll
-    SplitOutput so = generate_split(&cg, prog, name + ".strata.h", guard_for(name + "_strata"))
-    if cg.had_error { strata_report("codegen: program uses features not supported yet"); return false }
-    write_if_changed(obj + "/" + name + ".strata.h", so.header)
-
-    // compile flags shared by every file (in response files, so gcc starts directly)
-    string pic = ""
-    if needs_pic(s) { pic = " -fPIC" }
-    string flags = "-std=gnu11" + opt + pic + " -pipe -I" + rsp_arg(obj) + " -I" + rsp_arg(libdir)
-    for i in 0..s.include_dirs.len { flags = flags + " -I" + rsp_arg(s.include_dirs[i]) }
-    for i in 0..s.defines.len      { flags = flags + " -D" + quoted(s.defines[i]) }
-    string salt = flags + "\n" + s.tool_version + "\n"
-
-    // Chunks: consecutive modules share one C file, about two chunks per core. Starting
-    // gcc costs ~150 ms on Windows whatever the file's size, so one file per module wastes
-    // most of a build on process start-up; a chunk keeps edits cheap (one chunk recompiles).
-    int jobs = strata_cpu_count()
-    int per_chunk = (so.units.len + 2 * jobs - 1) / (2 * jobs)
-    if per_chunk < 1 { per_chunk = 1 }
-
-    string[dynamic] objects = []
-    string[dynamic] keys = []
-    string[dynamic] key_files = []
-    string[dynamic] rsps = []
-    int total = 0
-    int u = 0
-    while u < so.units.len {
-        string[dynamic] parts = []
-        int end = u + per_chunk
-        if end > so.units.len { end = so.units.len }
-        for k in u..end { parts.push(so.units[k]) }
-        string text = strata_join(&parts)
-        string cfile = obj + "/" + so.names[u]
-        if end - u > 1 { cfile = obj + "/chunk" + int_to_str(u) + "_" + so.names[u] }
-        string ofile = stem_of(cfile) + ".o"
-        string key = fingerprint(salt + so.header + "\n" + text)
-        objects.push(ofile)
-        total += 1
-        if s.force || read_file(ofile + ".key") != key || !strata_file_exists(ofile) {
-            write_if_changed(cfile, text)
-            string rsp = stem_of(cfile) + ".rsp"
-            write_if_changed(rsp, flags + " -c " + rsp_arg(cfile) + " -o " + rsp_arg(ofile) + "\n")
-            rsps.push(rsp)
-            keys.push(key)
-            key_files.push(ofile + ".key")
-        }
-        u = end
-    }
-    // extra C sources from the project file
-    for i in 0..s.c_sources.len {
-        string ofile = obj + "/c" + int_to_str(i) + "_" + basename_of(stem_of(s.c_sources[i])) + ".o"
-        string key = fingerprint(salt + read_file(s.c_sources[i]))
-        objects.push(ofile)
-        total += 1
-        if s.force || read_file(ofile + ".key") != key || !strata_file_exists(ofile) {
-            string rsp = stem_of(ofile) + ".rsp"
-            write_if_changed(rsp, flags + " -c " + rsp_arg(s.c_sources[i]) + " -o " + rsp_arg(ofile) + "\n")
-            rsps.push(rsp)
-            keys.push(key)
-            key_files.push(ofile + ".key")
-        }
-    }
-
-    // a dll gets a C header declaring its entry points
-    if s.dll { write_if_changed(stem_of(s.out_bin) + ".h", generate_header(prog, guard_for(name), basename_of(s.entry))) }
-
-    if rsps.len > 0 {
-        if strata_run_cc_parallel(&rsps, jobs) > 0 { return false }
-        for i in 0..keys.len { write_file(key_files[i], keys[i]) }
-    }
-
-    // link (skipped if nothing was recompiled and the link inputs are the same); the
-    // arguments go in a response file too - hundreds of object paths overflow Windows'
-    // command-line limit
-    string[dynamic] args = []
-    args.push("-o " + rsp_arg(s.out_bin) + opt + "\n")
-    for i in 0..objects.len { args.push(rsp_arg(objects[i]) + "\n") }
-    for i in 0..s.lib_dirs.len { args.push("-L" + rsp_arg(s.lib_dirs[i]) + "\n") }
-    for i in 0..prog.decls.len {   // `link "..."` directives in the source
-        if prog.decls[i].kind == DcLink { args.push("-l" + prog.decls[i].path + "\n") }
-    }
-    for i in 0..s.libs.len       { args.push("-l" + s.libs[i] + "\n") }
-    for i in 0..s.frameworks.len { args.push("-framework " + s.frameworks[i] + "\n") }
-    string[dynamic] oa = os_link_args(prog, s)
-    for i in 0..oa.len           { args.push(oa[i] + "\n") }
-    if s.dll {
-        string[dynamic] da = dll_link_args(s.out_bin, true)
-        for i in 0..da.len { args.push(da[i] + "\n") }
-    }
-    args.push("-lm\n")
-    string link_text = strata_join(&args)
-    string link_rsp = obj + "/link.rsp"
-    write_if_changed(link_rsp, link_text)
-    string link_key = fingerprint(link_text + s.tool_version)
-    if rsps.len == 0 && !s.force && read_file(s.cache_file) == link_key && strata_file_exists(s.out_bin) {
-        if !s.quiet { strata_report("up to date: " + s.out_bin) }
-        return true
-    }
-    string[dynamic] link_job = []
-    link_job.push(link_rsp)
-    if strata_run_cc_parallel(&link_job, 1) > 0 { return false }
-    write_file(s.cache_file, link_key)
-    if !s.quiet {
-        strata_report("built " + s.out_bin + " (" + int_to_str(rsps.len) + " of " + int_to_str(total) +
-                      " C files compiled, " + int_to_str(so.units.len) + " modules)")
-    }
+    if !s.quiet { strata_report("built " + s.out_bin) }
     return true
 }
 

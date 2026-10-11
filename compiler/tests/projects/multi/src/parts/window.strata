@@ -1,2 +1,2 @@
-import <crossplatform.h>
-export int window_width() { return PlatformGetWindowWidth() }
+import CrossPlatform
+export int win_width() { return window_width() }

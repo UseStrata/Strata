@@ -51,10 +51,6 @@ int main(void) {
     show("check a file with a module", strata_check("prog/main.strata"));
     show("no diagnostics after success", strata_diagnostics()[0] == '\0');
 
-    const char* c = strata_emit("prog/main.strata");
-    show("emit", strstr(c, "int main(") != NULL && strstr(c, "shout") != NULL);
-    show("emit of a bad program is empty", strata_emit_source("prog/main.strata", "print(nope)\n")[0] == '\0');
-
     show("build a file (lib/ found next to the dll)", strata_build("prog/main.strata", false, false));
     FILE* f = fopen(MAIN_EXE, "rb");
     show("the exe exists", f != NULL);
@@ -64,11 +60,11 @@ int main(void) {
     show("a bad target reports why", !strata_build("nowhere", false, false) && strstr(strata_diagnostics(), "no strata.toml in nowhere") != NULL);
 
     /* an engine recompiling on every save: memory must stay flat */
-    for (int i = 0; i < 50; i++) { strata_check("prog/main.strata"); strata_emit("prog/main.strata"); strata_reset(); }
+    for (int i = 0; i < 50; i++) { strata_check("prog/main.strata"); strata_reset(); }
     size_t before = memory_mb();
-    for (int i = 0; i < 300; i++) { strata_check("prog/main.strata"); strata_emit("prog/main.strata"); strata_reset(); }
+    for (int i = 0; i < 300; i++) { strata_check("prog/main.strata"); strata_reset(); }
     size_t after = memory_mb();
-    show("300 more check+emit+reset cycles don't grow memory", after <= before + 8);
+    show("300 more check+reset cycles don't grow memory", after <= before + 8);
     show("still works after resets", strata_check("prog/main.strata"));
     return 0;
 }

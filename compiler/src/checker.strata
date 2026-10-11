@@ -16,7 +16,7 @@
 
 import ast
 import hashidx   // NameIdx: hash indexes for the name tables
-import host   // strata_report: where messages go (see strata_host.h)
+import host   // strata_report: where messages go (see host.strata)
 
 // ---- checker types -----------------------------------------------------
 
@@ -1003,7 +1003,7 @@ Type* ck_call(Checker* c, Expr* e) {
             return ty(TcVec, "vec3")
         }
 
-        // matrix / quaternion builtins - names match smath.h, so codegen just calls them.
+        // matrix / quaternion builtins (the runtime's srt_mat4_* / srt_quat_*)
         if (name == "mat4_identity" || name == "quat_identity") {
             if (e.items.len != 0) { ck_error(c, e.line, e.col, name + "() takes no arguments"); }
             if (name == "quat_identity") { return ty(TcQuat, "quat"); }
@@ -1415,7 +1415,13 @@ export bool ck_check(Checker* c, Program prog) {
 
     // pass 0: note whether any C header is imported (enables external C calls)
     // (a foreign block's header doesn't count: its block declares what it provides)
-    for i in 0..prog.decls.len { if prog.decls[i].kind == DcInclude && !prog.decls[i].is_foreign { c.has_foreign = true } }
+    // `import <x.h>`: gone with the C backend (2.7.0)
+    for i in 0..prog.decls.len {
+        Decl* d = prog.decls[i]
+        if d.kind == DcInclude && !d.is_foreign {
+            ck_error(c, d.line, d.col, "C headers can't be imported (Strata compiles no C since 2.7.0): declare what you use from " + d.path + " in a foreign block")
+        }
+    }
 
     // size the name indexes (so they never need to grow)
     int n_all = 0

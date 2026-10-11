@@ -57,9 +57,10 @@ for i in 0..60 {
   Strata-built dlls come with a generated C header
 - ⏳ next: tagged unions + pattern matching, SoA arrays, hot-reload
 
-The compiler is called **`stratac`**. It is written in Strata and compiles to plain C.
-It was bootstrapped from D-- (a separate C-compiling language); the D-- version is kept
-as the frozen seed that starts the build.
+The compiler is called **`stratac`**. It is written in Strata and compiles straight to
+machine code — x86-64 Windows, x86-64 Linux, ARM64 macOS — with its own backend,
+assembler and linker. No C compiler is involved anywhere (Strata compiled to C until
+2.6.0; it was first bootstrapped from D--, a C-compiling language).
 
 ## Layout
 
@@ -72,19 +73,15 @@ Strata.md   the founding project plan
 
 ## Build & run
 
-**Using Strata on x86-64 Windows needs no C compiler**: Strata compiles, assembles and
-links programs itself (the native backend). A C compiler — `gcc` (MinGW) on Windows,
-`cc` (clang or gcc) on macOS and Linux, or `STRATA_CC` — is needed for the C backend:
-programs that import C headers, and other platforms. *Building* Strata from source on
-Windows needs no C compiler either (only the embedding library, libstrata.dll, is built
-with `gcc`). To just *use* Strata, grab a release, or run the installer below.
+**No C compiler, anywhere**: Strata compiles, assembles and links programs itself, on
+Windows (x86-64), Linux (x86-64) and macOS (Apple Silicon), and cross-compiles between
+them (`--target linux-x64`). C libraries are called through `foreign` declarations and
+`link "name"`. To just *use* Strata, grab a release, or run the installer below.
 
-The compiler is written in Strata, so the build bootstraps it. On **Windows** it downloads
-a pinned `stratac` release once (see `compiler/bootstrap.txt`). On **macOS / Linux** it
-compiles the C seed in `compiler/seed/` (a `stratac` compiled to portable C, see its
-README). On Windows every stage is built by Strata's own native backend: stage0 → stage1
-→ stage2 → stage3, and stage2 and stage3 must be byte-identical; on macOS / Linux, stage0
-→ stage1 → stage2 through C, and stage1 and stage2 must emit the same C.
+The compiler is written in Strata, so the build bootstraps it: it downloads a pinned
+`stratac` release for the machine once (see `compiler/bootstrap.txt`), then every stage is
+built natively — stage0 → stage1 → stage2 → stage3 — and stage2 and stage3 must be
+byte-identical.
 
 ```powershell
 # Windows: build stratac.exe, console.exe, libstrata.dll into compiler\bin\
@@ -95,7 +92,7 @@ powershell -ExecutionPolicy Bypass -File compiler\install.ps1
 ```
 
 ```sh
-# macOS / Linux: build stratac, console, libstrata.dylib / .so into compiler/bin/
+# macOS (ARM64) / Linux (x86-64): build stratac, console, libstrata.dylib / .so into compiler/bin/
 sh compiler/build.sh
 compiler/bin/stratac run compiler/examples/run1.strata
 # install to ~/.local/share/strata, linked as ~/.local/bin/stratac
@@ -109,7 +106,8 @@ cd mygame
 stratac run
 ```
 
-`stratac` subcommands: `run`, `build`, `check`, `emit`, `ast`, `tokens`.
+`stratac` subcommands: `run`, `build`, `check`, `asm`, `ir`, `ast`, `tokens` (and
+`--target windows-x64 | linux-x64 | macos-arm64` to cross-compile).
 
 Tests (byte-for-byte golden files per compiler stage, projects, embedding):
 

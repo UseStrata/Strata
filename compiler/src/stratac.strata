@@ -3,11 +3,10 @@
 //
 // src/stratac.strata - the Strata compiler driver (front-end #1: the CLI, `stratac`).
 // Thin: CLI + orchestration only (ARCHITECTURE.md rule #4). Pulls in the shared
-// renderer (dump.strata), which pulls in the whole core (incl. codegen).
+// renderer (dump.strata), which pulls in the whole core.
 //
 //   stratac tokens <file.strata>   print the token stream
 //   stratac ast    <file.strata>   parse and print the AST
-//   stratac emit   <file.strata> [out.c]   print (or write) the generated C
 //   stratac build  <file.strata>   compile to a native executable
 //   stratac run    <file.strata>   compile and run
 
@@ -16,7 +15,7 @@ import dump   // print_tokens / print_program
 import project   // strata.toml
 import build     // the build pipeline + cache, targets
 import version   // stratac_version
-foreign <stdlib.h> { void exit(i32 code) }
+foreign { void exit(i32 code) }   // the C library's
 import host   // strata_exe_path, strata_make_dirs, strata_run_argv
 
 
@@ -25,21 +24,21 @@ import host   // strata_exe_path, strata_make_dirs, strata_run_argv
 
 bool file_exists(string p) { return read_file(p).len > 0; }
 
-// Find the runtime lib/ (arena.h, ...) relative to the stratac executable: next to it
+// Find the runtime lib/ (srt.strata, ...) relative to the stratac executable: next to it
 // (an install), or one level up (the repo: bin/../lib). The OS knows where the exe is,
 // even when it was started from PATH; argv[0] and the current folder are fallbacks.
 string resolve_libdir(string argv0) {
     string exe = strata_exe_path()
     if exe != "" {
         string edir = dirname_of(exe)
-        if (file_exists(edir + "/lib/arena.h"))    { return edir + "/lib"; }
-        if (file_exists(edir + "/../lib/arena.h")) { return edir + "/../lib"; }
+        if (file_exists(edir + "/lib/srt.strata"))    { return edir + "/lib"; }
+        if (file_exists(edir + "/../lib/srt.strata")) { return edir + "/../lib"; }
     }
     string dir = dirname_of(argv0)
-    if (file_exists(dir + "/lib/arena.h"))    { return dir + "/lib"; }
-    if (file_exists(dir + "/../lib/arena.h")) { return dir + "/../lib"; }
-    if (file_exists("lib/arena.h"))           { return "lib"; }
-    if (file_exists("../lib/arena.h"))        { return "../lib"; }
+    if (file_exists(dir + "/lib/srt.strata"))    { return dir + "/lib"; }
+    if (file_exists(dir + "/../lib/srt.strata")) { return dir + "/../lib"; }
+    if (file_exists("lib/srt.strata"))           { return "lib"; }
+    if (file_exists("../lib/srt.strata"))        { return "../lib"; }
     return dir + "/lib"
 }
 
@@ -73,25 +72,6 @@ int cmd_check(string path) {
     return 0
 }
 
-// (`out`: write it to that file instead, byte for byte)
-int cmd_emit(string path, string out_file) {
-    LoadResult lr = load_program(path)
-    if (!lr.ok) { return 1; }
-    Program prog = lr.prog
-    Checker* ck = new_checker(basename_of(path))
-    ck_check(ck, prog)
-    if (ck.had_error) { return 1; }
-    Codegen cg = new_codegen()
-    string out = generate(&cg, prog)
-    if (cg.had_error) { print("codegen: program uses features not supported yet"); return 1; }
-    if out_file != "" {
-        if !write_file(out_file, out) { print("error: can't write " + out_file); return 1 }
-        return 0
-    }
-    strata_print_raw(out)   // verbatim, no newline added
-    return 0
-}
-
 // `stratac asm` / `stratac ir`: the native backend's output (`opt`: optimized)
 int cmd_native(string path, bool show_ir, bool opt) {
     LoadResult lr = load_program(path)
@@ -108,8 +88,8 @@ int cmd_native(string path, bool show_ir, bool opt) {
     return 0
 }
 
-// `stratac assemble file.s [out.o]`: Strata's assembler on its own (GNU-as syntax, the
-// subset the native backend writes, for this machine's CPU) -> an object file.
+// `stratac assemble file.s [out.o]`: Strata's assembler on its own (the assembly the
+// native backend writes, for the target's CPU: x86-64 AT&T / ARM64) -> an object file.
 int cmd_assemble(string path, string out) {
     string src = read_file(path)
     if src.len == 0 { print("error: cannot read " + path); return 1 }
@@ -143,21 +123,15 @@ int cmd_object(string path, string out) {
     return 0
 }
 
-BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, string backend) {
-    BuildSpec s = target_spec(t, stratac_version(), release, force, quiet)
-    s.backend = backend
-    return s
-}
-
 // ---- build / run / new --------------------------------------------------------
 
-int cmd_build(Target t, string libdir, bool release, bool force, string backend) {
-    if run_build(cli_spec(t, release, force, false, backend), libdir) { return 0 }
+int cmd_build(Target t, string libdir, bool release, bool force) {
+    if run_build(target_spec(t, stratac_version(), release, force, false), libdir) { return 0 }
     return 1
 }
 
-int cmd_run(Target t, string libdir, bool release, bool force, string backend, string[dynamic] prog_args) {
-    BuildSpec spec = cli_spec(t, release, force, true, backend)
+int cmd_run(Target t, string libdir, bool release, bool force, string[dynamic] prog_args) {
+    BuildSpec spec = target_spec(t, stratac_version(), release, force, true)
     if spec.dll { print("error: this project builds a dll; there's nothing to run"); return 1 }
     if !run_build(spec, libdir) { return 1 }
     // a bare `prog` would be searched for on PATH, not in the current folder
@@ -183,7 +157,7 @@ int cmd_new(string name) {
                   "output  = \"exe\"          # or \"dll\"\n" +
                   "\n" +
                   "[build]\n" +
-                  "libs = []                # C libraries for every platform, e.g. [\"raylib\"]\n" +
+                  "libs = []                # shared libraries for every platform, e.g. [\"raylib\"]\n" +
                   "\n" +
                   "[windows]\n" +
                   "libs = []                # e.g. [\"user32\"]\n" +
@@ -192,7 +166,7 @@ int cmd_new(string name) {
                   "libs = []                # e.g. [\"X11\"]\n" +
                   "\n" +
                   "[macos]\n" +
-                  "frameworks = []          # e.g. [\"Cocoa\"]\n"
+                  "libs = []                # e.g. [\"AppKit\"]\n"
     bool ok = write_file(name + "/strata.toml", toml)
     ok = ok && write_file(name + "/src/main.strata", "// " + pname + " - the entry point. Other files in this folder are modules: `import name`.\nprint(\"hello from " + pname + "\")\n")
     ok = ok && write_file(name + "/.gitignore", "build/\n")
@@ -206,23 +180,19 @@ int usage() {
     print("stratac - the Strata compiler")
     print("usage:")
     print("  stratac new    <name>            create a project (strata.toml + src/main.strata)")
-    print("  stratac run    [target] [--release] [--force] [--backend b] [-- args]   build and run")
-    print("  stratac build  [target] [--release] [--force] [--backend b]             build an exe or dll")
+    print("  stratac run    [target] [--release] [--force] [-- args]   build and run")
+    print("  stratac build  [target] [--release] [--force]             build an exe or dll")
     print("  stratac check  [target]          type-check only")
-    print("  stratac emit   [target] [out.c]  print (or write) the generated C")
-    print("  stratac asm    [target] [--release]   print the generated assembly (native backend)")
-    print("  stratac ir     [target] [--release]   print the native backend's IR")
-    print("  stratac assemble <file.s> [out.o]     assemble x86-64 (AT&T) into an object file")
+    print("  stratac asm    [target] [--release]   print the generated assembly")
+    print("  stratac ir     [target] [--release]   print the compiler's IR")
+    print("  stratac assemble <file.s> [out.o]     assemble (x86-64 AT&T / ARM64) into an object file")
     print("  stratac object <file.strata> [out.o]  compile a module (no main) into an object file")
     print("  stratac ast    <file.strata>     parse and print the AST")
     print("  stratac tokens <file.strata>     print the token stream")
-    print("  --target windows-x64 | linux-x64 | macos-arm64   build for another OS / CPU (native backend)")
+    print("  --target windows-x64 | linux-x64 | macos-arm64   build for another OS / CPU")
     print("")
     print("target: a .strata file, a project folder, a strata.toml, or nothing (the project")
-    print("in the current folder). Projects are cached: unchanged builds skip the C compiler.")
-    print("")
-    print("backend: native (Strata's own x86-64 code; --release optimizes it), c (C, then gcc),")
-    print("or auto (the default: native when it can build the program, else c).")
+    print("in the current folder). Projects are cached: unchanged builds skip the link.")
     return 2
 }
 
@@ -259,8 +229,13 @@ int dmm_main(string[dynamic] args) {
         else { prog_args.push(a) }
     }
     string libdir = resolve_libdir(args[0])
-    if backend_next || (backend != "auto" && backend != "native" && backend != "c") {
-        print("error: --backend takes native, c or auto")
+    // (--backend native / auto: what every build is; the C backend is gone since 2.7.0)
+    if backend == "c" {
+        print("error: Strata has no C backend any more (since 2.7.0): every build is native")
+        return 2
+    }
+    if backend_next || (backend != "auto" && backend != "native") {
+        print("error: --backend takes native (every build is native)")
         return 2
     }
     // --target: build for another OS / CPU (cross-compiling): windows-x64, linux-x64, macos-arm64
@@ -294,20 +269,16 @@ int dmm_main(string[dynamic] args) {
         if cmd == "tokens" { return cmd_tokens(target) }
         return cmd_ast(target)
     }
-    if cmd != "check" && cmd != "emit" && cmd != "asm" && cmd != "ir" && cmd != "build" && cmd != "run" { return usage() }
+    if cmd == "emit" { print("error: Strata doesn't compile to C any more (since 2.7.0): try `stratac asm`"); return 2 }
+    if cmd != "check" && cmd != "asm" && cmd != "ir" && cmd != "build" && cmd != "run" { return usage() }
 
     Target t = resolve_target(target)
     if !t.ok { return 1 }
     if cmd == "check" { return cmd_check(t.file) }
-    if cmd == "emit"  {
-        string out = ""
-        if prog_args.len > 0 { out = prog_args[0] }
-        return cmd_emit(t.file, out)
-    }
     if cmd == "asm"   { return cmd_native(t.file, false, release) }
     if cmd == "ir"    { return cmd_native(t.file, true, release) }
-    if cmd == "build" { return cmd_build(t, libdir, release, force, backend) }
-    return cmd_run(t, libdir, release, force, backend, prog_args)
+    if cmd == "build" { return cmd_build(t, libdir, release, force) }
+    return cmd_run(t, libdir, release, force, prog_args)
 }
 
 // entry point (translated from D--'s `int main(str[] args)`)

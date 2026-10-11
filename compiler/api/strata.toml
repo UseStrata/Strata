@@ -7,9 +7,4 @@ output  = "dll"
 out_dir = "../bin"
 
 [build]
-release      = true
-split        = false          # strata_host.h keeps process state in `static`s: one C file
-include_dirs = ["../src"]    # strata_host.h lives beside the compiler's sources
-
-[linux]
-libs = ["dl"]                 # dladdr (finding lib/ next to libstrata.so), glibc < 2.34
+release = true

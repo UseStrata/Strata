@@ -1,4 +1,4 @@
 version: ok
 check: ok
 main.strata:1:7: error: use of undeclared name 'nope'
-emit: ok
+build: ok

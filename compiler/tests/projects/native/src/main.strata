@@ -1,5 +1,10 @@
-import <mathx.h>
 import game.util
-print(mathx_scale(4))     // 40: MATHX_SCALE comes from [build] defines
-print(mathx_clock_ok())   // 1: winmm linked via [windows]
+// winmm comes from the project file's [windows] section
+when target_os == "windows" {
+    foreign { u32 timeGetTime() }
+    bool clock_ok() { return timeGetTime() > cast<u32>(0) }
+} else {
+    bool clock_ok() { return true }
+}
+print(clock_ok())         // 1
 print(double_it(21))      // 42: a module in a subfolder

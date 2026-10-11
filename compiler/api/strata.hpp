@@ -22,12 +22,6 @@ inline bool check_source(const std::string& path, const std::string& source) {
     return strata_check_source(path.c_str(), source.c_str());
 }
 
-// C source for the program, or "" on errors (see diagnostics()).
-inline std::string emit(const std::string& path)  { return strata_emit(path.c_str()); }
-inline std::string emit_source(const std::string& path, const std::string& source) {
-    return strata_emit_source(path.c_str(), source.c_str());
-}
-
 inline bool build(const std::string& target, bool release = false, bool force = false) {
     return strata_build(target.c_str(), release, force);
 }

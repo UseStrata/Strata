@@ -6,6 +6,29 @@ and a GitHub Release.
 
 ## [Unreleased]
 
+Strata is C-free: the compiler builds programs only with its own backend, assembler and
+linker, and builds itself the same way on every OS.
+
+### Removed
+- **The C backend**: `--backend c`, `stratac emit` and the generated C, split C builds,
+  the C runtime headers (`lib/arena.h`, `sstr.h`, `sarr.h`, `sio.h`, `smath.h`,
+  `sprelude.h`, `sstate.h`, `crossplatform.h`), `strata_host.h`, and the C seed
+  (`compiler/seed/`). `--backend native` still works (it's what every build is); the
+  others say what changed.
+- **`import <x.h>` / `import "x.h"`**: declare what you use from a C library in a
+  `foreign` block (a header named on a foreign block is now just documentation).
+- **Project keys `c_sources`, `include_dirs`, `defines`**: errors that explain the change.
+  `split` is accepted and does nothing; on macOS `frameworks` are libraries like any
+  other (`libs = ["AppKit"]` works too).
+- **`strata_emit` / `strata_emit_source`** from the embedding API (strata.h, strata.hpp,
+  Strata.cs).
+
+### Changed
+- macOS and Linux bootstrap like Windows: `build.sh` downloads the pinned release for the
+  machine (2.6.0's macOS / Linux archives) and builds stage1 → stage3 natively, with the
+  same fixpoint check.
+- A dll's generated C header defines the vec / mat4 / quat / Array types it uses itself.
+
 ## [2.6.0] - 2026-10-11
 
 Strata builds native programs on **Windows x86-64, Linux x86-64 and macOS ARM64** with its

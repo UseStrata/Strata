@@ -33,7 +33,7 @@ export string target_name() {
     return target_os() + "-" + a
 }
 
-// Is the target this machine? (the C backend can only build for it: it runs this machine's C compiler)
+// Is the target this machine? (`run` can only run programs built for it)
 export bool target_is_host() { return target_os() == strata_host_os() && target_arch() == strata_host_arch() }
 
 // Set the target from a name like "linux-x64". False if it isn't one.

@@ -1,16 +1,17 @@
 #!/bin/sh
-# tests/run.sh - bootstrap the Strata compiler (build.sh) and validate it, on macOS / Linux.
-# The same checks as run.ps1 (Windows):
-#   1. the bootstrap: stage0 (the C seed) -> stage1 -> stage2, fixpoint-checked
+# tests/run.sh - bootstrap the Strata compiler (build.sh) and validate it, on macOS (ARM64) /
+# Linux (x86-64). The same checks as run.ps1 (Windows):
+#   1. the bootstrap: stage0 (the pinned release) -> stage1 -> stage2 -> stage3, fixpoint-checked
 #   2. goldens: each stage's output vs its golden file, byte-for-byte (ARCHITECTURE.md sec 6)
-#   3. projects, 4. incremental builds, 5. performance & limits, 6. embedding hosts
+#   3. CrossPlatform's window, 4. projects, 5. performance & limits, 6. embedding hosts
 # Run from anywhere:
 #     sh compiler/tests/run.sh
 #     sh compiler/tests/run.sh --bootstrap <stratac>    (passed on to build.sh)
 #
 # A golden file  tests/<stage>/<name>.expected  is compared against the output of
 #     stratac <stage> examples/<name>.strata
-# using the SHIPPED compiler (bin/stratac, the self-hosted stage2).
+# using the SHIPPED compiler (bin/stratac, the self-hosted stage3). What differs by OS has
+# its own golden: <name>.expected.linux / .expected.macos.
 # Exit code 0 = all passed, 1 = a mismatch or build failure.
 
 set -u
@@ -37,11 +38,11 @@ elapsed() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.2f", b - a }'; }
 under() { awk -v t="$1" -v max="$2" 'BEGIN { exit !(t < max) }'; }
 
 case $(uname -s) in
-    Darwin) dll=dylib ;;
-    *)      dll=so ;;
+    Darwin) dll=dylib; os=macos ;;
+    *)      dll=so; os=linux ;;
 esac
 
-# --- bootstrap (stage0 -> stage1 -> stage2, with the fixpoint check) ---------
+# --- bootstrap (stage0 -> stage1 -> stage2 -> stage3, with the fixpoint check) ---------
 if ! sh "$compiler/build.sh" "$@" >/dev/null; then
     echo "${red}FAIL${off}: bootstrap build failed (run compiler/build.sh to see why)"
     exit 1
@@ -56,47 +57,25 @@ for dir in "$here"/*/; do
         name=$(basename "$exp" .expected)
         source=$examples/$name.strata
         if [ ! -f "$source" ]; then skip "$stage/$name  (no examples/$name.strata)"; continue; fi
-        if grep -q "^import CrossPlatform" "$source"; then skip "$stage/$name  (CrossPlatform: in the native pass, on Linux x86-64)"; continue; fi
-        actual=$("$strata" "$stage" "$source" | norm)   # stdout only, like run.ps1
-        expected=$(norm < "$exp")
-        if [ "$actual" = "$expected" ]; then ok "$stage/$name"; else bad "$stage/$name"; fi
-    done
-done
-
-# --- the native backend, where it builds programs (Linux x86-64, macOS ARM64) ----------
-# Every run golden again, forced through Strata's own backend, assembler and linker (no C
-# compiler; the runtime is lib/srt-linux-x64.o / lib/srt-macos-arm64.o).
-native_rt=""; native_os=""; native_name=""
-if [ -f "$compiler/lib/srt-linux-x64.o" ]; then native_rt=1; native_os=linux; native_name="Linux x86-64"; fi
-if [ -f "$compiler/lib/srt-macos-arm64.o" ]; then native_rt=1; native_os=macos; native_name="macOS ARM64"; fi
-if [ -n "$native_rt" ]; then
-    badn=""
-    for exp in "$here"/run/*.expected; do
-        name=$(basename "$exp" .expected)
-        source=$examples/$name.strata
-        # (C headers: not natively; CrossPlatform: where it has this OS's part; what
-        # differs by OS: its .expected.<os>)
-        if grep -q '^import [<"]' "$source"; then continue; fi
-        if grep -q "^import CrossPlatform" "$source" && [ ! -f "$compiler/lib/CrossPlatform/$native_os.strata" ]; then continue; fi
         want=$exp
-        [ -f "$exp.$native_os" ] && want=$exp.$native_os
-        actual=$("$strata" run "$source" --backend native --force 2>&1 | norm)
-        if [ "$actual" != "$(norm < "$want")" ]; then
-            badn="$badn $name"
-            printf '%s\n' "$actual" > "$compiler/build/native-actual.txt"
-            norm < "$want" | diff - "$compiler/build/native-actual.txt" | head -12 | sed "s/^/    $name: /"
+        [ -f "$exp.$os" ] && want=$exp.$os
+        actual=$("$strata" "$stage" "$source" | norm)   # stdout only, like run.ps1
+        if [ "$actual" = "$(norm < "$want")" ]; then ok "$stage/$name"
+        else
+            bad "$stage/$name"
+            printf '%s\n' "$actual" > "$compiler/build/golden-actual.txt"
+            norm < "$want" | diff - "$compiler/build/golden-actual.txt" | head -12 | sed "s/^/    $name: /"
         fi
     done
-    if [ -z "$badn" ]; then ok "backend/native (every run golden, $native_name)"; else bad "backend/native:$badn"; fi
-fi
+done
 
 # --- the CrossPlatform library's window (lib/CrossPlatform/linux.strata: X11), natively ---
 # On a virtual X server: open it, close it from outside (xdotool), and the program must
 # notice and end.
-if [ -f "$compiler/lib/srt-linux-x64.o" ] && command -v Xvfb >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1; then
+if [ "$os" = linux ] && command -v Xvfb >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1; then
     winok=0
     winout=$(mktemp)
-    if "$strata" build "$examples/platform_window.strata" --backend native --force >/dev/null 2>&1; then
+    if "$strata" build "$examples/platform_window.strata" --force >/dev/null 2>&1; then
         Xvfb :87 >/dev/null 2>&1 &
         xvfb=$!
         sleep 1
@@ -120,7 +99,7 @@ fi
 # --- the CrossPlatform library's window on macOS (lib/CrossPlatform/macos.strata: Cocoa) ---
 # Natively: open it, let it run a few frames, close it; the program must notice and end.
 # (A machine with no window server can't open one: then it's skipped.)
-if [ -f "$compiler/lib/srt-macos-arm64.o" ]; then
+if [ "$os" = macos ]; then
     wdir=$(mktemp -d)
     cat > "$wdir/win.strata" <<'EOF'
 import CrossPlatform
@@ -137,7 +116,7 @@ if !create_window(320, 200, "Strata - CrossPlatform test") {
     print("window closed")
 }
 EOF
-    wout=$("$strata" run "$wdir/win.strata" --backend native --force 2>&1 | norm)
+    wout=$("$strata" run "$wdir/win.strata" --force 2>&1 | norm)
     case "$wout" in
         "couldn't open a window") skip "library/CrossPlatform-window (no window server here)" ;;
         "$(printf '1\nwindow closed')") ok "library/CrossPlatform-window (Cocoa, natively: opened, run, closed)" ;;
@@ -173,24 +152,8 @@ for dir in "$here"/projects/*/; do
     if [ $good -eq 1 ]; then ok "project/$name"; else bad "project/$name"; fi
 done
 
-# --- incremental split build: editing one function body recompiles one C file ---------
 eb=$here/embed/build
 mkdir -p "$eb"
-inc=$eb/incremental
-rm -rf "$inc"
-cp -R "$here/projects/multi" "$inc"
-rm -rf "$inc/build"
-"$strata" build "$inc" >/dev/null 2>&1
-text=$inc/src/parts/text.strata
-sed 's/0\.\.300/0..301/' "$text" > "$text.new" && mv "$text.new" "$text"
-rebuild=$("$strata" build "$inc" 2>&1)
-second=$("$strata" run "$inc" | norm)
-first_two=$(printf '%s\n' "$second" | head -2 | tr '\n' ' ')
-if printf '%s' "$rebuild" | grep -Eq '\(1 of [0-9]+ C files compiled' && [ "$first_two" = "1 3010 " ]; then
-    ok "build/incremental (one edited module -> one C file recompiled)"
-else
-    bad "build/incremental: $rebuild"
-fi
 
 # --- performance: guard against the compiler going quadratic again -------------------
 # A generated 20k-line single file must type-check in under 3 s.
@@ -223,7 +186,7 @@ else
 fi
 chain=$eb/chain100k.strata
 awk 'BEGIN { printf "var x = 1"; for (i = 1; i < 100000; i++) printf " + 1"; print ""; print "print(x)" }' > "$chain"
-t0=$(now); "$strata" emit "$chain" >/dev/null 2>&1; rc=$?; t1=$(now)
+t0=$(now); "$strata" build "$chain" --force >/dev/null 2>&1; rc=$?; t1=$(now)
 t=$(elapsed "$t0" "$t1")
 if [ $rc -eq 0 ] && under "$t" 3; then ok "limits/100k-term-expression (${t} s)"; else bad "limits/100k-term-expression (${t} s, exit $rc)"; fi
 

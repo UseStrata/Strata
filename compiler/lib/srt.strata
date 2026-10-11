@@ -4,7 +4,7 @@
 // Natively compiled code (src/lower.strata) does its own arithmetic, control flow and
 // vector math, and calls these `srt_*` functions for the rest: printing, arenas, strings,
 // dynamic arrays, files, matrices and quaternions. They behave exactly like the C
-// runtime (lib/*.h) the C backend uses, so both backends print the same.
+// runtime the C backend had (lib/*.h, until 2.7.0), so programs print what they always did.
 //
 // build.ps1 compiles this file with Strata's own native backend (`stratac object`) into
 // lib/srt.o, which Strata's linker links into every native program. It's the same on every
@@ -22,7 +22,7 @@ when target_os == "linux" { import srt.linux }
 when target_os == "macos" { import srt.macos }
 
 // ---- arenas -------------------------------------------------------------------------------
-// The layout of lib/arena.h: an arena is the newest of a chain of blocks; a block is this
+// The layout the C runtime had (lib/arena.h, until 2.7.0): an arena is the newest of a chain of blocks; a block is this
 // 24-byte header followed by its bytes. Allocations are 16-byte rounded and zeroed.
 
 struct Block { Block* next; int used; int cap }
@@ -454,11 +454,11 @@ export void srt_set_args(i32 argc, string* argv) {
 }
 
 // ---- dynamic arrays -----------------------------------------------------------------------------
-// The layout of lib/sarr.h: data, len, cap, element size.
+// A dynamic array: data, len, cap, element size (the C runtime's layout, kept).
 
 struct ArrayRep { u8* data; int len; int cap; int elem }
 
-// Every array buffer is tracked (lib/sarr.h does the same): a 16-byte link before its
+// Every array buffer is tracked: a 16-byte link before its
 // bytes, in one ring, so a host resetting the compiler (strata_host_reset) frees them all.
 struct ArrLink { ArrLink* prev; ArrLink* next }
 
@@ -516,7 +516,7 @@ export void srt_args(ArrayRep* out) {
 }
 
 // ---- matrices and quaternions ----------------------------------------------------------------
-// The formulas of lib/smath.h, operation for operation (so the results are the same bits).
+// The vector / matrix formulas (operation for operation as the C runtime had them: the same bits).
 // A mat4 is 16 floats, column-major; these work on it as a float array.
 
 float* fl(mat4* m) { return cast<float*>(m) }
@@ -718,9 +718,8 @@ export void srt_quat_to_mat4(mat4* r, quat* p) {
 }
 
 // ---- the host functions (the compiler's src/host.strata) ----------------------------------------
-// What the compiler, built natively, asks of whatever hosts it: the `strata_*` functions
-// that src/strata_host.h gives its C build, here in Strata on top of msvcrt / kernel32,
-// with the same behavior (lib/crossplatform.h's Windows code, line for line).
+// What the compiler asks of whatever hosts it: the `strata_*` functions, on top of the
+// runtime's OS layer (lib/srt/<os>.strata).
 
 global bool capturing
 global u8* cap_buf
@@ -1098,9 +1097,9 @@ export string strata_host_libdir() {
     if cut >= 0 {
         string dir = srt_str_sub(path, 0, cut)
         string probe = dir + "/lib"
-        if strata_file_exists(probe + "/arena.h") { libdir_set = probe; return probe }
+        if strata_file_exists(probe + "/srt.strata") { libdir_set = probe; return probe }
         probe = dir + "/../lib"
-        if strata_file_exists(probe + "/arena.h") { libdir_set = probe; return probe }
+        if strata_file_exists(probe + "/srt.strata") { libdir_set = probe; return probe }
     }
     return "lib"
 }

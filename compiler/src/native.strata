@@ -6,8 +6,8 @@
 //     lower.strata (AST -> IR) -> opt.strata (optimize, allocate registers) -> arch/x64.strata
 //                                                                            or arch/arm64.strata
 //
-// Which targets exist: x86-64 Windows and Linux, ARM64 macOS. Anything else (another OS or CPU, a
-// program the native backend can't handle yet) is the C backend's job; `why` says why.
+// Which targets exist: x86-64 Windows and Linux, ARM64 macOS. For anything else (another OS
+// or CPU, a program it can't handle) `why` says why.
 
 import ast
 import ir

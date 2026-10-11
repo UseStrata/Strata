@@ -10,6 +10,6 @@ static class Program
         string d = Strata.Compiler.Diagnostics();
         Strata.Compiler.Reset();
         Console.Write(d.Replace("\r", ""));
-        Console.WriteLine("emit: " + (Strata.Compiler.Emit("prog/main.strata").Contains("int main(") ? "ok" : "FAILED"));
+        Console.WriteLine("build: " + (Strata.Compiler.Build("prog/main.strata") ? "ok" : "FAILED"));
     }
 }

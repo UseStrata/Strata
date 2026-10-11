@@ -1,8 +1,8 @@
-import <crossplatform.h>
+import CrossPlatform
 string make_long() {
     string s = ""
     for i in 0..300 { s = s + "0123456789" }
     return s
 }
 export int long_len() { return make_long().len }
-export int also_window_width() { return PlatformGetWindowWidth() }
+export int also_win_width() { return window_width() }

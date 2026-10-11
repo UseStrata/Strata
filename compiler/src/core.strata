@@ -3,8 +3,8 @@
 //
 // src/core.strata - the Strata compiler CORE, as one umbrella include.
 //
-// This IS "the compiler as a library": the phases (lexer -> parser -> checker ->
-// codegen, and the native backend: lower -> opt -> x64) with NO main. Every
+// This IS "the compiler as a library": the phases (lexer -> parser -> checker -> the
+// native backend: lower -> opt -> arch/x64 or arch/arm64 -> asm -> linker) with NO main. Every
 // front-end (the `strata` CLI, the `console`, a future
 // libstrata.dll or LSP server) pulls in exactly this and nothing else. Keeping the
 // core main-free and front-end-agnostic is what lets the same code ship as an exe, a
@@ -17,11 +17,11 @@ export import ast
 export import parser
 export import modules
 export import checker
-export import codegen
 export import ir
 export import lower
 export import opt
 export import arch.x64
+export import arch.arm64
 export import native
 export import target
 export import asm

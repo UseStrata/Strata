@@ -9,7 +9,7 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 #
 # Installed layout:  <prefix>\stratac.exe  <prefix>\console.exe  <prefix>\libstrata.dll(.a / .lib)
-#                    <prefix>\lib\...       the runtime headers
+#                    <prefix>\lib\...       the runtime (srt.strata, srt*.o) and Strata's libraries
 #                    <prefix>\include\...   the embedding API (strata.h, strata.hpp, Strata.cs)
 # stratac finds its lib/ next to the exe, so nothing else needs configuring.
 

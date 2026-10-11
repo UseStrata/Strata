@@ -161,7 +161,7 @@ export struct Decl {
     bool       is_foreign
     // DcGlobal (`global T name = init`): its type is `ret` (null: inferred), `init` its value
     // DcConst  (`const T NAME = init` in a foreign block): the same; uses are replaced by
-    //          the value (or, on the C backend with a header, name the header's macro)
+    //          the value
     Expr*      init
     // a foreign function's symbol, when it isn't its name (`u8* send(u8* o, u8* s) =
     // "objc_msgSend"`: one C function seen through several Strata signatures); "" = name

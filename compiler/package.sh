@@ -18,10 +18,10 @@ sh "$here/build.sh" >/dev/null
 
 stage=$(mktemp -d)/strata
 mkdir -p "$stage/lib" "$stage/include"
-for f in stratac console libstrata.dylib libstrata.so libstrata.h; do
+for f in stratac console libstrata.dylib libstrata.so; do
     if [ -f "$here/bin/$f" ]; then cp "$here/bin/$f" "$stage/"; fi
 done
-cp "$here"/lib/*.h "$here"/lib/srt.strata "$here"/lib/CrossPlatform.strata "$stage/lib/"
+cp "$here"/lib/srt.strata "$here"/lib/CrossPlatform.strata "$stage/lib/"
 cp -R "$here"/lib/CrossPlatform "$here"/lib/srt "$stage/lib/"
 for o in "$here"/lib/srt-*.o; do [ -f "$o" ] && cp "$o" "$stage/lib/"; done   # the native backend's runtime (built by build.sh)
 for f in strata.h strata.hpp Strata.cs; do cp "$here/api/$f" "$stage/include/"; done
@@ -35,4 +35,4 @@ tar -czf "$out" -C "$(dirname "$stage")" strata
 rm -rf "$(dirname "$stage")"
 echo ""
 echo "packaged: $out"
-echo "note: the compiler runs a C compiler (cc, or \$STRATA_CC) to build programs."
+echo "note: no C compiler needed: Strata compiles, assembles and links programs itself."

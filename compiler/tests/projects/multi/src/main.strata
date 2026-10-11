@@ -1,7 +1,7 @@
 import parts.cli
 import parts.text
 import parts.window
-print(arg_count())          // 1: args() works from another module's C file
+print(arg_count())          // 1: args() works from another module
 print(long_len())           // 3000: a long string made in parts.text, measured there
-print(window_width())       // 0: crossplatform.h implemented once, used from two modules
-print(also_window_width())  // 0
+print(win_width())          // 0: CrossPlatform, used from two modules (no window open)
+print(also_win_width())     // 0

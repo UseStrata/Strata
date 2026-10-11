@@ -8,7 +8,6 @@ int main() {
     std::string d = strata::diagnostics();
     strata::reset();                        // std::string copies survive the reset
     std::cout << d;
-    std::string c = strata::emit("prog/main.strata");
-    std::cout << "emit: " << (c.find("int main(") != std::string::npos ? "ok" : "FAILED") << "\n";
+    std::cout << "build: " << (strata::build("prog/main.strata") ? "ok" : "FAILED") << "\n";
     return 0;
 }

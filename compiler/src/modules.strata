@@ -24,7 +24,7 @@ import token
 import lexer
 import ast
 import parser
-import host   // strata_report: where messages go (see strata_host.h)
+import host   // strata_report: where messages go (see host.strata)
 
 // ---- paths ---------------------------------------------------------------
 

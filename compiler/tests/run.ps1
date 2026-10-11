@@ -74,47 +74,10 @@ Get-ChildItem -Path (Join-Path $here "projects") -Directory | ForEach-Object {
     else     { Write-Host "FAIL  project/$name" -ForegroundColor Red;   $script:fail++ }
 }
 
-# --- incremental split build: editing one function body recompiles one C file ---------
-$incDir = Join-Path $here "embed\build\incremental"
-if (Test-Path $incDir) { Remove-Item $incDir -Recurse -Force }
-Copy-Item (Join-Path $here "projects\multi") $incDir -Recurse
-if (Test-Path (Join-Path $incDir "build")) { Remove-Item (Join-Path $incDir "build") -Recurse -Force }
-& $strata build $incDir | Out-Null
-$textMod = Join-Path $incDir "src\parts\text.strata"
-(Get-Content $textMod -Raw).Replace("0..300", "0..301") | Set-Content $textMod -NoNewline
-$rebuild = (& $strata build $incDir) -join "`n"
-$second  = ((& $strata run $incDir) -join "`n") -replace "`r",""
-if ($rebuild -match "\(1 of \d+ C files compiled" -and $second.StartsWith("1`n3010")) {
-    Write-Host "PASS  build/incremental (one edited module -> one C file recompiled)" -ForegroundColor Green; $pass++
-} else {
-    Write-Host "FAIL  build/incremental: $rebuild" -ForegroundColor Red; $fail++
-}
-
-# --- backends: native (Strata's own x86-64 code) and C must agree ----------------------------
-# The run goldens above went through the default backend: native wherever it can build the
-# program (single files build optimized). Run them again forced through each backend, so a
-# silent fallback to C can't hide a native regression, and the C backend stays covered.
-# (projects/pure covers native debug builds, unoptimized.)
-$runDir = Join-Path $here "run"
-foreach ($backend in @("native", "c")) {
-    $bad = @()
-    Get-ChildItem -Path $runDir -Filter *.expected | ForEach-Object {
-        $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
-        $src  = Join-Path $examples "$name.strata"
-        $usesC = (Get-Content $src -Raw) -match "(?m)^\s*import\s*[<`"]"   # C headers: C backend only
-        if (-not ($backend -eq "native" -and $usesC)) {
-            $actual   = ((& $strata run $src --backend $backend) -join "`n") -replace "`r",""
-            $expected = ((Get-Content $_.FullName -Raw) -replace "`r","").TrimEnd("`n")
-            if ($actual.TrimEnd("`n") -ne $expected) { $bad += $name }
-        }
-    }
-    if ($bad.Count -eq 0) { Write-Host "PASS  backend/$backend (every run golden)" -ForegroundColor Green; $pass++ }
-    else { Write-Host "FAIL  backend/$backend ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
-}
 # The CrossPlatform library's window (lib/CrossPlatform*.strata), natively: open it, close
 # it the way a user would (WM_CLOSE), and the program must notice and end.
 $winSrc = Join-Path $examples "platform_window.strata"
-$null = & $strata build $winSrc --backend native --force
+$null = & $strata build $winSrc --force
 $winOk = $false
 if ($LASTEXITCODE -eq 0) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo (Join-Path $examples "platform_window.exe")
@@ -130,22 +93,18 @@ if ($winOk) { Write-Host "PASS  library/CrossPlatform-window (opened natively, c
 else { Write-Host "FAIL  library/CrossPlatform-window" -ForegroundColor Red; $fail++ }
 
 # The raylib examples (graphical: built, not run) declare raylib in a foreign block
-# (examples/raylib.strata), so they build natively - linked by Strata's linker, straight
-# against libraylib.dll - and through C, with raylib.h.
+# (examples/raylib.strata) and are linked straight against libraylib.dll.
 $raylibDll = $null
 $gccDir = $null
 if (Get-Command gcc -ErrorAction SilentlyContinue) { $gccDir = Split-Path (Get-Command gcc).Source }
-if ($gccDir -and (Test-Path (Join-Path $gccDir "libraylib.dll")) -and (Test-Path (Join-Path $gccDir "..\include\raylib.h"))) {
+if ($gccDir -and (Test-Path (Join-Path $gccDir "libraylib.dll"))) {
     $raylibDll = Join-Path $gccDir "libraylib.dll"
     $bad = @()
     foreach ($name in @("window", "sprite", "balls")) {
-        foreach ($backend in @("native", "c")) {
-            $out = (& $strata build (Join-Path $examples "$name.strata") --backend $backend --force) -join " "
-            if ($LASTEXITCODE -ne 0 -or $out -notmatch "built") { $bad += "$name/$backend" }
-            if ($backend -eq "native" -and $out -match "linked by") { $bad += "$name/$backend (linked by the C toolchain)" }
-        }
+        $out = (& $strata build (Join-Path $examples "$name.strata") --force) -join " "
+        if ($LASTEXITCODE -ne 0 -or $out -notmatch "built") { $bad += $name }
     }
-    if ($bad.Count -eq 0) { Write-Host "PASS  backend/raylib (window, sprite, balls: native and C)" -ForegroundColor Green; $pass++ }
+    if ($bad.Count -eq 0) { Write-Host "PASS  backend/raylib (window, sprite, balls: linked against libraylib.dll)" -ForegroundColor Green; $pass++ }
     else { Write-Host "FAIL  backend/raylib ($($bad -join ', '))" -ForegroundColor Red; $fail++ }
 } else {
     Write-Host "SKIP  backend/raylib (raylib not installed)" -ForegroundColor Yellow
@@ -197,7 +156,7 @@ Get-ChildItem -Path $examples -Filter *.strata | ForEach-Object {
     if ($srcText -match "(?m)^\s*import\s*[<`"]" -or $srcText -match "(?m)^import raylib" -or $srcText -match "(?m)^\s*link\s") { return }
     $b = [IO.Path]::GetFileNameWithoutExtension($_.Name)
     $savedPref = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    $null = & $strata build $_.FullName --backend native --force 2>&1
+    $null = & $strata build $_.FullName --force 2>&1
     $ErrorActionPreference = $savedPref
     $oDirect = Join-Path $examples "$b.o"
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $oDirect)) { return }
@@ -305,14 +264,14 @@ if ($raylibDll -and (Test-Path $raylibDll)) {
 $noCc = @()
 try {
     if ($raylibDll) {
-        $out = (& $strata build (Join-Path $examples "window.strata") --backend native --force) -join " "
-        if ($LASTEXITCODE -ne 0 -or $out -match "linked by") { $noCc += "window (raylib)" }
+        $out = (& $strata build (Join-Path $examples "window.strata") --force) -join " "
+        if ($LASTEXITCODE -ne 0) { $noCc += "window (raylib)" }
     }
     # the compiler builds itself, and the compiler it builds works
     # (the copy runs from compiler\build\, where it finds compiler\lib\)
     $selfExe  = Join-Path $compiler "src\stratac.exe"
     $selfCopy = Join-Path $compiler "build\selftest.exe"
-    & $strata build (Join-Path $compiler "src\stratac.strata") --backend native --force | Out-Null
+    & $strata build (Join-Path $compiler "src\stratac.strata") --force | Out-Null
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $selfExe)) { $noCc += "the compiler itself" }
     else {
         Copy-Item $selfExe $selfCopy -Force
@@ -321,12 +280,12 @@ try {
         if ($out.TrimEnd("`n") -ne $want) { $noCc += "the compiler itself (its hello)" }
     }
     foreach ($name in @("hello", "abi", "loops", "matrix", "foreign")) {
-        $out  = ((& $strata run (Join-Path $examples "$name.strata") --backend native) -join "`n") -replace "`r",""
+        $out  = ((& $strata run (Join-Path $examples "$name.strata")) -join "`n") -replace "`r",""
         $want = ((Get-Content (Join-Path $here "run\$name.expected") -Raw) -replace "`r","").TrimEnd("`n")
         if ($out.TrimEnd("`n") -ne $want) { $noCc += $name }
     }
     $pureDir = Join-Path $here "projects\pure"
-    $out  = ((& $strata run $pureDir --force --backend native) -join "`n") -replace "`r",""
+    $out  = ((& $strata run $pureDir --force) -join "`n") -replace "`r",""
     $want = ((Get-Content (Join-Path $pureDir "expected.txt") -Raw) -replace "`r","").TrimEnd("`n")
     if ($out.TrimEnd("`n") -ne $want) { $noCc += "projects/pure" }
 } finally { $env:Path = $savedPath }
@@ -378,7 +337,7 @@ if ($LASTEXITCODE -eq 1 -and $deepOut -match "nested too deeply \(more than 1000
 }
 $chain = Join-Path $perfDir "chain100k.strata"
 [IO.File]::WriteAllText($chain, "var x = " + ((@("1") * 100000) -join " + ") + "`nprint(x)`n")
-$t = Measure-Command { & $strata emit $chain | Out-Null }
+$t = Measure-Command { & $strata build $chain --force | Out-Null }
 if ($LASTEXITCODE -eq 0 -and $t.TotalSeconds -lt 3) {
     Write-Host ("PASS  limits/100k-term-expression ({0:N2} s)" -f $t.TotalSeconds) -ForegroundColor Green; $pass++
 } else {

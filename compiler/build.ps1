@@ -1,5 +1,5 @@
 # build.ps1 - bootstrap the Strata compiler and build all artifacts into compiler\bin\ :
-#     stratac.exe    front-end #1 (the compiler CLI: run, build, emit, check, ast, tokens)
+#     stratac.exe    front-end #1 (the compiler CLI: run, build, check, asm, ast, tokens)
 #     console.exe    front-end #2 (the explorer console)
 #     libstrata.dll  the compiler as a shared library (the exe/lib/LSP split in
 #                    ARCHITECTURE.md sec 11)
@@ -17,14 +17,12 @@
 # anywhere:
 #     powershell -ExecutionPolicy Bypass -File compiler\build.ps1
 #     ... -Bootstrap C:\path\to\stratac.exe     use a specific stage0 instead
-#     ... -WriteSeed                            also refresh seed/ (the portable C seed
-#                                               that bootstraps macOS / Linux: build.sh)
 #
 # The stage0 rule: src/ may only use language features the pinned release supports.
 # Before the compiler's own code uses a new feature, release a version that has it and
 # bump bootstrap.txt to it.
 
-param([string]$Bootstrap, [switch]$WriteSeed)
+param([string]$Bootstrap)
 
 $ErrorActionPreference = "Stop"
 $here     = Split-Path -Parent $MyInvocation.MyCommand.Path   # ...\compiler
@@ -74,7 +72,7 @@ $srtObj      = Join-Path $lib "srt.o"
 # (Each stage runs from its own copy, so it never overwrites the exe that is running.)
 function Build-Stage([string]$name, [string]$with, [string]$to) {
     Write-Host "building $name ..." -ForegroundColor Cyan
-    & $with build $compilerSrc --backend native --force | Out-Null
+    & $with build $compilerSrc --force | Out-Null
     if (-not $?) { throw "$name build failed" }
     Copy-Item $builtExe $to -Force
 }
@@ -117,23 +115,6 @@ $stratac = Join-Path $bin "stratac.exe"
 Build-Runtime-For $stratac "linux-x64" (Join-Path $lib "srt-linux-x64.o")
 Build-Runtime-For $stratac "macos-arm64" (Join-Path $lib "srt-macos-arm64.o")
 
-# --- the seed: this compiler as portable C, for bootstrapping other platforms ----
-# The C the compiler generates for itself, written by stratac (LF, byte-exact). Kept with
-# the headers it was generated against, so build.sh can compile it however src/ and lib/
-# change later. See seed/README.md.
-if ($WriteSeed) {
-    $seed = Join-Path $here "seed"
-    foreach ($d in $seed, (Join-Path $seed "src"), (Join-Path $seed "lib")) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null } }
-    & $stratac emit $compilerSrc (Join-Path $seed "stratac.c")
-    if ($LASTEXITCODE -ne 0) { throw "writing the seed failed" }
-    Copy-Item (Join-Path $src "strata_host.h") (Join-Path $seed "src\strata_host.h") -Force
-    Remove-Item (Join-Path $seed "lib\*.h") -ErrorAction SilentlyContinue
-    Copy-Item (Join-Path $lib "*.h") (Join-Path $seed "lib") -Force
-    $ver = [regex]::Match((Get-Content (Join-Path $src "version.strata") -Raw), 'return "([0-9][0-9.]*)').Groups[1].Value
-    [IO.File]::WriteAllText((Join-Path $seed "VERSION"), "$ver`n")
-    Write-Host "wrote seed\ (stratac $ver)" -ForegroundColor Green
-}
-
 # --- console.exe: built by the shipped compiler ------------------------------
 Write-Host "building console.exe ..." -ForegroundColor Cyan
 & $stratac build (Join-Path $src "console.strata") | Out-Null
@@ -145,7 +126,7 @@ Copy-Item (Join-Path $src "console.exe") (Join-Path $bin "console.exe") -Force
 # the build also writes bin/libstrata.dll.a and bin/libstrata.lib (import libraries for GNU
 # ld and MSVC) and bin/libstrata.h (generated header).
 Write-Host "building libstrata.dll ..." -ForegroundColor Cyan
-& $stratac build (Join-Path $here "api") --backend native --force | Out-Null
+& $stratac build (Join-Path $here "api") --force | Out-Null
 if (-not $?) { throw "libstrata.dll build failed" }
 
 Write-Host ""

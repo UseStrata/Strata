@@ -4,10 +4,10 @@
 // src/host.strata - what the compiler needs from whatever hosts it: where messages go,
 // the operating system (files, folders, running programs), raw bytes, memory resets.
 // Declared here once, as a foreign block, for every compiler module that needs it
-// (`import host`). The C backend gets them from strata_host.h (beside this file, through
-// lib/crossplatform.h); see that file for what each one does.
+// (`import host`). They are the `strata_*` functions at the end of lib/srt.strata (the
+// runtime every native program links), on top of its OS layers (lib/srt/<os>.strata).
 
-export foreign "strata_host.h" {
+export foreign {
     // messages: printed, or captured for a host (libstrata)
     void   strata_report(string msg)
     void   strata_print_raw(string text)   // to stdout as is (no newline added)
@@ -21,14 +21,12 @@ export foreign "strata_host.h" {
     // the operating system
     string strata_host_os()
     string strata_host_arch()
-    string strata_cc()
     string strata_exe_path()
     string strata_getenv(string name)
     bool   strata_file_exists(string path)
     bool   strata_make_dirs(string path)
     int    strata_cpu_count()
     int    strata_run_argv(string[dynamic]* argv)
-    int    strata_run_cc_parallel(string[dynamic]* rsp_files, int jobs)
 
     // binary files and float bits (the native backend's assembler and linker)
     bool        strata_write_bytes(string path, u8[dynamic]* bytes)

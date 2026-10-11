@@ -372,15 +372,15 @@ bool at_foreign(Parser* p) {
 
 // `foreign ["header.h" | <header.h>] { ... }`: what a C library (or the OS) defines -
 // function prototypes, `struct`s (C layout) and `const`ants (`const T NAME = value`, the
-// value of a macro / enum constant). With a header, the C backend #includes it and takes
-// the structs and constants from it; without one, it declares them itself and the
-// functions are found when linking. Adds the header (if any) and each declaration to decls.
+// value of a macro / enum constant). The header named is documentation (which C header
+// they come from); the functions are found when linking. Adds the header (if any) and
+// each declaration to decls.
 void foreign_block(Parser* p, Decl*[dynamic]* decls, bool exported) {
     Token kw = p_advance(p)
     string header = ""
     if p_check(p, TkString) || p_check(p, TkLt) {
         Decl* inc = new_decl(DcInclude, kw.line, kw.col)
-        inc.is_foreign = true   // the C backend's #include; the native backend has the declarations
+        inc.is_foreign = true   // (documentation: the declarations are what count)
         if p_check(p, TkString) { inc.path = p_advance(p).text; inc.is_system = false }
         else {
             p_advance(p)
@@ -402,7 +402,7 @@ void foreign_block(Parser* p, Decl*[dynamic]* decls, bool exported) {
         else                          { d = foreign_func(p) }
         d.is_foreign = true
         d.is_exported = exported
-        d.path = header         // its header ("": none - the C backend declares it)
+        d.path = header         // its header ("": none)
         decls[0].push(d)
         p_match(p, TkSemicolon)
         skip_newlines(p)

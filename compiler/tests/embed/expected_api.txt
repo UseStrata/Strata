@@ -5,12 +5,10 @@ main.strata:1:9: error: '+' requires numeric operands, got int and bool
 main.strata:2:7: error: use of undeclared name 'nope'
 check a file with a module: ok
 no diagnostics after success: ok
-emit: ok
-emit of a bad program is empty: ok
 build a file (lib/ found next to the dll): ok
 the exe exists: ok
 build a dll project: ok
 output path: ok
 a bad target reports why: ok
-300 more check+emit+reset cycles don't grow memory: ok
+300 more check+reset cycles don't grow memory: ok
 still works after resets: ok

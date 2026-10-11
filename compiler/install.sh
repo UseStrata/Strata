@@ -10,7 +10,7 @@
 #   sh compiler/install.sh --uninstall
 #
 # Installed layout:  <prefix>/stratac  <prefix>/console  <prefix>/libstrata.dylib|.so
-#                    <prefix>/lib/...       the runtime headers
+#                    <prefix>/lib/...       the runtime (srt.strata, srt-*.o) and Strata's libraries
 #                    <prefix>/include/...   the embedding API (strata.h, strata.hpp, Strata.cs)
 #                    <bindir>/stratac  ->  <prefix>/stratac
 # stratac finds its lib/ next to its real (symlink-resolved) path, so nothing else needs
@@ -54,7 +54,7 @@ fi
 # --- Copy into the shared location ------------------------------------------
 echo "installing to $prefix ..."
 mkdir -p "$prefix/include"
-for a in stratac console libstrata.dylib libstrata.so libstrata.h; do
+for a in stratac console libstrata.dylib libstrata.so; do
     if [ -f "$bin/$a" ]; then cp "$bin/$a" "$prefix/$a"; fi
 done
 for f in strata.h strata.hpp Strata.cs; do
@@ -62,7 +62,7 @@ for f in strata.h strata.hpp Strata.cs; do
 done
 rm -rf "$prefix/lib"                                  # drop stale runtime files
 mkdir -p "$prefix/lib"
-cp "$compiler"/lib/*.h "$compiler"/lib/srt.strata "$compiler"/lib/CrossPlatform.strata "$prefix/lib/"
+cp "$compiler"/lib/srt.strata "$compiler"/lib/CrossPlatform.strata "$prefix/lib/"
 cp -R "$compiler"/lib/CrossPlatform "$compiler"/lib/srt "$prefix/lib/"
 for o in "$compiler"/lib/srt-*.o; do [ -f "$o" ] && cp "$o" "$prefix/lib/"; done   # the native backend's runtime
 
@@ -81,10 +81,5 @@ case ":$PATH:" in
        echo "NOTE: $bindir is not on PATH. Add it in your shell profile, e.g.:"
        echo "      export PATH=\"$bindir:\$PATH\"" ;;
 esac
-if ! command -v "${STRATA_CC:-cc}" >/dev/null 2>&1; then
-    echo ""
-    echo "NOTE: building programs needs a C compiler ('cc', or set STRATA_CC)."
-    echo "      macOS: xcode-select --install    Debian/Ubuntu: sudo apt install build-essential"
-fi
 echo ""
 echo "Done. Then:  stratac run <file.strata>"

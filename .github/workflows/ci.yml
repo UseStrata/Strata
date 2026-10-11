@@ -26,7 +26,7 @@ jobs:
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc
           path-type: inherit
-      - name: put MinGW gcc on PATH
+      - name: put MinGW gcc on PATH (only for the tests' C host programs and the GNU as comparison)
         shell: pwsh
         run: echo "${{ runner.temp }}\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: bootstrap
@@ -57,9 +57,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: X11 (crossplatform.h's Window section, test projects; Xvfb + xdotool for CrossPlatform's window)
+      - name: Xvfb + xdotool (CrossPlatform's window, on a virtual X server)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool
       - uses: actions/download-artifact@v4
         with:
           name: cross

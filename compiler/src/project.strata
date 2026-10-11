@@ -14,26 +14,25 @@
 //     out_dir = "build"             # default
 //
 //     [build]                       # every platform
-//     release      = false          # true: -O2, false: -O0 -g (`--release` overrides)
-//     split        = true           # one C file per module: only changed modules recompile
-//     defines      = ["GAME_DEBUG=1"]
-//     include_dirs = ["third_party/include"]
+//     release      = false          # optimize (`--release` too)
 //     lib_dirs     = ["third_party/lib"]
-//     libs         = ["raylib"]
-//     c_sources    = ["native/audio.c"]
+//     libs         = ["raylib"]     # shared libraries the program calls (`link "x"` in code too)
 //
-//     [windows]                     # only on that platform; same keys as [build],
-//     libs = ["user32", "gdi32"]    # plus `frameworks` on [macos]
+//     [windows]                     # only on that platform; same keys as [build]
+//     libs = ["user32", "gdi32"]
 //     [linux]
 //     libs = ["X11"]
 //     [macos]
-//     frameworks = ["Cocoa"]
+//     libs = ["AppKit"]             # (`frameworks` also works: the same thing)
+//
+// Strata compiles no C (since 2.7.0): `c_sources`, `include_dirs` and `defines` are
+// errors saying so; `split` (one C file per module) is accepted and does nothing.
 //
 // Unknown sections and keys are errors, so a typo can't silently do nothing.
 
 import modules   // dirname_of
 import target   // target_os: the OS being built for
-import host   // strata_report: where messages go; strata_host_os (see strata_host.h)
+import host   // strata_report: where messages go; strata_host_os (see host.strata)
 
 export struct Project {
     bool   ok
@@ -54,7 +53,7 @@ export struct Project {
     bool   split             // compile one C file per module (default true)
 }
 
-// The platform stratac is running on: "windows", "macos" or "linux" (lib/crossplatform.h).
+// The platform stratac is running on: "windows", "macos" or "linux".
 // Picks the [windows] / [linux] / [macos] section of a project file.
 export string host_os() { return strata_host_os() }
 // The CPU stratac runs on (and, so far, builds for): "x86_64", "arm64" or "unknown".
@@ -154,7 +153,11 @@ void toml_build_key(Toml* t, string key, string v, bool platform, bool apply) {
         if apply { t.p.split = sp }
         return
     }
-    bool list_key = key == "defines" || key == "include_dirs" || key == "lib_dirs" || key == "libs" || key == "c_sources"
+    if key == "c_sources" || key == "include_dirs" || key == "defines" {
+        toml_error(t, "'" + key + "' is gone: Strata compiles no C since 2.7.0 (declare a C library's functions in a foreign block, and `link` it)")
+        return
+    }
+    bool list_key = key == "lib_dirs" || key == "libs"
     if key == "frameworks" && t.section == "macos" { list_key = true }
     if !list_key {
         toml_error(t, "unknown key '" + key + "' in [" + t.section + "]")

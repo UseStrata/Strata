@@ -28,20 +28,22 @@ foo.strata
    │
    ▼  checker      AST → typed AST         (name resolution, types, inference, regions)
 typed AST
-   ├──────────────────────────────┐
-   ▼  lower    typed AST → IR      ▼  codegen   typed AST → C source   (the C backend)
-  IR                              foo.c
-   │                               │
-   ▼  opt      IR → better IR,     ▼  gcc / cc / clang
-   │           registers          native executable
-   ▼  arch/x64 IR → instructions → machine code (asm + arch/x64's encoder; text only for `stratac asm`)
- foo.o  →  linker (os/windows, + srt.o)  →  foo.exe   (the native backend, the default where it can)
+   │
+   ▼  lower    typed AST → IR     (the target's C calling convention: Windows x64, System V, Apple ARM64)
+  IR
+   │
+   ▼  opt      IR → better IR, registers
+   │
+   ▼  arch/x64 or arch/arm64      IR → instructions → machine code (through asm.strata)
+ foo.o
+   │
+   ▼  linker (os/windows, os/linux, os/macos; + lib/srt*.o)  →  foo.exe / foo / foo.dll / .so / .dylib
 ```
 
-Two backends share everything up to the typed AST. The native one is Strata's own, laid
-out on two axes: **one file per CPU** in `arch/` (everything about it: IR → assembly, the
-instruction encoder) and **one file per OS** in `os/` (object files, the linker, import
-libraries), behind one assembler (`asm.strata`) and one linker (`linker.strata`) that
+One backend, Strata's own (there was a C backend until 2.6.0), laid out on two axes:
+**one file per CPU** in `arch/` (everything about it: IR → assembly, the instruction
+encoder) and **one file per OS** in `os/` (object files, the linker, import libraries,
+code signing), behind one assembler (`asm.strata`) and one linker (`linker.strata`) that
 dispatch to them. `ir.strata` is target-independent, so another CPU is another
 `arch/<cpu>.strata`, another OS another `os/<os>.strata`.
 
@@ -54,19 +56,16 @@ ever reaches backward or sideways.**
 
 **The compiler is written in Strata** (since v1.0.0; it was originally written in D--, removed in
 2.0 and still in git history). `build.ps1` (Windows) / `build.sh` (macOS, Linux) bootstraps it: stage0 (a
-pinned `stratac` release, see `bootstrap.txt`; on macOS / Linux the C seed in `seed/`)
-compiles `src/` (stage1), stage1 compiles `src/` again (stage2). On Windows every stage is
-built by the native backend (no C compiler) and stage2 builds stage3, which must be
-byte-identical to stage2 (the fixpoint); on macOS / Linux the stages go through C and must
-emit identical C.
+pinned `stratac` release for the machine, see `bootstrap.txt`) compiles `src/` (stage1),
+stage1 compiles `src/` again (stage2), and stage2 builds stage3, which must be
+byte-identical to stage2 (the fixpoint). Every stage is native: no C compiler.
 
 ```
 compiler/
 ├─ ARCHITECTURE.md      ← this file
 ├─ build.ps1            bootstraps + builds all artifacts into bin/ (2 exes + libstrata.dll)
-├─ build.sh             the same on macOS / Linux, from seed/ (libstrata.dylib / .so)
-├─ bootstrap.txt        the release version stage0 is pinned to (Windows)
-├─ seed/                the C seed: a stratac compiled to C + its headers (macOS / Linux stage0)
+├─ build.sh             the same on macOS / Linux (libstrata.dylib / .so)
+├─ bootstrap.txt        the release version stage0 is pinned to
 ├─ api/                 libstrata's project file + the embedding API: strata.h, strata.hpp, Strata.cs
 ├─ src/
 │  │  ── the CORE (no main; the "library") ──
@@ -77,34 +76,38 @@ compiler/
 │  ├─ modules.strata    the module loader: files → one Program + module table
 │  ├─ hashidx.strata    a small hash index (the checker's name tables, the lexer's interning)
 │  ├─ checker.strata    AST → validated/inferred AST (incl. module visibility)
-│  ├─ codegen.strata    typed AST → C                     (the C backend)
 │  ├─ ir.strata         the native backend's IR (target-independent)
-│  ├─ lower.strata      typed AST → IR (+ the C calling convention's struct rules)
+│  ├─ lower.strata      typed AST → IR (+ the target's C calling convention: struct rules)
 │  ├─ opt.strata        the optimizer + register allocator
 │  ├─ native.strata     the native backend's driver: lower → opt → arch/<cpu>
 │  ├─ asm.strata        THE assembler: object model, directives, labels, fixups; each
 │  │                    instruction goes to its CPU's encoder in arch/
 │  ├─ linker.strata     THE linker entry: object files + linking, handed to the OS's file in os/
-│  ├─ arch/x64.strata   everything x86-64: IR → assembly (Windows x64 ABI) + the encoder
+│  ├─ arch/x64.strata   everything x86-64: IR → machine code (Windows x64 / System V) + the encoder
+│  ├─ arch/arm64.strata everything ARM64: IR → assembly (Apple's convention) + the encoder
 │  ├─ os/windows.strata everything Windows: COFF objects, the PE linker (exes, dlls), import libraries
+│  ├─ os/linux.strata   everything Linux: ELF objects, the ELF linker (static / dynamic exes, .so)
+│  ├─ os/macos.strata   everything macOS: Mach-O objects, the Mach-O linker (exes, dylibs), code signing
+│  ├─ target.strata     the OS / CPU being built for (--target)
 │  ├─ core.strata       umbrella module (`export import`s every phase), main-free
 │  │  ── the build system (on top of the core) ──
 │  ├─ project.strata    reads strata.toml into a Project
-│  ├─ build.strata      the build pipeline (native or C -> exe/dll) + the build cache
+│  ├─ build.strata      the build pipeline (-> exe / dll) + the build cache
+│  ├─ cheader.strata    a dll's C header (its exports as C declarations, for C / C++ hosts)
 │  ├─ host.strata       what the compiler needs from its host (messages, memory, the OS), as a
-│  │                    foreign block: from strata_host.h on the C backend, from lib/srt.strata natively
-│  ├─ strata_host.h     those functions in C (the OS through lib/crossplatform.h)
+│  │                    foreign block: the strata_* functions at the end of lib/srt.strata
 │  │  ── shared front-end utility ──
 │  ├─ dump.strata       renders core data (tokens/AST) to text
 │  │  ── front-ends (thin; each has top-level code = its main) ──
-│  ├─ stratac.strata    front-end #1: the CLI (tokens, ast, check, emit, asm, ir, build, run)
+│  ├─ stratac.strata    front-end #1: the CLI (tokens, ast, check, asm, ir, build, run, object, assemble)
 │  ├─ libstrata.strata  front-end #3: the public C API (libstrata.dll, for engines)
 │  └─ console.strata    front-end #2: the explorer console
 ├─ bin/                 build output: stratac(.exe), console(.exe), libstrata.dll/.dylib/.so
 ├─ build/               bootstrap compilers (cached release + stage1/2)
-├─ lib/                 the C runtime the OUTPUT links against (arena.h, math, prelude)
+├─ lib/                 the runtime programs link (srt.strata -> srt*.o; srt/<os>.strata) and
+│                       Strata's libraries (CrossPlatform)
 ├─ examples/            sample .strata programs
-└─ tests/              golden-file tests, one dir per stage (tokens/, ast/, check/, run/, emit/)
+└─ tests/              golden-file tests, one dir per stage (tokens/, ast/, check/, run/), projects, embedding
 ```
 
 - The data modules (`token`, `ast`) hold shared definitions; the others are passes.
@@ -233,14 +236,15 @@ inspected and tested in isolation:
 ```bash
 stratac tokens foo.strata    # lexer output
 stratac ast    foo.strata    # parser output
-stratac check  foo.strata    # checker: types + errors, no codegen
-stratac emit   foo.strata    # the generated C
-stratac run    foo.strata    # full pipeline: compile (tcc) + run
-stratac build  foo.strata    # release build (gcc/clang -O2)
+stratac check  foo.strata    # checker: types + errors, no code
+stratac ir     foo.strata    # the IR (after `lower`; --release: after `opt`)
+stratac asm    foo.strata    # the assembly (--target picks the CPU / OS)
+stratac run    foo.strata    # full pipeline: build + run
+stratac build  foo.strata    # an exe / dll
 ```
 
 **Testing:** `tests/` holds **golden files** — for each example, the expected tokens /
-AST / C. Runs compare byte-for-byte (D--'s proven method); a diff is a regression. This
+AST / errors / program output. Runs compare byte-for-byte (D--'s proven method); a diff is a regression. This
 is what stops a change in one phase from silently corrupting another.
 
 ---
@@ -328,17 +332,17 @@ Big C++ compilers use the same phase separation, then add stages we deliberately
 ```
 Clang/LLVM:  lexer → parser+Sema → Clang AST → CodeGen → LLVM IR → (opt passes) → backend → machine code
 GCC:         lexer → parser → GENERIC(AST) → GIMPLE(IR) → (opt passes) → RTL → machine code
-Strata:      lexer → parser → checker → typed AST → codegen → C  →  [ tcc/gcc/clang does the rest ]
+Strata:      lexer → parser → checker → typed AST → lower → IR → opt → arch → machine code → linker
 ```
 
 Two takeaways:
 
 1. **Same skeleton.** Lexer → parser → semantic analysis → codegen is universal. Our
    `checker` is their "Sema". We're following the standard, not improvising.
-2. **They add IRs; we borrow one.** Clang lowers to **LLVM IR**, GCC to **GIMPLE/RTL**,
-   so they can optimize and target many CPUs. **Strata's IR is C** — we emit it and let
-   the C compiler provide all the optimization and machine-code backend for free. That's
-   the entire payoff of compile-to-C: reuse LLVM/GCC's middle and back end.
+2. **They have IRs; so do we now.** Clang lowers to **LLVM IR**, GCC to **GIMPLE/RTL**,
+   so they can optimize and target many CPUs. Strata borrowed one at first — it compiled
+   to C and let the C compiler do the rest — and since 2.0 has its own (`ir.strata`), so
+   it targets x86-64 and ARM64 itself; the C path was removed in 2.7.0.
 3. **Where C++ compilers get tangled — and we don't.** Clang has to *interleave* its
    parser and Sema because C++'s grammar is context-sensitive (you can't parse it without
    type info — templates, the "most vexing parse"). That entanglement is forced by the
@@ -353,21 +357,17 @@ A C/C++ compiler is a **driver** that runs a chain of programs — preprocessor 
 → assembler → linker. For native builds Strata is all of those itself:
 
 ```
-stratac run foo.strata                         (native backend: x86-64 Windows, no C headers)
-  → (in-process) lexer → parser → checker → lower → opt → arch/x64 → asm → foo.o
-  → (in-process) linker (os/windows): foo.o + <install>/lib/srt.o + DLL imports → foo.exe
-    (a program linking C libraries: gcc links it, with the same lib/srt.o)
-
-stratac run foo.strata --backend c             (C backend: any platform, C interop)
-  → ... → checker → codegen → foo.c → gcc/cc -O2 foo.c -I <install>/lib -o foo
+stratac run foo.strata
+  → (in-process) lexer → parser → checker → lower → opt → arch/<cpu> → asm → foo.o
+  → (in-process) linker (os/<os>): foo.o + <install>/lib/srt*.o + the shared libraries it calls → foo
 ```
 
-**The road to depending on nothing but the OS** (each step keeps the C path working):
-~~write object files directly (no assembler)~~ (done, 2.1) → ~~Strata's own linker (no gcc
-for native builds)~~ (done, 2.1) → ~~the native runtime in Strata~~ (done: `lib/srt.strata`;
-it still calls msvcrt.dll — next, kernel32 / syscalls directly) →
-C header import (C libraries / engines natively) → ARM64 and Linux / macOS targets →
-the compiler built by its own native backend (the C seed becomes optional).
+**The road to depending on nothing but the OS:** ~~write object files directly (no
+assembler)~~ (2.1) → ~~Strata's own linker~~ (2.1) → ~~the native runtime in Strata~~
+(`lib/srt.strata`) → ~~the compiler built by its own native backend~~ (2.4) → ~~ARM64,
+Linux and macOS~~ (2.6) → ~~no C backend, no C seed~~ (2.7). Still on the list: C header
+import (reading declarations into foreign blocks), the runtime calling kernel32 directly
+instead of msvcrt.dll.
 
 **Install layout** — one monolithic install *home* on `PATH`, runtime beside the exe,
 mirroring D--'s `install.ps1` (the exe finds `lib/` next to itself, so nothing else needs
@@ -380,22 +380,19 @@ only the *installed toolchain* is monolithic. Built by `build.ps1`, deployed by
 ├─ stratac.exe         the compiler CLI (stage3 of the bootstrap)
 ├─ console.exe        the explorer front-end
 ├─ libstrata.dll      the core as a shared library (for embedders)
-└─ lib\               the runtime the OUTPUT links against (driver passes -I <home>\lib)
-   ├─ arena.h …       header-only C runtime (see lib/README.md)
-   ├─ srt.strata      the native runtime, in Strata
-   └─ srt.o           ... compiled (by `stratac object`): what native programs link
+└─ lib\               the runtime programs link, and Strata's libraries
+   ├─ srt.strata      the runtime, in Strata (+ srt\<os>.strata: its OS layers)
+   ├─ srt.o           ... compiled (by `stratac object`) for Windows; srt-linux-x64.o and
+   │                  srt-macos-arm64.o for cross-compiling
+   └─ CrossPlatform.strata (+ CrossPlatform\<os>.strata)   `import CrossPlatform`
 ```
 
 The runtime `lib/` lives in the home for the *compiled program's* sake, not the
-compiler's — `stratac.exe` is a self-contained monolith; `lib/` is what generated C links
-against.
+compiler's — `stratac.exe` is a self-contained monolith; `lib/` is what programs link.
 
 Rules:
-- **Native first**: `--backend auto` (the default) builds natively when the native
-  backend can (`native_target_why`, `lower_program`'s reason otherwise) and with C when
-  it can't; `--backend native|c` forces one.
-- **The C toolchain** is found as `gcc` (Windows), `cc`, or `$STRATA_CC`.
-- `stratac emit` / `asm` / `ir` print what each backend generates.
+- Every build is native; `native_target_why` / `lower_program` say why one can't be.
+- `stratac asm` / `ir` print what the backend generates.
 
 ---
 

@@ -221,16 +221,17 @@ switch state {                       // [DECIDE] switch vs match; fallthrough ru
 
 ## 7. Performance & iteration model (how it stays fast)
 
-**Strata is compiled, not interpreted** — to C, then to native via tcc/gcc/clang.
-Interpretation would add per-op dispatch overhead and force a GC, undoing the whole
-point. But you get the *feel* of an interpreter from one command:
+**Strata is compiled, not interpreted** — straight to machine code (x86-64, ARM64) by its
+own backend, assembler and linker. (It compiled to C until 2.6.0; the original plan here
+was C + tcc / gcc / clang.) Interpretation would add per-op dispatch overhead and force a
+GC, undoing the whole point. But you get the *feel* of an interpreter from one command:
 
 ```bash
-stratac run game.strata     # compiles (tcc, ~ms) and runs — feels like `python x.py`
-stratac build game.strata   # release build via clang/gcc -O2
+stratac run game.strata     # compiles (tens of ms) and runs — feels like `python x.py`
+stratac build game.strata   # an optimized build
 ```
 
-Because tcc compiles in milliseconds, `stratac run` gives an instant edit-run loop while
+Because a build takes milliseconds, `stratac run` gives an instant edit-run loop while
 still producing native, no-GC code (same idea as `go run` / `zig run`). The milestone-5
 **hot-reload** runtime is the "live-edit while running" story layered on top.
 
@@ -240,12 +241,11 @@ Three separate "fast" goals, each with concrete levers:
   C-family control flow, top-level code with no boilerplate, a built-in **prelude**
   (math, input, time, arena) so the first playable program is ~15 lines, and *no
   lifetimes or borrow checker*.
-- **Fast to compile** — lower to C, then use **tcc (Tiny C Compiler) for near-instant
-  debug builds** and clang/gcc `-O2` for release. No header files; no heavy generics
-  early; whole-module compile. Tight iteration loop is a first-class feature (Jai's
-  main draw).
+- **Fast to compile** — one pass per phase, its own backend straight to machine code (no
+  C compiler, no external assembler or linker). No header files; no heavy generics early;
+  whole-module compile. Tight iteration loop is a first-class feature (Jai's main draw).
 - **Fast to run** — no GC; arena memory (cache-friendly, bulk reclaim); value types by
-  default; opt-in SoA; emit C so `-O2` gives decades of optimization for free.
+  default; opt-in SoA; an optimizer of its own (growing).
 
 ---
 
@@ -255,7 +255,7 @@ Strata compiles to C, so calling C is direct. Consuming C *structs* and `#define
 constants needs real binding work (known friction, per the plan).
 
 ```strata
-foreign "raylib.h" {                 // the C backend #includes the header
+foreign "raylib.h" {                 // (the header named: documentation)
     struct Color { u8 r; u8 g; u8 b; u8 a }            // C's layout, passed by value
     const Color RAYWHITE = Color{ 245, 245, 245, 255 } // a macro's / enum constant's value
     void InitWindow(i32 w, i32 h, string title)        // C's int is i32
@@ -268,9 +268,9 @@ foreign {                            // no header: found when linking (e.g. a sy
 ```
 
 - **Settled (2026-10-09): the `foreign` block**, not per-declaration `extern`. Each
-  declaration says everything a backend needs to call the function, so the native backend
-  calls C (raylib, the OS) without reading C headers; the C backend uses the header, or
-  (none given) declares the functions itself. A foreign function keeps its exact name.
+  declaration says everything the compiler needs to call the function, so it calls C
+  (raylib, the OS) without reading C headers. A foreign function keeps its exact name.
+  (Since 2.7.0 there is no C backend: `import <x.h>` is gone, foreign blocks are the way.)
 - `string` is a C `const char*`, so it converts to and from a pointer with `cast<T>`
   (e.g. a byte buffer `u8*`).
 - **Structs and constants (2026-10-09):** a foreign `struct` keeps its exact C name and C's

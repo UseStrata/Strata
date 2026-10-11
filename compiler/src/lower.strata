@@ -8,19 +8,17 @@
 //   * scalar locals live in vregs (in a stack slot if their address is taken);
 //     aggregates (structs, vec2/3/4, quat, mat4, Arena, T[dynamic]) always live in slots;
 //   * arithmetic follows C's usual conversions (a float literal is an f64, int op float
-//     is float, ...), so a program prints exactly what the C backend's build prints;
+//     is float, ...), as Strata always has (its first backend was C);
 //   * vector math is expanded into float operations; matrices, quaternions, strings,
-//     arrays, arenas and I/O call the runtime (lib/srt.c, `srt_*` functions);
+//     arrays, arenas and I/O call the runtime (lib/srt.strata, `srt_*` functions);
 //   * regions free their arena at the closing brace and on break / continue / return.
 //
 // Struct passing follows the target's C calling convention so Strata functions can be
-// called from C and call C. Today that is Windows x64 (the abi_* functions): a struct of
-// 1, 2, 4 or 8 bytes travels as an integer; any other size by pointer to a copy, and is
-// returned through a hidden pointer passed as the first argument.
+// called from C and call C: Windows x64 (the abi_* functions), System V (Linux x86-64) or
+// Apple ARM64 (the aapcs_* ones).
 //
-// Not supported yet (`ok` false, with a message): calling C functions from imported
-// headers (their declarations aren't read yet), method calls other than .new / .push,
-// fixed-size arrays. The build then uses the C backend instead.
+// Not supported yet (`ok` false, with a message): method calls other than .new / .push,
+// fixed-size arrays.
 
 import ast
 import ir
@@ -932,7 +930,7 @@ LVal lower_name(Lower* l, Expr* e) {
     if e.text == "null" { return scalar(iconst(l, KU64, 0), KU64) }
     Decl* fd = find_func(l, e.text)
     if fd != null { return scalar(sym_addr(l, link_sym(fd)), KU64) }   // a function's address
-    lw_fail(l, e.line, "'" + e.text + "' is not a Strata name (C names need the C backend for now)")
+    lw_fail(l, e.line, "'" + e.text + "' is not a Strata name (a C library's: declare it in a foreign block)")
     return scalar(iconst(l, KI64, 0), KI64)
 }
 
@@ -1450,7 +1448,7 @@ LVal lower_call(Lower* l, Expr* e) {
 
     Decl* d = find_func(l, nm)
     if d == null {
-        lw_fail(l, e.line, "'" + nm + "' is not a Strata function (calling C needs the C backend for now)")
+        lw_fail(l, e.line, "'" + nm + "' is not a Strata function (a C library's: declare it in a foreign block)")
         return scalar(iconst(l, KI64, 0), KI64)
     }
     return call_strata(l, d, e)
@@ -1633,7 +1631,7 @@ void lower_for(Lower* l, Stmt* s) {
     Expr* it = s.iter
     push_scope(l)
     if it != null && it.kind == ExBinary && it.text == ".." {
-        // for i in lo..hi: `hi` is evaluated every iteration (as the C backend does)
+        // for i in lo..hi: `hi` is evaluated every iteration
         LVar i = declare(l, s.name, named("int"), s.line)
         assign_var(l, i, lower_expr(l, it.a), s.line)
         int head = new_label(l)

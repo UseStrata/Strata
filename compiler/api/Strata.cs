@@ -24,8 +24,6 @@ namespace Strata
         static extern bool strata_check(byte[] path);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.I1)]
         static extern bool strata_check_source(byte[] path, byte[] source);
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr strata_emit(byte[] path);
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr strata_emit_source(byte[] path, byte[] source);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.I1)]
         static extern bool strata_build(byte[] target, [MarshalAs(UnmanagedType.I1)] bool release, [MarshalAs(UnmanagedType.I1)] bool force);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr strata_output_path(byte[] target);
@@ -50,10 +48,6 @@ namespace Strata
 
         public static bool Check(string path) => strata_check(Utf8(path));
         public static bool CheckSource(string path, string source) => strata_check_source(Utf8(path), Utf8(source));
-
-        /// <summary>C source for the program, or "" on errors (see Diagnostics()).</summary>
-        public static string Emit(string path) => Str(strata_emit(Utf8(path)));
-        public static string EmitSource(string path, string source) => Str(strata_emit_source(Utf8(path), Utf8(source)));
 
         public static bool Build(string target, bool release = false, bool force = false) => strata_build(Utf8(target), release, force);
         public static string OutputPath(string target) => Str(strata_output_path(Utf8(target)));

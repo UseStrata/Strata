@@ -29,7 +29,6 @@ $stage = Join-Path $stageRoot "strata"
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'lib') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'include') | Out-Null
 foreach ($f in 'stratac.exe','console.exe','libstrata.dll','libstrata.dll.a','libstrata.lib') { Copy-Item (Join-Path $bin $f) (Join-Path $stage $f) }
-Copy-Item (Join-Path $lib '*.h') (Join-Path $stage 'lib')
 Copy-Item (Join-Path $lib 'srt.strata') (Join-Path $stage 'lib')   # the native backend's runtime (Strata)
 Copy-Item (Join-Path $lib 'CrossPlatform.strata') (Join-Path $stage 'lib')   # Strata's libraries (import CrossPlatform)
 Copy-Item (Join-Path $lib 'CrossPlatform') (Join-Path $stage 'lib') -Recurse
@@ -111,7 +110,6 @@ foreach ($target in 'linux-x64', 'macos-arm64') {
     & $stratac build (Join-Path $here 'api') --target $target --force | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "libstrata for $target failed to build" }
     Move-Item (Join-Path $bin $dll) (Join-Path $pstage $dll) -Force
-    Copy-Item (Join-Path $lib '*.h') (Join-Path $pstage 'lib')
     foreach ($f in 'srt.strata', 'CrossPlatform.strata', 'srt.o', 'srt-linux-x64.o', 'srt-macos-arm64.o') { Copy-Item (Join-Path $lib $f) (Join-Path $pstage 'lib') }
     Copy-Item (Join-Path $lib 'CrossPlatform') (Join-Path $pstage 'lib') -Recurse
     Copy-Item (Join-Path $lib 'srt') (Join-Path $pstage 'lib') -Recurse
