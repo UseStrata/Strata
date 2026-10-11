@@ -37,6 +37,19 @@ jobs:
         with:
           name: seed
           path: compiler/seed/
+      - name: cross-compile the compiler for Linux and macOS (checked against their own builds below)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force compiler/build/cross | Out-Null
+          foreach ($t in "linux-x64", "macos-arm64") {
+              & compiler/bin/stratac.exe build compiler/src/stratac.strata --target $t --force
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+              Copy-Item compiler/src/stratac "compiler/build/cross/stratac-$t"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross
+          path: compiler/build/cross/
       - name: commit the seed (new version)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
@@ -70,5 +83,15 @@ jobs:
       - name: X11 (crossplatform.h's Window section, test projects; Xvfb + xdotool for CrossPlatform's window)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libx11-dev xvfb xdotool
+      - uses: actions/download-artifact@v4
+        with:
+          name: cross
+          path: compiler/build/cross/
       - name: bootstrap from the seed + tests
         run: sh compiler/tests/run.sh
+      - name: the compiler Windows cross-compiles for this OS is the one this OS builds natively
+        run: |
+          t=linux-x64
+          if [ "$(uname -s)" = Darwin ]; then t=macos-arm64; fi
+          cmp compiler/bin/stratac compiler/build/cross/stratac-$t
+          echo "PASS: compiler/bin/stratac (built here, natively) == the $t compiler built on Windows"
