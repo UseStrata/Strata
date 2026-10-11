@@ -46,8 +46,7 @@ if ! sh "$compiler/build.sh" "$@" >/dev/null; then
     echo "${red}FAIL${off}: bootstrap build failed (run compiler/build.sh to see why)"
     exit 1
 fi
-if [ -f "$compiler/build/stage4" ]; then ok "bootstrap (C seed -> stage1 -> stage2, then natively stage3 -> stage4; fixpoints)"
-else ok "bootstrap (C seed -> stage1 -> stage2, fixpoint)"; fi
+ok "bootstrap (pinned release -> stage1 -> stage2 -> stage3, native, fixpoint)"
 
 # --- run each golden ---------------------------------------------------------
 for dir in "$here"/*/; do
