@@ -6,6 +6,12 @@ and a GitHub Release.
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-11
+
+Strata builds native programs on **Windows x86-64, Linux x86-64 and macOS ARM64** with its
+own backend, assembler and linker - no C compiler on any of them - and the compiler builds
+itself natively on all three. The last release that still has the C backend.
+
 ### Added
 - **Function pointers**: `fn(int, float) -> int` is the type of a function's address
   (no `->`: it returns nothing; parameters may be named, `fn(int key)`; parentheses group

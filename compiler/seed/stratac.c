@@ -13,11 +13,11 @@
 #include <stdlib.h>
 
 typedef enum { TkIdent, TkInt, TkFloat, TkString, TkChar, TkKwVar, TkKwConst, TkKwStruct, TkKwEnum, TkKwIf, TkKwElse, TkKwWhile, TkKwFor, TkKwIn, TkKwReturn, TkKwTrue, TkKwFalse, TkKwRegion, TkKwImport, TkKwLink, TkKwSwitch, TkKwCase, TkKwDefault, TkKwExport, TkKwCast, TkKwSizeof, TkKwBreak, TkKwContinue, TkLParen, TkRParen, TkLBrace, TkRBrace, TkLBracket, TkRBracket, TkComma, TkSemicolon, TkColon, TkDot, TkDotDot, TkHash, TkAssign, TkPlus, TkMinus, TkStar, TkSlash, TkPercent, TkPlusEq, TkMinusEq, TkStarEq, TkSlashEq, TkEqEq, TkBangEq, TkLt, TkLtEq, TkGt, TkGtEq, TkAmpAmp, TkPipePipe, TkBang, TkAmp, TkPipe, TkCaret, TkTilde, TkShl, TkShr, TkPipeEq, TkAmpEq, TkCaretEq, TkShlEq, TkShrEq, TkNewline, TkEof, TkError } TokKind;
-typedef enum { TyNamed, TyArray, TyFixedArray, TyPointer, TyDynArray } TypeKind;
+typedef enum { TyNamed, TyArray, TyFixedArray, TyPointer, TyDynArray, TyFunc } TypeKind;
 typedef enum { ExIntLit, ExFloatLit, ExStringLit, ExCharLit, ExBoolLit, ExName, ExUnary, ExBinary, ExCall, ExField, ExIndex, ExArrayLit, ExStructLit, ExCast, ExSizeof } ExprKind;
 typedef enum { StBlock, StVar, StReturn, StExprStmt, StAssign, StIf, StWhile, StForIn, StRegion, StSwitch, StBreak, StContinue } StmtKind;
 typedef enum { DcFunc, DcStruct, DcEnum, DcInclude, DcLink, DcImport, DcGlobal, DcConst } DeclKind;
-typedef enum { TcInt, TcFloat, TcBool, TcChar, TcStr, TcVoid, TcStruct, TcArray, TcPointer, TcVec, TcMat, TcQuat, TcDynArray, TcUnknown } TCat;
+typedef enum { TcInt, TcFloat, TcBool, TcChar, TcStr, TcVoid, TcStruct, TcArray, TcPointer, TcVec, TcMat, TcQuat, TcDynArray, TcUnknown, TcFunc } TCat;
 typedef enum { KVoid, KI8, KI16, KI32, KI64, KU8, KU16, KU32, KU64, KF32, KF64 } IrTy;
 typedef enum { OConst, OFConst, OCopy, OAdd, OSub, OMul, ODiv, OMod, OAnd, OOr, OXor, OShl, OShr, ONeg, ONot, OCmp, OConv, OSqrt, OLoad, OStore, OSlotAddr, OSymAddr, OCopyMem, OZeroMem, OParam, OCall, ORet, OLabel, OJmp, OBr, ONop } IrOp;
 typedef enum { CEq, CNe, CLt, CLe, CGt, CGe } IrCond;
@@ -69,14 +69,18 @@ typedef struct FieldRef FieldRef;
 typedef struct Base Base;
 typedef struct Facts Facts;
 typedef struct RegSet RegSet;
-typedef struct X64 X64;
-typedef struct NativeResult NativeResult;
+typedef struct A64 A64;
+typedef struct MemRef MemRef;
+typedef struct APlace APlace;
+typedef struct AOp AOp;
 typedef struct ObjReloc ObjReloc;
 typedef struct ObjSymbol ObjSymbol;
 typedef struct ObjFile ObjFile;
-typedef struct Opnd Opnd;
 typedef struct Fix Fix;
 typedef struct Asm Asm;
+typedef struct X64 X64;
+typedef struct Opnd Opnd;
+typedef struct NativeResult NativeResult;
 typedef struct Out Out;
 typedef struct LSec LSec;
 typedef struct LSym LSym;
@@ -88,6 +92,21 @@ typedef struct Bytes Bytes;
 typedef struct CSym CSym;
 typedef struct CSec CSec;
 typedef struct Member Member;
+typedef struct EOut EOut;
+typedef struct StrTab StrTab;
+typedef struct ESec ESec;
+typedef struct ESym ESym;
+typedef struct EObj EObj;
+typedef struct ElfLinker ElfLinker;
+typedef struct SecTab SecTab;
+typedef struct MOut MOut;
+typedef struct MStr MStr;
+typedef struct MSec MSec;
+typedef struct MSym MSym;
+typedef struct MObj MObj;
+typedef struct MachLinker MachLinker;
+typedef struct Trie Trie;
+typedef struct Link Link;
 typedef struct Project Project;
 typedef struct Toml Toml;
 typedef struct BuildSpec BuildSpec;
@@ -123,6 +142,8 @@ struct TypeNode {
     const char* size;
     int32_t line;
     int32_t col;
+    TypeNode* args;
+    TypeNode* next;
 };
 struct Expr {
     ExprKind kind;
@@ -190,6 +211,7 @@ struct Decl {
     int64_t module;
     bool is_foreign;
     Expr* init;
+    const char* link_name;
 };
 struct Module {
     const char* name;
@@ -213,6 +235,8 @@ struct Parser {
     int64_t err_col;
     const char* err_msg;
     int64_t depth;
+    const char* target_os;
+    const char* target_arch;
 };
 struct LoadResult {
     Program prog;
@@ -229,6 +253,7 @@ struct Type {
     TCat cat;
     const char* name;
     Type* elem;
+    TypeNode* sig;
 };
 struct VarInfo {
     const char* name;
@@ -330,6 +355,7 @@ struct LvalueResult {
 };
 struct Codegen {
     Array parts;
+    int64_t fn_slot;
     bool had_error;
     bool no_main;
     Array regions;
@@ -362,6 +388,7 @@ struct Ins {
     int64_t imm2;
     const char* sym;
     Array args;
+    Array arg_bytes;
 };
 struct IrSlot {
     int64_t size;
@@ -374,7 +401,9 @@ struct IrFunc {
     Array slots;
     Array code;
     Array param_types;
+    Array param_bytes;
     int64_t ret_ty;
+    int64_t ret_spec;
     int64_t labels;
 };
 struct IrData {
@@ -452,6 +481,7 @@ struct Lower {
     TypeNode* ret_type;
     int64_t sret;
     int64_t fn_index;
+    int64_t ind;
 };
 struct FieldRef {
     bool found;
@@ -473,12 +503,13 @@ struct RegSet {
     int64_t int_scratch;
     int64_t float_scratch;
 };
-struct X64 {
+struct A64 {
     Array out;
     Array data;
     int64_t floats;
     int64_t fnum;
     int64_t loops;
+    bool far;
     Array loc;
     Array isreg;
     Array lazy;
@@ -487,13 +518,26 @@ struct X64 {
     Array nuse;
     Array slot_off;
     Array saved;
-    int64_t save_base;
+    Array save_off;
 };
-struct NativeResult {
-    bool ok;
-    const char* why;
-    const char* asm_text;
-    const char* ir;
+struct MemRef {
+    int64_t base;
+    int64_t off;
+};
+struct APlace {
+    Array kind;
+    Array at;
+    int64_t stack;
+};
+struct AOp {
+    int64_t kind;
+    int64_t reg;
+    int64_t size;
+    bool fp;
+    bool sp;
+    int64_t imm;
+    bool pre;
+    const char* sym;
 };
 struct ObjReloc {
     int64_t section;
@@ -517,14 +561,6 @@ struct ObjFile {
     Array relocs;
     Array symbols;
 };
-struct Opnd {
-    int64_t kind;
-    int64_t reg;
-    int64_t size;
-    int64_t imm;
-    int64_t base;
-    const char* sym;
-};
 struct Fix {
     int64_t pos;
     const char* label;
@@ -534,6 +570,7 @@ struct Fix {
 };
 struct Asm {
     ObjFile o;
+    const char* arch;
     int64_t sec;
     Array lnames;
     Array lsec;
@@ -543,6 +580,38 @@ struct Asm {
     Array fixes;
     NameIdx sidx;
     int64_t line;
+    const char* text;
+};
+struct X64 {
+    bool direct;
+    Asm as;
+    Array out;
+    Array data;
+    int64_t floats;
+    int64_t fnum;
+    int64_t loops;
+    Array loc;
+    Array isreg;
+    Array lazy;
+    Array lval;
+    Array lsym;
+    Array nuse;
+    Array slot_off;
+    Array saved;
+    int64_t save_base;
+};
+struct Opnd {
+    int64_t kind;
+    int64_t reg;
+    int64_t size;
+    int64_t imm;
+    int64_t base;
+    const char* sym;
+};
+struct NativeResult {
+    bool ok;
+    const char* why;
+    ObjFile obj;
     const char* text;
 };
 struct Out {
@@ -638,6 +707,115 @@ struct Member {
     const char* name;
     Array data;
 };
+struct EOut {
+    Array b;
+};
+struct StrTab {
+    Array b;
+};
+struct ESec {
+    int64_t obj;
+    const char* name;
+    int64_t out;
+    int64_t raw;
+    int64_t size;
+    int64_t align;
+    int64_t at;
+};
+struct ESym {
+    const char* name;
+    int64_t value;
+    int64_t shndx;
+    int64_t bind;
+};
+struct EObj {
+    const char* name;
+    Array b;
+    int64_t first;
+    int64_t nsec;
+    Array syms;
+    Array rela_at;
+    Array rela_n;
+    Array rela_to;
+};
+struct ElfLinker {
+    bool ok;
+    const char* err;
+    Array objs;
+    Array secs;
+    Array gname;
+    Array gsec;
+    Array gval;
+    NameIdx gidx;
+    Array osize;
+    Array oaddr;
+    Array needed;
+    Array imports;
+};
+struct SecTab {
+    Array h;
+};
+struct MOut {
+    Array b;
+};
+struct MStr {
+    Array b;
+};
+struct MSec {
+    int64_t obj;
+    const char* seg;
+    const char* name;
+    int64_t addr;
+    int64_t size;
+    int64_t raw;
+    int64_t align;
+    int64_t reloff;
+    int64_t nreloc;
+    int64_t flags;
+    int64_t out;
+    int64_t at;
+};
+struct MSym {
+    const char* name;
+    int64_t typ;
+    int64_t sect;
+    int64_t value;
+};
+struct MObj {
+    const char* name;
+    Array b;
+    int64_t first;
+    int64_t nsec;
+    Array syms;
+};
+struct MachLinker {
+    bool ok;
+    const char* err;
+    Array objs;
+    Array secs;
+    Array gname;
+    Array gobj;
+    Array gsym;
+    Array gaddr;
+    NameIdx gidx;
+    Array dylibs;
+    Array imports;
+    Array osize;
+    Array oaddr;
+};
+struct Trie {
+    Array parent;
+    Array ch;
+    Array addr;
+    Array term;
+    Array off;
+};
+struct Link {
+    const char* os;
+    Linker* win;
+    ElfLinker* lin;
+    MachLinker* mac;
+};
 struct Project {
     bool ok;
     const char* file;
@@ -694,7 +872,7 @@ void idx_add(NameIdx* x, const char* key, int64_t k);
 int64_t idx_first(NameIdx* x, const char* key);
 int64_t slice_hash(const char* s, int64_t start, int64_t n, int64_t mask);
 int64_t idx_next(NameIdx* x, int64_t k);
-bool lexer__is_digit(char c);
+bool is_digit(char c);
 bool is_hex(char c);
 bool is_ident_start(char c);
 bool is_ident_part(char c);
@@ -707,7 +885,7 @@ bool same_slice(const char* s, int64_t start, int64_t n, const char* w);
 const char* intern(Lexer* l, int64_t start, int64_t n);
 Token make(Lexer* l, TokKind kind);
 Token make_text(Lexer* l, TokKind kind, const char* text);
-Token lexer__fail(Lexer* l);
+Token fail(Lexer* l);
 void skip_trivia(Lexer* l);
 bool valid_escape(char e, char quote);
 const char* literal_body(Lexer* l);
@@ -725,6 +903,11 @@ Expr* new_expr(ExprKind k, int64_t line, int64_t col);
 Stmt* new_stmt(StmtKind k, int64_t line, int64_t col);
 Decl* new_decl(DeclKind k, int64_t line, int64_t col);
 Module new_module(const char* name, const char* path, const char* file);
+const char* target_os(void);
+const char* target_arch(void);
+const char* target_name(void);
+bool target_is_host(void);
+bool set_target(const char* name);
 Parser new_parser(Array toks);
 Token p_peek(Parser* p);
 Token p_peek_at(Parser* p, int64_t off);
@@ -739,6 +922,7 @@ void p_unexpected(Parser* p);
 Token p_expect(Parser* p, TokKind k);
 void skip_newlines(Parser* p);
 TypeNode* parse_type(Parser* p);
+TypeNode* parse_fn_type(Parser* p);
 int64_t skip_type_at(Parser* p, int64_t i);
 bool looks_like_typed_decl(Parser* p);
 bool looks_like_func(Parser* p);
@@ -754,6 +938,11 @@ Decl* foreign_const(Parser* p);
 bool at_foreign(Parser* p);
 void foreign_block(Parser* p, Array* decls, bool exported);
 Program parse_program(Parser* p);
+void top_item(Parser* p, Array* decls_out, Array* main_out);
+bool at_when(Parser* p);
+bool when_value(Parser* p, Expr* e);
+void when_top(Parser* p, Array* decls, Array* main);
+Stmt* when_stmt(Parser* p);
 Stmt* block(Parser* p);
 Stmt* var_decl_core(Parser* p);
 Stmt* expr_or_assign_core(Parser* p);
@@ -790,6 +979,7 @@ const char* module_rel_path(const char* name);
 void ld_error(Loader* ld, const char* file, int64_t line, int64_t col, const char* msg);
 int64_t ld_find(Loader* ld, const char* path);
 int64_t ld_module(Loader* ld, const char* path, const char* file, const char* name, bool is_root);
+void ld_part(Loader* ld, int64_t idx, const char* path, const char* file, bool is_root);
 LoadResult load_program(const char* path);
 LoadResult load_program_text(const char* path, const char* text);
 LoadResult load_program_impl(const char* path, bool has_text, const char* text);
@@ -797,11 +987,15 @@ Type* ty(TCat c, const char* n);
 Type* ty_arr(Type* e);
 Type* ty_dynarr(Type* e);
 Type* ty_ptr(Type* e);
+Type* ty_fn(TypeNode* sig);
+const char* elem_str(TypeNode* t);
+const char* node_str(TypeNode* t);
 bool t_is_numeric(Type* t);
 bool t_is_integer(Type* t);
 bool t_is_unknown(Type* t);
 bool t_ordered(Type* t);
 const char* t_str(Type* t);
+const char* t_elem_str(Type* t);
 TypeNode* named_node(const char* n);
 TypeNode* type_to_node(Type* t);
 void ck_error(Checker* c, int64_t line, int64_t col, const char* msg);
@@ -838,6 +1032,9 @@ Type* ck_expr_as(Checker* c, Expr* e, Type* target);
 Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt);
 Type* ck_expr_i(Checker* c, Expr* e);
 Type* ck_call(Checker* c, Expr* e);
+Type* ck_call_ind(Checker* c, Expr* e, Type* ft);
+Type* ck_fn_field(Checker* c, Type* recv, const char* name);
+TypeNode* func_node(Checker* c, int64_t fi);
 void ck_block(Checker* c, Stmt* b);
 void ck_stmt(Checker* c, Stmt* s);
 void ck_func(Checker* c, Decl* f, int64_t fi);
@@ -851,6 +1048,7 @@ void ck_note_name(Checker* c, const char* name, int64_t module, bool exported, i
 void ck_name_conflicts(Checker* c);
 bool ck_check(Checker* c, Program prog);
 Checker* new_checker(const char* file);
+const char* link_label(Decl* d);
 Codegen new_codegen(void);
 const char* region_frees(Codegen* cg, int64_t from, int64_t ind);
 void loop_enter(Codegen* cg);
@@ -864,6 +1062,9 @@ const char* cg_strip_us(const char* s);
 const char* cg_escape(const char* s);
 const char* cname(const char* n);
 const char* ty_to_c(TypeNode* t);
+void fn_reset(void);
+const char* fn_typedef(TypeNode* t);
+const char* fn_typedefs(void);
 bool cg_is_vec_name(const char* n);
 int64_t cg_vec_size(const char* n);
 bool cg_is_vec_rt(TypeNode* t);
@@ -935,6 +1136,27 @@ bool abi_small(int64_t size);
 int64_t abi_int_of(int64_t size);
 int64_t abi_pass_ty(TInfo ti);
 bool abi_sret(TInfo ti);
+bool sysv(void);
+int64_t sse_class(void);
+int64_t int_class(void);
+void mark(Array* c, int64_t off, int64_t cls);
+void classify(Lower* l, TypeNode* t, int64_t base, Array* c);
+int64_t abi_ret_spec(Lower* l, TypeNode* t, TInfo ti);
+int64_t spec_halves(int64_t spec);
+int64_t spec_class(int64_t spec, int64_t k);
+int64_t spec_ints(int64_t spec);
+bool aapcs(void);
+int64_t stk_hfa(void);
+void hfa_walk(Lower* l, TypeNode* t, Array* st);
+int64_t aapcs_spec(Lower* l, TypeNode* t, TInfo ti);
+bool spec_hfa(int64_t spec);
+int64_t spec_count(int64_t spec);
+int64_t spec_elem(int64_t spec);
+int64_t spec_step(int64_t spec);
+const char* link_sym(Decl* d);
+LVal call_aapcs(Lower* l, Decl* d, Expr* e);
+void lower_params_aapcs(Lower* l, Decl* d, TInfo ri);
+LVal call_sysv(Lower* l, Decl* d, Expr* e);
 int64_t vreg(Lower* l, int64_t ty);
 void emit(Lower* l, Ins i);
 int64_t iconst(Lower* l, int64_t ty, int64_t value);
@@ -949,11 +1171,12 @@ void copy_mem(Lower* l, int64_t dst, int64_t src, int64_t size);
 void zero_mem(Lower* l, int64_t dst, int64_t size);
 int64_t temp(Lower* l, int64_t size, int64_t align);
 int64_t addr_plus(Lower* l, int64_t addr, int64_t off);
-void label(Lower* l, int64_t n);
+void lower__label(Lower* l, int64_t n);
 void jump(Lower* l, int64_t n);
 void branch(Lower* l, int64_t cond, int64_t then_l, int64_t else_l);
 int64_t new_label(Lower* l);
 int64_t call(Lower* l, const char* name, int64_t ret, Array args);
+int64_t call_at(Lower* l, const char* name, int64_t ret, Array args, int64_t target);
 int64_t call0(Lower* l, const char* name, int64_t ret);
 int64_t call1(Lower* l, const char* name, int64_t ret, int64_t x);
 int64_t call2(Lower* l, const char* name, int64_t ret, int64_t x, int64_t y);
@@ -971,7 +1194,7 @@ int64_t parse_int(const char* s);
 int64_t char_val(const char* s);
 const char* strip_us(const char* s);
 const char* string_data(Lower* l, const char* text);
-int64_t sym_addr(Lower* l, const char* sym);
+int64_t lower__sym_addr(Lower* l, const char* sym);
 int64_t lower__find_global(Lower* l, const char* name);
 int64_t lower__string_lit(Lower* l, const char* text);
 void push_scope(Lower* l);
@@ -1014,6 +1237,7 @@ Decl* find_func(Lower* l, const char* name);
 LVal lower_args_f32(Lower* l, Expr* e, int64_t i);
 int64_t vec_addr(Lower* l, Expr* e, int64_t line);
 int64_t vec_dot(Lower* l, int64_t a, int64_t b, int64_t n);
+LVal call_indirect(Lower* l, Expr* e);
 LVal lower_call(Lower* l, Expr* e);
 bool is_math_builtin(const char* nm);
 LVal lower_math_builtin(Lower* l, Expr* e, const char* nm);
@@ -1031,6 +1255,7 @@ void lower_return(Lower* l, Stmt* s);
 void begin_function(Lower* l, const char* name, bool global);
 int64_t param(Lower* l, int64_t ty, int64_t index);
 void lower_function(Lower* l, Decl* d);
+void lower_params_sysv(Lower* l, Decl* d, TInfo ri);
 void lower_main(Lower* l, Program prog);
 Lower* new_lower(void);
 bool lower_program(Lower* l, Program prog, bool with_main);
@@ -1067,66 +1292,198 @@ bool has(Array* set, int64_t base, int64_t v);
 void add(Array* set, int64_t base, int64_t v);
 Array reads(Ins i);
 Array alloc_regs(IrFunc* f, RegSet rs, Array skip);
-X64 new_x64(void);
-void out(X64* x, const char* s);
-void out_label(X64* x, const char* s);
-int64_t x64__align_to(int64_t n, int64_t a);
+A64 new_a64(void);
+int64_t arch_arm64__align_to(int64_t n, int64_t a);
+void ins(A64* x, const char* s);
+void arch_arm64__label(A64* x, const char* name);
+const char* xr(int64_t n);
+const char* wr(int64_t n);
+const char* dr(int64_t n);
+const char* sr(int64_t n);
+const char* fr(int64_t ty, int64_t n);
+const char* imm_text(int64_t v);
+RegSet arm64_regs(void);
+int64_t hw_of(int64_t k);
+bool is_freg(int64_t k);
+bool arch_arm64__in_reg(A64* x, int64_t v);
+int64_t arch_arm64__reg_of(A64* x, int64_t v);
+void add_off(A64* x, int64_t rd, int64_t base, int64_t off);
+void ldst(A64* x, const char* mn, const char* mnu, const char* reg, int64_t base, int64_t off, int64_t size);
+void ldr_x(A64* x, int64_t r, int64_t base, int64_t off);
+void str_x(A64* x, int64_t r, int64_t base, int64_t off);
+void ldr_f(A64* x, int64_t ty, int64_t r, int64_t base, int64_t off);
+void str_f(A64* x, int64_t ty, int64_t r, int64_t base, int64_t off);
+void mov_imm(A64* x, int64_t rd, int64_t v);
+int64_t imm_moves(int64_t v);
+void arch_arm64__sym_addr(A64* x, int64_t rd, const char* sym);
+void iget(A64* x, int64_t v, int64_t r);
+int64_t isrc(A64* x, int64_t v, int64_t scratch);
+void iput(A64* x, int64_t r, int64_t v);
+int64_t idst(A64* x, int64_t v, int64_t scratch);
+void arch_arm64__fget(A64* x, int64_t ty, int64_t v, int64_t r);
+int64_t fsrc(A64* x, int64_t ty, int64_t v, int64_t scratch);
+void arch_arm64__fput(A64* x, int64_t ty, int64_t r, int64_t v);
+int64_t fdst(A64* x, int64_t v, int64_t scratch);
+void arch_arm64__norm(A64* x, int64_t ty, int64_t r);
+MemRef arch_arm64__mem_at(A64* x, int64_t a, int64_t off);
+const char* arch_arm64__float_const(A64* x, int64_t ty, const char* text);
+const char* arch_arm64__as_text(const char* s);
+const char* arch_arm64__lbl(A64* x, int64_t n);
+const char* new_local(A64* x);
+const char* arch_arm64__cc_of(int64_t cond, bool is_unsigned);
+const char* fcc_of(int64_t cond);
+const char* inv_cc(const char* c);
+void bcond(A64* x, const char* cc, const char* target);
+void arch_arm64__branch_cc(A64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next);
+void cmp_ints(A64* x, int64_t a, int64_t b);
+void cmp_floats(A64* x, int64_t ty, int64_t a, int64_t b);
+void arch_arm64__cmp_branch(A64* x, Ins i, int64_t t, int64_t e, int64_t next);
+void arch_arm64__copy_bytes(A64* x, int64_t size, bool zero);
+const char* load_mn(int64_t ty);
+const char* unscaled(const char* mn);
+bool load_w(int64_t ty);
+void arch_arm64__emit_ins(A64* x, IrFunc* f, int64_t k, const char* epilogue);
+void arch_arm64__float_op(A64* x, Ins i, const char* fop);
+void arch_arm64__emit_conv(A64* x, Ins i);
+int64_t hfa_mark(void);
+APlace place_args(Array types, Array bytes);
+APlace param_places(IrFunc* f);
+APlace call_places(IrFunc* f, Ins i);
+void arch_arm64__emit_param(A64* x, IrFunc* f, Ins i);
+void load_spec(A64* x, int64_t spec, int64_t buf);
+void store_spec(A64* x, int64_t spec, int64_t buf);
+void arch_arm64__emit_call(A64* x, IrFunc* f, Ins i);
+void arch_arm64__find_lazy(A64* x, IrFunc* f);
+Array arm64_lazy(IrFunc* f);
+void arm64_function(A64* x, IrFunc* f, Array regs);
+void arm64_begin(A64* x);
+void arch_arm64__dline(A64* x, const char* s);
+void arm64_global(A64* x, IrGlobal g);
+const char* arm64_finish(A64* x, IrProgram* prog);
+AOp no_op(void);
+const char* a_trim(const char* s);
+bool all_digits(const char* s, int64_t from);
+int64_t digits_of(const char* s, int64_t from);
+bool parse_areg(const char* s, AOp* o);
+int64_t a_imm(Asm* a, const char* s);
+int64_t cond_code(const char* c);
+bool arch_arm64__ends_with(const char* s, const char* t);
+AOp parse_aop(Asm* a, const char* s);
+void arm64_instruction(Asm* a, const char* mn, Array ops);
+void word(Asm* a, int64_t w);
+bool isreg(AOp o);
+bool isfreg(AOp o);
+int64_t sf(AOp o);
+void need_n(Asm* a, int64_t have, int64_t n);
+int64_t ldst_bits(const char* base, AOp rt, int64_t* opc, int64_t* v);
+void enc_ldst(Asm* a, const char* mn, Array o);
+void enc_pair(Asm* a, const char* mn, Array o);
+void enc_addsub(Asm* a, int64_t op, int64_t s, AOp rd, AOp rn, Array o, int64_t third);
+void enc_logic(Asm* a, int64_t opc, int64_t n, AOp rd, AOp rn, AOp rm);
+void enc_bfm(Asm* a, int64_t opc, AOp rd, AOp rn, int64_t immr, int64_t imms);
+int64_t ftype(AOp r);
+void arm64_encode(Asm* a, const char* mn, Array o);
+int64_t read32(Asm* a, int64_t at);
+void arm64_fixup(Asm* a, Fix f, int64_t li);
+int64_t arm64_nop(void);
+void asm_fail(Asm* a, const char* msg);
+bool asm__is_space(char c);
+const char* asm__trim(const char* s);
+bool asm_digit(char c);
+int64_t asm_num(Asm* a, const char* s);
+Array split_operands(const char* s);
+int64_t asm_pos(Asm* a);
+void asm_byte(Asm* a, int64_t v);
+void asm_bytes(Asm* a, int64_t v, int64_t n);
+void asm_fix(Asm* a, const char* label, int64_t addend, int64_t after);
+void asm_patch(Asm* a, int64_t at, int64_t v, int64_t n);
+void asm__align_to(Asm* a, int64_t n);
+void asciz(Asm* a, const char* q);
+void directive(Asm* a, const char* s);
+void asm_label_here(Asm* a, const char* name);
+int64_t asm_label(Asm* a, const char* name);
+int64_t asm_symbol(Asm* a, const char* name, int64_t section, int64_t value);
+void patch64_data(Asm* a, int64_t at, int64_t v);
+ObjFile assemble(const char* src, const char* arch);
+Asm asm_new(const char* arch, int64_t size_hint);
+void asm_line(Asm* a, const char* line);
+ObjFile asm_finish(Asm* a_in);
+X64 new_x64(bool direct, int64_t size_hint);
+int64_t arch_x64__align_to(int64_t n, int64_t a);
+Opnd hw(int64_t r, int64_t size);
+Opnd rax(void);
+Opnd rcx(void);
+Opnd rdx(void);
+Opnd rsp(void);
+Opnd rbp(void);
+Opnd r8(void);
+Opnd r11(void);
+Opnd xmm(int64_t n);
+Opnd imm(int64_t v);
+Opnd mem(int64_t base, int64_t disp);
+Opnd rip(const char* sym, int64_t off);
+Opnd target(const char* name);
+Opnd sized(Opnd r, int64_t size);
+bool same(Opnd a, Opnd b);
+const char* reg_text(int64_t r, int64_t size);
+const char* opnd_text(Opnd o);
+void ins2(X64* x, const char* mn, Opnd s, Opnd d);
+void ins1(X64* x, const char* mn, Opnd o);
+void ins0(X64* x, const char* mn);
+void arch_x64__label(X64* x, const char* name);
+void arch_x64__dline(X64* x, const char* s);
 RegSet x64_regs(void);
 int64_t x64_int_regs(void);
 int64_t x64_saved_regs(void);
-const char* reg_name(int64_t k);
-bool in_reg(X64* x, int64_t v);
-int64_t reg_of(X64* x, int64_t v);
-const char* opnd(X64* x, int64_t v);
-const char* sub_reg(const char* r, int64_t size);
+Opnd alloc_reg(int64_t k);
+bool arch_x64__in_reg(X64* x, int64_t v);
+int64_t arch_x64__reg_of(X64* x, int64_t v);
+Opnd opnd(X64* x, int64_t v);
 const char* fsuf(int64_t ty);
-const char* slot_mem(X64* x, int64_t slot, int64_t off);
-const char* src(X64* x, int64_t v);
-void get(X64* x, int64_t v, const char* r);
-void put(X64* x, const char* r, int64_t v);
-void fget(X64* x, int64_t ty, int64_t v, const char* r);
-void fput(X64* x, int64_t ty, const char* r, int64_t v);
-const char* mem_at(X64* x, int64_t a, int64_t off);
-const char* work(X64* x, Ins i);
-void norm(X64* x, int64_t ty, const char* r);
+Opnd slot_mem(X64* x, int64_t slot, int64_t off);
+Opnd src(X64* x, int64_t v);
+void get(X64* x, int64_t v, Opnd r);
+void put(X64* x, Opnd r, int64_t v);
+void arch_x64__fget(X64* x, int64_t ty, int64_t v, Opnd r);
+void arch_x64__fput(X64* x, int64_t ty, Opnd r, int64_t v);
+Opnd arch_x64__mem_at(X64* x, int64_t a, int64_t off);
+Opnd work(X64* x, Ins i);
+void arch_x64__norm(X64* x, int64_t ty, Opnd r);
 bool fits32(int64_t v);
-const char* float_const(X64* x, int64_t ty, const char* text);
-const char* as_text(const char* s);
-const char* lbl(X64* x, int64_t n);
-const char* int_reg_arg(int64_t i);
-const char* cc_of(int64_t cond, bool is_unsigned);
+const char* arch_x64__float_const(X64* x, int64_t ty, const char* text);
+const char* arch_x64__as_text(const char* s);
+const char* arch_x64__lbl(X64* x, int64_t n);
+Opnd sysv_int_arg(int64_t i);
+Opnd int_reg_arg(int64_t i);
+const char* arch_x64__cc_of(int64_t cond, bool is_unsigned);
 int64_t invert(int64_t cond);
-void copy_bytes(X64* x, int64_t size, bool zero);
+void arch_x64__copy_bytes(X64* x, int64_t size, bool zero);
 const char* load_insn(int64_t ty);
-void branch_cc(X64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next);
-void cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next);
-void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue);
-void float_op(X64* x, Ins i, const char* fop);
+void arch_x64__branch_cc(X64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next);
+void arch_x64__cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next);
+void arch_x64__emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue);
+void arch_x64__float_op(X64* x, Ins i, const char* fop);
 void emit_cmp(X64* x, Ins i);
-void emit_conv(X64* x, Ins i);
-void emit_param(X64* x, Ins i);
-void emit_call(X64* x, IrFunc* f, Ins i);
-void find_lazy(X64* x, IrFunc* f);
+void arch_x64__emit_conv(X64* x, Ins i);
+int64_t sysv_place(IrFunc* f, int64_t k, int64_t* where);
+void emit_param_sysv(X64* x, IrFunc* f, Ins i);
+void arch_x64__emit_param(X64* x, Ins i);
+int64_t sysv_stack_bytes(IrFunc* f, Ins i);
+void emit_call_sysv(X64* x, IrFunc* f, Ins i);
+void call_insn(X64* x, Ins i);
+void arch_x64__emit_call(X64* x, IrFunc* f, Ins i);
+void arch_x64__find_lazy(X64* x, IrFunc* f);
 Array x64_lazy(IrFunc* f);
 void x64_function(X64* x, IrFunc* f, Array regs);
 void x64_begin(X64* x);
 void x64_global(X64* x, IrGlobal g);
+void x64_data(X64* x, IrProgram* prog);
 const char* x64_finish(X64* x, IrProgram* prog);
-const char* native_target_why(const char* os, const char* arch);
-NativeResult native_compile(Program prog, bool with_main, bool optimize_code);
+ObjFile x64_finish_object(X64* x, IrProgram* prog);
 Opnd no_opnd(void);
-void x64asm__fail(Asm* a, const char* msg);
 int64_t legacy_reg(const char* s);
 bool parse_reg(const char* name, Opnd* o);
-bool x64asm__is_space(char c);
-const char* x64asm__trim(const char* s);
-bool x64asm__is_digit(char c);
-int64_t parse_num(Asm* a, const char* s);
 Opnd parse_opnd(Asm* a, const char* s);
-Array split_operands(const char* s);
-int64_t pos(Asm* a);
-void byte(Asm* a, int64_t v);
-void bytes_le(Asm* a, int64_t v, int64_t n);
 bool fits8(int64_t v);
 bool fits32s(int64_t v);
 bool byte_needs_rex(Opnd o);
@@ -1136,17 +1493,18 @@ int64_t cc_code(const char* c);
 int64_t size_of(char c);
 void alu(Asm* a, int64_t d, int64_t size, Opnd src, Opnd dst);
 void mov(Asm* a, int64_t size, Opnd src, Opnd dst);
-void need(Asm* a, Array ops, int64_t n);
-void instruction(Asm* a, const char* mn, Array ops);
-void x64asm__align_to(Asm* a, int64_t n);
-void asciz(Asm* a, const char* q);
-void directive(Asm* a, const char* s);
-void define_label(Asm* a, const char* name);
-int64_t find_label(Asm* a, const char* name);
-int64_t symbol_index(Asm* a, const char* name, int64_t section, int64_t value);
-void patch64_data(Asm* a, int64_t at, int64_t v);
-void patch32(Asm* a, int64_t at, int64_t v);
-ObjFile assemble_x64(const char* src);
+void need(Asm* a, int64_t have, int64_t n);
+void x64_instruction(Asm* a, const char* mn, Array ops);
+void x64_encode(Asm* a, const char* mn, int64_t n, Opnd x, Opnd y);
+void x64_fixup(Asm* a, Fix f, int64_t li);
+int64_t x64_nop(void);
+int64_t view_object(void);
+int64_t view_asm(void);
+int64_t view_ir(void);
+const char* arch_name(const char* host_arch);
+const char* native_target_why(const char* os, const char* arch);
+NativeResult native_compile(Program prog, bool with_main, bool optimize_code, int64_t view);
+NativeResult native_arm64(Lower* l, bool optimize_code, int64_t view, ObjFile none);
 void u8put(Out* o, int64_t v);
 void u16put(Out* o, int64_t v);
 void u32put(Out* o, int64_t v);
@@ -1166,7 +1524,7 @@ const char* rdstr(Array b, int64_t at, int64_t max);
 Linker* new_linker(void);
 int64_t out_of(Linker* l, const char* name, int64_t flags);
 void link_add(Linker* l, const char* name, Array b);
-int64_t pelink__find_global(Linker* l, const char* name);
+int64_t os_windows__find_global(Linker* l, const char* name);
 int64_t find_import(Linker* l, const char* name);
 const char* system_dir(void);
 bool is_x64_dll(const char* path);
@@ -1178,7 +1536,7 @@ const char* import_base(const char* name);
 int64_t reloc_count(Linker* l, LSec s);
 int64_t reloc_first(LSec s);
 void find_imports(Linker* l);
-int64_t pelink__align_up(int64_t n, int64_t a);
+int64_t os_windows__align_up(int64_t n, int64_t a);
 int64_t sec_align(int64_t flags);
 int64_t imports_of(Linker* l, int64_t d);
 ImpLayout import_layout(Linker* l, int64_t start);
@@ -1219,6 +1577,107 @@ void ar_header(Bytes* o, const char* name, int64_t size);
 int64_t even(int64_t n);
 Array import_library(const char* dll, Array names);
 bool name_before(const char* a, const char* b);
+void e8(EOut* o, int64_t v);
+void e16(EOut* o, int64_t v);
+void e32(EOut* o, int64_t v);
+void e64(EOut* o, int64_t v);
+void ezero(EOut* o, int64_t n);
+void ebytes(EOut* o, Array b);
+void epad(EOut* o, int64_t align);
+int64_t rd8(Array b, int64_t at);
+int64_t rd16le(Array b, int64_t at);
+int64_t rd32le(Array b, int64_t at);
+int64_t rd64le(Array b, int64_t at);
+int64_t rd32s(Array b, int64_t at);
+int64_t strtab_add(StrTab* t, const char* s);
+void elf_header(EOut* o, int64_t type, int64_t entry, int64_t phoff, int64_t phnum, int64_t shoff, int64_t shnum, int64_t shstrndx);
+void sec_header(EOut* o, int64_t name, int64_t type, int64_t flags, int64_t offset, int64_t size, int64_t linked, int64_t info, int64_t align, int64_t entsize);
+Array elf_bytes(ObjFile* f);
+bool write_elf(const char* path, ObjFile* f);
+ElfLinker* new_elf_linker(void);
+void ek_fail(ElfLinker* l, const char* msg);
+const char* cstr_at(Array b, int64_t at);
+int64_t out_class(const char* name, int64_t type, int64_t flags);
+int64_t find_eglobal(ElfLinker* l, const char* name);
+void elf_add(ElfLinker* l, const char* name, Array b);
+int64_t esym_addr(ElfLinker* l, int64_t oi, int64_t si);
+void put32le(Array* b, int64_t at, int64_t v);
+void put64le(Array* b, int64_t at, int64_t v);
+int64_t ealign(int64_t n, int64_t a);
+const char* known_soname(const char* name);
+const char* soname_of(Array b);
+bool elf_library(ElfLinker* l, const char* name, Array dirs);
+int64_t elf_hash(const char* s);
+const char* start_stub(bool dynamic);
+const char* syscall_stub(void);
+void find_elf_imports(ElfLinker* l);
+bool elf_link_exe(ElfLinker* l, const char* path);
+bool elf_link_so(ElfLinker* l, const char* path, Array exports);
+int64_t count_abs(ElfLinker* l);
+void sec_add(SecTab* t, int64_t name, int64_t typ, int64_t flags, int64_t off, int64_t size, int64_t lnk, int64_t info, int64_t align, int64_t entsize);
+bool elf_link(ElfLinker* l, const char* path, bool shared, Array exports);
+void m8(MOut* o, int64_t v);
+void m16(MOut* o, int64_t v);
+void m32(MOut* o, int64_t v);
+void m64(MOut* o, int64_t v);
+void mzero(MOut* o, int64_t n);
+void mbytes(MOut* o, Array b);
+void mpad(MOut* o, int64_t align);
+void mbe32(MOut* o, int64_t v);
+void mbe64(MOut* o, int64_t v);
+void mname16(MOut* o, const char* s);
+void uleb(MOut* o, int64_t v);
+int64_t md8(Array b, int64_t at);
+int64_t md16(Array b, int64_t at);
+int64_t md32(Array b, int64_t at);
+int64_t md64(Array b, int64_t at);
+void mput32(Array* b, int64_t at, int64_t v);
+void mput64(Array* b, int64_t at, int64_t v);
+int64_t malign(int64_t n, int64_t a);
+int64_t mstr_add(MStr* t, const char* s);
+const char* macho_name(const char* s);
+const char* strata_name(const char* s);
+int64_t cpu_arm64(void);
+int64_t sec_align_text(void);
+int64_t sec_align_const(void);
+int64_t sec_align_data(void);
+Array macho_bytes(ObjFile* f);
+bool write_macho(const char* path, ObjFile* f);
+int64_t rotr(int64_t x, int64_t n);
+void sha256(Array b, int64_t from, int64_t n, MOut* out);
+MachLinker* new_mach_linker(void);
+void mk_fail(MachLinker* l, const char* msg);
+const char* mcstr(Array b, int64_t at);
+const char* mfixed16(Array b, int64_t at);
+int64_t find_mglobal(MachLinker* l, const char* name);
+int64_t mout_class(const char* seg, const char* name, int64_t flags);
+void mach_add(MachLinker* l, const char* name, Array b);
+const char* system_dylib(const char* name);
+bool mach_library(MachLinker* l, const char* name, Array dirs);
+const char* dylib_id(Array b);
+int64_t msym_addr(MachLinker* l, int64_t oi, int64_t si);
+int64_t mobj_addr(MachLinker* l, int64_t oi, int64_t a);
+void find_mach_imports(MachLinker* l);
+const char* mach_start_stub(void);
+const char* mach_dylib_init(void);
+int64_t trie_child(Trie* t, int64_t n, int64_t c);
+int64_t uleb_size(int64_t v);
+Array export_trie(Array names, Array addrs);
+int64_t lc_str_size(int64_t fixed, const char* s);
+void lc_str(MOut* o, const char* s, int64_t size, int64_t fixed);
+bool mach_link_exe(MachLinker* l, const char* path);
+bool mach_link_dylib(MachLinker* l, const char* path, Array exports);
+bool mach_link(MachLinker* l, const char* path, bool dylib, Array exports);
+Link new_link(const char* os);
+const char* link_target_why(const char* os);
+Array object_bytes(const char* os, ObjFile* o);
+bool write_object(const char* os, const char* path, ObjFile* o);
+void link_object(Link* k, const char* name, Array bytes);
+bool link_lib(Link* k, const char* name, Array dirs);
+Array link_lib_paths(Link* k);
+bool link_failed(Link* k);
+const char* link_error(Link* k);
+bool link_program(Link* k, const char* out, bool dll, Array exports);
 bool is_text_kind(TokKind k);
 const char* pad_left(const char* s, int64_t w);
 const char* pad_right(const char* s, int64_t w);
@@ -1226,6 +1685,7 @@ void print_token(Token t);
 void print_tokens(Array toks);
 const char* repeat2(int64_t n);
 void pr(int64_t ind, const char* s);
+const char* ast_elem_str(TypeNode* t);
 const char* ast_type_str(TypeNode* t);
 void pr_expr(int64_t ind, Expr* e);
 void pr_stmt(int64_t ind, Stmt* s);
@@ -1258,12 +1718,14 @@ Array dll_link_args(const char* out_bin, bool in_rsp);
 Array os_link_args(Program prog, BuildSpec s);
 const char* guard_for(const char* name);
 bool run_build(BuildSpec s, const char* libdir);
-bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text, ObjFile* ob);
+const char* runtime_object(const char* libdir);
+const char* object_fingerprint(ObjFile* o);
+bool native_build(BuildSpec s, const char* libdir, Program prog, ObjFile* ob);
 void write_if_changed(const char* path, const char* text);
 const char* fwd_path(const char* p);
 const char* rsp_arg(const char* p);
 bool run_split_build(BuildSpec s, const char* libdir, Program prog);
-bool ends_with(const char* s, const char* suffix);
+bool build__ends_with(const char* s, const char* suffix);
 Project no_project(void);
 Target resolve_target(const char* arg);
 BuildSpec target_spec(Target t, const char* version, bool release, bool force, bool quiet);
@@ -1283,6 +1745,12 @@ int64_t cmd_run(Target t, const char* libdir, bool release, bool force, const ch
 int64_t cmd_new(const char* name);
 int64_t usage(void);
 int64_t dmm_main(Array args);
+
+static const char* chosen_os = "";
+static const char* chosen_arch = "";
+static Array fn_keys = { 0, 0, 0, sizeof(const char*) };
+static Array fn_defs = { 0, 0, 0, sizeof(const char*) };
+static bool sysv_mode;
 
 NameIdx new_idx(int64_t n) {
     int64_t cap = 16;
@@ -1328,7 +1796,7 @@ int64_t idx_next(NameIdx* x, int64_t k) {
     return (((int64_t*)(x->next).data)[k] - 1);
 }
 
-bool lexer__is_digit(char c) {
+bool is_digit(char c) {
     return ((c >= '0') && (c <= '9'));
 }
 
@@ -1341,7 +1809,7 @@ bool is_ident_start(char c) {
 }
 
 bool is_ident_part(char c) {
-    return (is_ident_start(c) || lexer__is_digit(c));
+    return (is_ident_start(c) || is_digit(c));
 }
 
 bool at_end(Lexer* l) {
@@ -1422,7 +1890,7 @@ Token make_text(Lexer* l, TokKind kind, const char* text) {
     return (Token){kind, text, l->start_line, l->start_col};
 }
 
-Token lexer__fail(Lexer* l) {
+Token fail(Lexer* l) {
     l->had_error = true;
     return (Token){TkError, "", l->start_line, l->start_col};
 }
@@ -1481,19 +1949,19 @@ Token lexer__string_lit(Lexer* l) {
     while ((!at_end(l)) && (peek(l) != '"')) {
         char c = peek(l);
         if (c == '\n') {
-            return lexer__fail(l);
+            return fail(l);
         }
         if (c == '\\') {
             advance(l);
             if (at_end(l) || (!valid_escape(advance(l), '"'))) {
-                return lexer__fail(l);
+                return fail(l);
             }
         } else {
             advance(l);
         }
     }
     if (at_end(l)) {
-        return lexer__fail(l);
+        return fail(l);
     }
     advance(l);
     return (({ __auto_type strata_t5_ = l; __auto_type strata_t6_ = TkString; __auto_type strata_t7_ = literal_body(l); make_text(strata_t5_, strata_t6_, strata_t7_); }));
@@ -1501,16 +1969,16 @@ Token lexer__string_lit(Lexer* l) {
 
 Token char_lit(Lexer* l) {
     if (at_end(l)) {
-        return lexer__fail(l);
+        return fail(l);
     }
     char c = advance(l);
     if (c == '\\') {
         if (at_end(l) || (!valid_escape(advance(l), '\''))) {
-            return lexer__fail(l);
+            return fail(l);
         }
     }
     if (!match(l, '\'')) {
-        return lexer__fail(l);
+        return fail(l);
     }
     return (({ __auto_type strata_t8_ = l; __auto_type strata_t9_ = TkChar; __auto_type strata_t10_ = literal_body(l); make_text(strata_t8_, strata_t9_, strata_t10_); }));
 }
@@ -1531,14 +1999,14 @@ Token number(Lexer* l) {
         }
         return make(l, TkInt);
     }
-    while (lexer__is_digit(peek(l)) || (peek(l) == '_')) {
+    while (is_digit(peek(l)) || (peek(l) == '_')) {
         advance(l);
     }
     bool is_float = false;
-    if ((peek(l) == '.') && lexer__is_digit(peek_next(l))) {
+    if ((peek(l) == '.') && is_digit(peek_next(l))) {
         is_float = true;
         advance(l);
-        while (lexer__is_digit(peek(l)) || (peek(l) == '_')) {
+        while (is_digit(peek(l)) || (peek(l) == '_')) {
             advance(l);
         }
     }
@@ -1548,7 +2016,7 @@ Token number(Lexer* l) {
         if ((peek(l) == '+') || (peek(l) == '-')) {
             advance(l);
         }
-        while (lexer__is_digit(peek(l))) {
+        while (is_digit(peek(l))) {
             advance(l);
         }
     }
@@ -1827,17 +2295,17 @@ Token scan_token(Lexer* l) {
             break;
         }
         default: {
-            if (lexer__is_digit(c)) {
+            if (is_digit(c)) {
                 return number(l);
             }
             if (is_ident_start(c)) {
                 return identifier(l);
             }
-            return lexer__fail(l);
+            return fail(l);
             break;
         }
     }
-    return lexer__fail(l);
+    return fail(l);
 }
 
 bool ends_statement(TokKind k) {
@@ -2277,7 +2745,7 @@ const char* kind_name(TokKind k) {
 }
 
 TypeNode* new_type(TypeKind k, int64_t line, int64_t col) {
-    return ({ TypeNode _v = (TypeNode){k, "", 0, "", line, col}; TypeNode* _p = (TypeNode*)arena_alloc(strata_heap(), sizeof(TypeNode)); *_p = _v; _p; });
+    return ({ TypeNode _v = (TypeNode){k, "", 0, "", line, col, 0, 0}; TypeNode* _p = (TypeNode*)arena_alloc(strata_heap(), sizeof(TypeNode)); *_p = _v; _p; });
 }
 
 Expr* new_expr(ExprKind k, int64_t line, int64_t col) {
@@ -2295,7 +2763,7 @@ Decl* new_decl(DeclKind k, int64_t line, int64_t col) {
     Array params = ({ Array _a = arr_make(sizeof(Param)); _a; });
     Array fields = ({ Array _a = arr_make(sizeof(FieldDef)); _a; });
     Array members = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    return ({ Decl _v = (Decl){k, line, col, "", params, 0, 0, fields, members, "", false, false, 0, false, 0}; Decl* _p = (Decl*)arena_alloc(strata_heap(), sizeof(Decl)); *_p = _v; _p; });
+    return ({ Decl _v = (Decl){k, line, col, "", params, 0, 0, fields, members, "", false, false, 0, false, 0, ""}; Decl* _p = (Decl*)arena_alloc(strata_heap(), sizeof(Decl)); *_p = _v; _p; });
 }
 
 Module new_module(const char* name, const char* path, const char* file) {
@@ -2305,8 +2773,63 @@ Module new_module(const char* name, const char* path, const char* file) {
     return (Module){name, path, file, a, b, v};
 }
 
+const char* target_os(void) {
+    if (str_eq(chosen_os, "")) {
+        return strata_host_os();
+    }
+    return chosen_os;
+}
+
+const char* target_arch(void) {
+    if (str_eq(chosen_arch, "")) {
+        return strata_host_arch();
+    }
+    return chosen_arch;
+}
+
+const char* target_name(void) {
+    const char* a = target_arch();
+    if (str_eq(a, "x86_64")) {
+        a = "x64";
+    }
+    return str_concat(str_concat(target_os(), "-"), a);
+}
+
+bool target_is_host(void) {
+    return ((({ __auto_type strata_t16_ = target_os(); __auto_type strata_t17_ = strata_host_os(); str_eq(strata_t16_, strata_t17_); })) && (({ __auto_type strata_t18_ = target_arch(); __auto_type strata_t19_ = strata_host_arch(); str_eq(strata_t18_, strata_t19_); })));
+}
+
+bool set_target(const char* name) {
+    int64_t dash = (0 - 1);
+    for (int64_t i = 0; i < str_len(name); i++) {
+        if (name[i] == '-') {
+            dash = i;
+        }
+    }
+    if (dash <= 0) {
+        return false;
+    }
+    const char* os = str_sub(name, 0, dash);
+    const char* arch = str_sub(name, (dash + 1), ((str_len(name) - dash) - 1));
+    if ((str_eq(arch, "x64") || str_eq(arch, "x86_64")) || str_eq(arch, "amd64")) {
+        arch = "x86_64";
+    } else 
+    if (str_eq(arch, "aarch64")) {
+        arch = "arm64";
+    }
+    if (((!str_eq(os, "windows")) && (!str_eq(os, "linux"))) && (!str_eq(os, "macos"))) {
+        return false;
+    }
+    if ((!str_eq(arch, "x86_64")) && (!str_eq(arch, "arm64"))) {
+        return false;
+    }
+    chosen_os = os;
+    chosen_arch = arch;
+    return true;
+}
+
 Parser new_parser(Array toks) {
-    return (Parser){toks, 0, false, false, 0, 0, "", 0};
+    return (({ __auto_type strata_t20_ = toks; __auto_type strata_t21_ = target_os(); __auto_type strata_t22_ = target_arch(); (Parser){strata_t20_, 0, false, false, 0, 0, "", 0, strata_t21_, strata_t22_}; }));
 }
 
 Token p_peek(Parser* p) {
@@ -2374,14 +2897,14 @@ void p_error(Parser* p, Token t, const char* msg) {
 }
 
 void p_unexpected(Parser* p) {
-    (({ __auto_type strata_t16_ = p; __auto_type strata_t17_ = p_peek(p); __auto_type strata_t18_ = str_concat("unexpected ", tok_desc(p_peek(p))); p_error(strata_t16_, strata_t17_, strata_t18_); }));
+    (({ __auto_type strata_t23_ = p; __auto_type strata_t24_ = p_peek(p); __auto_type strata_t25_ = str_concat("unexpected ", tok_desc(p_peek(p))); p_error(strata_t23_, strata_t24_, strata_t25_); }));
 }
 
 Token p_expect(Parser* p, TokKind k) {
     if (p_check(p, k)) {
         return p_advance(p);
     }
-    (({ __auto_type strata_t19_ = p; __auto_type strata_t20_ = p_peek(p); __auto_type strata_t21_ = (({ __auto_type strata_t22_ = str_concat(str_concat("expected '", kind_name(k)), "', got "); __auto_type strata_t23_ = tok_desc(p_peek(p)); str_concat(strata_t22_, strata_t23_); })); p_error(strata_t19_, strata_t20_, strata_t21_); }));
+    (({ __auto_type strata_t26_ = p; __auto_type strata_t27_ = p_peek(p); __auto_type strata_t28_ = (({ __auto_type strata_t29_ = str_concat(str_concat("expected '", kind_name(k)), "', got "); __auto_type strata_t30_ = tok_desc(p_peek(p)); str_concat(strata_t29_, strata_t30_); })); p_error(strata_t26_, strata_t27_, strata_t28_); }));
     return p_peek(p);
 }
 
@@ -2393,8 +2916,18 @@ void skip_newlines(Parser* p) {
 
 TypeNode* parse_type(Parser* p) {
     Token nt = p_peek(p);
-    TypeNode* t = new_type(TyNamed, nt.line, nt.col);
-    t->name = p_expect(p, TkIdent).text;
+    TypeNode* t = 0;
+    if ((p_check(p, TkIdent) && str_eq(nt.text, "fn")) && (((Token*)(p->toks).data)[(p->pos + 1)].kind == TkLParen)) {
+        t = parse_fn_type(p);
+    } else 
+    if ((p_check(p, TkLParen) && (((Token*)(p->toks).data)[(p->pos + 1)].kind == TkIdent)) && str_eq(((Token*)(p->toks).data)[(p->pos + 1)].text, "fn")) {
+        p_advance(p);
+        t = parse_type(p);
+        p_expect(p, TkRParen);
+    } else {
+        t = new_type(TyNamed, nt.line, nt.col);
+        t->name = p_expect(p, TkIdent).text;
+    }
     while (p_check(p, TkLBracket) || p_check(p, TkStar)) {
         if (p_check(p, TkLBracket)) {
             p_advance(p);
@@ -2420,11 +2953,81 @@ TypeNode* parse_type(Parser* p) {
     return t;
 }
 
+TypeNode* parse_fn_type(Parser* p) {
+    Token kw = p_advance(p);
+    TypeNode* t = new_type(TyFunc, kw.line, kw.col);
+    p_expect(p, TkLParen);
+    TypeNode* last = 0;
+    if (!p_check(p, TkRParen)) {
+        bool more = true;
+        while (more) {
+            TypeNode* pt = parse_type(p);
+            if (p_check(p, TkIdent)) {
+                p_advance(p);
+            }
+            if (last == 0) {
+                t->args = pt;
+            } else {
+                last->next = pt;
+            }
+            last = pt;
+            more = p_match(p, TkComma);
+        }
+    }
+    p_expect(p, TkRParen);
+    if (p_check(p, TkMinus) && (((Token*)(p->toks).data)[(p->pos + 1)].kind == TkGt)) {
+        p_advance(p);
+        p_advance(p);
+        t->elem = parse_type(p);
+    }
+    return t;
+}
+
 int64_t skip_type_at(Parser* p, int64_t i) {
+    if ((((((Token*)(p->toks).data)[i].kind == TkLParen) && (((Token*)(p->toks).data)[(i + 1)].kind == TkIdent)) && str_eq(((Token*)(p->toks).data)[(i + 1)].text, "fn")) && (((Token*)(p->toks).data)[(i + 2)].kind == TkLParen)) {
+        i = skip_type_at(p, (i + 1));
+        if ((i < 0) || (((Token*)(p->toks).data)[i].kind != TkRParen)) {
+            return (0 - 1);
+        }
+    } else 
     if (((Token*)(p->toks).data)[i].kind != TkIdent) {
         return (0 - 1);
     }
-    i += 1;
+    if (((Token*)(p->toks).data)[i].kind == TkRParen) {
+        i += 1;
+    } else 
+    if (str_eq(((Token*)(p->toks).data)[i].text, "fn") && (((Token*)(p->toks).data)[(i + 1)].kind == TkLParen)) {
+        i += 2;
+        if (((Token*)(p->toks).data)[i].kind != TkRParen) {
+            bool more = true;
+            while (more) {
+                i = skip_type_at(p, i);
+                if (i < 0) {
+                    return (0 - 1);
+                }
+                if (((Token*)(p->toks).data)[i].kind == TkIdent) {
+                    i += 1;
+                }
+                if (((Token*)(p->toks).data)[i].kind == TkComma) {
+                    i += 1;
+                } else {
+                    more = false;
+                }
+            }
+        }
+        if (((Token*)(p->toks).data)[i].kind != TkRParen) {
+            return (0 - 1);
+        }
+        i += 1;
+        if ((((Token*)(p->toks).data)[i].kind == TkMinus) && (((Token*)(p->toks).data)[(i + 1)].kind == TkGt)) {
+            i = skip_type_at(p, (i + 2));
+            if (i < 0) {
+                return (0 - 1);
+            }
+        }
+    } else {
+        i += 1;
+    }
     while ((((Token*)(p->toks).data)[i].kind == TkLBracket) || (((Token*)(p->toks).data)[i].kind == TkStar)) {
         if (((Token*)(p->toks).data)[i].kind == TkStar) {
             i += 1;
@@ -2473,7 +3076,7 @@ Decl* import_decl(Parser* p) {
         const char* path = p_advance(p).text;
         while (p_check(p, TkDot)) {
             p_advance(p);
-            path = (({ __auto_type strata_t24_ = str_concat(path, "."); __auto_type strata_t25_ = p_expect(p, TkIdent).text; str_concat(strata_t24_, strata_t25_); }));
+            path = (({ __auto_type strata_t31_ = str_concat(path, "."); __auto_type strata_t32_ = p_expect(p, TkIdent).text; str_concat(strata_t31_, strata_t32_); }));
         }
         d->path = path;
     } else 
@@ -2485,7 +3088,7 @@ Decl* import_decl(Parser* p) {
         p_advance(p);
         const char* path = "";
         while ((!p_check(p, TkGt)) && (!p_at_end(p))) {
-            path = (({ __auto_type strata_t26_ = path; __auto_type strata_t27_ = p_advance(p).text; str_concat(strata_t26_, strata_t27_); }));
+            path = (({ __auto_type strata_t33_ = path; __auto_type strata_t34_ = p_advance(p).text; str_concat(strata_t33_, strata_t34_); }));
         }
         p_expect(p, TkGt);
         d->path = path;
@@ -2561,7 +3164,7 @@ Decl* global_decl(Parser* p) {
     Token kw = p_advance(p);
     Decl* d = new_decl(DcGlobal, kw.line, kw.col);
     if (p_check(p, TkKwConst)) {
-        (({ __auto_type strata_t28_ = p; __auto_type strata_t29_ = p_peek(p); p_error(strata_t28_, strata_t29_, "a global can't be const yet (use 'global var' or a type)"); }));
+        (({ __auto_type strata_t35_ = p; __auto_type strata_t36_ = p_peek(p); p_error(strata_t35_, strata_t36_, "a global can't be const yet (use 'global var' or a type)"); }));
     }
     Stmt* s = var_decl_core(p);
     d->name = s->name;
@@ -2599,6 +3202,9 @@ Decl* foreign_func(Parser* p) {
         }
     }
     p_expect(p, TkRParen);
+    if (p_match(p, TkAssign)) {
+        fd->link_name = p_expect(p, TkString).text;
+    }
     return fd;
 }
 
@@ -2635,7 +3241,7 @@ void foreign_block(Parser* p, Array* decls, bool exported) {
             p_advance(p);
             const char* path = "";
             while ((!p_check(p, TkGt)) && (!p_at_end(p))) {
-                path = (({ __auto_type strata_t30_ = path; __auto_type strata_t31_ = p_advance(p).text; str_concat(strata_t30_, strata_t31_); }));
+                path = (({ __auto_type strata_t37_ = path; __auto_type strata_t38_ = p_advance(p).text; str_concat(strata_t37_, strata_t38_); }));
             }
             p_expect(p, TkGt);
             inc->path = path;
@@ -2671,6 +3277,19 @@ Program parse_program(Parser* p) {
     Array main = ({ Array _a = arr_make(sizeof(Stmt*)); _a; });
     skip_newlines(p);
     while ((!p_at_end(p)) && (!p->had_error)) {
+        top_item(p, (&decls), (&main));
+        skip_newlines(p);
+    }
+    Array mods = ({ Array _a = arr_make(sizeof(Module)); _a; });
+    return (Program){decls, main, mods};
+}
+
+void top_item(Parser* p, Array* decls_out, Array* main_out) {
+    Array decls = decls_out[0];
+    Array main = main_out[0];
+    if (at_when(p)) {
+        when_top(p, (&decls), (&main));
+    } else {
         bool exported = false;
         if (p_check(p, TkKwExport)) {
             p_advance(p);
@@ -2703,13 +3322,13 @@ Program parse_program(Parser* p) {
         if (exported && p_check(p, TkKwImport)) {
             Decl* d = import_decl(p);
             if (d->kind != DcImport) {
-                (({ __auto_type strata_t32_ = p; __auto_type strata_t33_ = p_prev(p); p_error(strata_t32_, strata_t33_, "only a Strata module can be re-exported ('export import Name')"); }));
+                (({ __auto_type strata_t39_ = p; __auto_type strata_t40_ = p_prev(p); p_error(strata_t39_, strata_t40_, "only a Strata module can be re-exported ('export import Name')"); }));
             }
             d->is_exported = true;
             ({ Decl* _e = d; arr_push(&(decls), &_e); });
         } else 
         if (exported) {
-            (({ __auto_type strata_t34_ = p; __auto_type strata_t35_ = p_peek(p); p_error(strata_t34_, strata_t35_, "'export' must precede a declaration"); }));
+            (({ __auto_type strata_t41_ = p; __auto_type strata_t42_ = p_peek(p); p_error(strata_t41_, strata_t42_, "'export' must precede a declaration"); }));
             p_advance(p);
         } else 
         if (p_check(p, TkKwImport)) {
@@ -2725,10 +3344,137 @@ Program parse_program(Parser* p) {
                 p_advance(p);
             }
         }
-        skip_newlines(p);
     }
-    Array mods = ({ Array _a = arr_make(sizeof(Module)); _a; });
-    return (Program){decls, main, mods};
+    decls_out[0] = decls;
+    main_out[0] = main;
+}
+
+bool at_when(Parser* p) {
+    if ((!p_check(p, TkIdent)) || (!str_eq(p_peek(p).text, "when"))) {
+        return false;
+    }
+    TokKind k = ((Token*)(p->toks).data)[(p->pos + 1)].kind;
+    if ((((k == TkBang) || (k == TkLParen)) || (k == TkKwTrue)) || (k == TkKwFalse)) {
+        return true;
+    }
+    if (k != TkIdent) {
+        return false;
+    }
+    const char* n = ((Token*)(p->toks).data)[(p->pos + 1)].text;
+    return (str_eq(n, "target_os") || str_eq(n, "target_arch"));
+}
+
+bool when_value(Parser* p, Expr* e) {
+    if (e->kind == ExBoolLit) {
+        return e->bval;
+    }
+    if ((e->kind == ExUnary) && str_eq(e->text, "!")) {
+        return (!when_value(p, e->a));
+    }
+    if ((e->kind == ExBinary) && str_eq(e->text, "&&")) {
+        return (when_value(p, e->a) && when_value(p, e->b));
+    }
+    if ((e->kind == ExBinary) && str_eq(e->text, "||")) {
+        return (when_value(p, e->a) || when_value(p, e->b));
+    }
+    if ((e->kind == ExBinary) && (str_eq(e->text, "==") || str_eq(e->text, "!="))) {
+        Expr* name = e->a;
+        Expr* value = e->b;
+        if (name->kind == ExStringLit) {
+            name = e->b;
+            value = e->a;
+        }
+        if (((name->kind == ExName) && (value->kind == ExStringLit)) && (str_eq(name->text, "target_os") || str_eq(name->text, "target_arch"))) {
+            const char* actual = p->target_os;
+            if (str_eq(name->text, "target_arch")) {
+                actual = p->target_arch;
+            }
+            bool same = str_eq(actual, value->text);
+            if (str_eq(e->text, "!=")) {
+                return (!same);
+            }
+            return same;
+        }
+    }
+    Token t = (Token){TkIdent, "", e->line, e->col};
+    p_error(p, t, "a 'when' condition compares target_os or target_arch with a string (==, !=, &&, ||, !)");
+    return false;
+}
+
+void when_top(Parser* p, Array* decls, Array* main) {
+    bool done = false;
+    bool more = true;
+    while (more && (!p->had_error)) {
+        bool take = false;
+        if (p_check(p, TkIdent) && str_eq(p_peek(p).text, "when")) {
+            p_advance(p);
+            take = ((({ __auto_type strata_t43_ = p; __auto_type strata_t44_ = header_expr(p); when_value(strata_t43_, strata_t44_); })) && (!done));
+        } else {
+            take = (!done);
+        }
+        Array skip_decls = ({ Array _a = arr_make(sizeof(Decl*)); _a; });
+        Array skip_main = ({ Array _a = arr_make(sizeof(Stmt*)); _a; });
+        p_expect(p, TkLBrace);
+        skip_newlines(p);
+        while (((!p_check(p, TkRBrace)) && (!p_at_end(p))) && (!p->had_error)) {
+            if (take) {
+                top_item(p, decls, main);
+            } else {
+                top_item(p, (&skip_decls), (&skip_main));
+            }
+            skip_newlines(p);
+        }
+        p_expect(p, TkRBrace);
+        if (take) {
+            done = true;
+        }
+        int64_t save = p->pos;
+        skip_newlines(p);
+        if (p_match(p, TkKwElse)) {
+            more = true;
+            if ((!(p_check(p, TkIdent) && str_eq(p_peek(p).text, "when"))) && (!p_check(p, TkLBrace))) {
+                p_unexpected(p);
+            }
+            if (p_check(p, TkLBrace)) {
+                more = true;
+            }
+        } else {
+            p->pos = save;
+            more = false;
+        }
+    }
+}
+
+Stmt* when_stmt(Parser* p) {
+    Token kw = p_peek(p);
+    Stmt* chosen = new_stmt(StBlock, kw.line, kw.col);
+    bool done = false;
+    bool more = true;
+    while (more && (!p->had_error)) {
+        bool take = false;
+        if (p_check(p, TkIdent) && str_eq(p_peek(p).text, "when")) {
+            p_advance(p);
+            take = ((({ __auto_type strata_t45_ = p; __auto_type strata_t46_ = header_expr(p); when_value(strata_t45_, strata_t46_); })) && (!done));
+        } else {
+            take = (!done);
+        }
+        Stmt* b = block(p);
+        if (take) {
+            chosen = b;
+            done = true;
+        }
+        int64_t save = p->pos;
+        skip_newlines(p);
+        if (p_match(p, TkKwElse)) {
+            if ((!(p_check(p, TkIdent) && str_eq(p_peek(p).text, "when"))) && (!p_check(p, TkLBrace))) {
+                p_unexpected(p);
+            }
+        } else {
+            p->pos = save;
+            more = false;
+        }
+    }
+    return chosen;
 }
 
 Stmt* block(Parser* p) {
@@ -2870,7 +3616,7 @@ Stmt* switch_stmt(Parser* p) {
                 more = p_match(p, TkComma);
             }
         } else {
-            (({ __auto_type strata_t36_ = p; __auto_type strata_t37_ = p_peek(p); __auto_type strata_t38_ = str_concat("expected 'case' or 'default', got ", tok_desc(p_peek(p))); p_error(strata_t36_, strata_t37_, strata_t38_); }));
+            (({ __auto_type strata_t47_ = p; __auto_type strata_t48_ = p_peek(p); __auto_type strata_t49_ = str_concat("expected 'case' or 'default', got ", tok_desc(p_peek(p))); p_error(strata_t47_, strata_t48_, strata_t49_); }));
             return s;
         }
         p_expect(p, TkColon);
@@ -2947,6 +3693,9 @@ Stmt* statement(Parser* p) {
             break;
         }
         default: {
+            if (at_when(p)) {
+                return when_stmt(p);
+            }
             if (looks_like_typed_decl(p)) {
                 return var_decl_core(p);
             }
@@ -2971,8 +3720,8 @@ int64_t max_nesting(void) {
 
 bool nest_enter(Parser* p) {
     p->depth += 1;
-    if (({ __auto_type strata_t39_ = p->depth; __auto_type strata_t40_ = max_nesting(); (strata_t39_ > strata_t40_); })) {
-        (({ __auto_type strata_t41_ = p; __auto_type strata_t42_ = p_peek(p); __auto_type strata_t43_ = str_concat(str_concat("code is nested too deeply (more than ", str_from_int(max_nesting())), " levels)"); p_error(strata_t41_, strata_t42_, strata_t43_); }));
+    if (({ __auto_type strata_t50_ = p->depth; __auto_type strata_t51_ = max_nesting(); (strata_t50_ > strata_t51_); })) {
+        (({ __auto_type strata_t52_ = p; __auto_type strata_t53_ = p_peek(p); __auto_type strata_t54_ = str_concat(str_concat("code is nested too deeply (more than ", str_from_int(max_nesting())), " levels)"); p_error(strata_t52_, strata_t53_, strata_t54_); }));
         p->depth -= 1;
         return false;
     }
@@ -2994,7 +3743,7 @@ Expr* range_expr(Parser* p) {
     Expr* e = or_expr(p);
     if (p_check(p, TkDotDot)) {
         p_advance(p);
-        e = (({ __auto_type strata_t44_ = e; __auto_type strata_t45_ = or_expr(p); make_binary("..", strata_t44_, strata_t45_); }));
+        e = (({ __auto_type strata_t55_ = e; __auto_type strata_t56_ = or_expr(p); make_binary("..", strata_t55_, strata_t56_); }));
     }
     return e;
 }
@@ -3003,7 +3752,7 @@ Expr* or_expr(Parser* p) {
     Expr* e = and_expr(p);
     while (p_check(p, TkPipePipe)) {
         p_advance(p);
-        e = (({ __auto_type strata_t46_ = e; __auto_type strata_t47_ = and_expr(p); make_binary("||", strata_t46_, strata_t47_); }));
+        e = (({ __auto_type strata_t57_ = e; __auto_type strata_t58_ = and_expr(p); make_binary("||", strata_t57_, strata_t58_); }));
     }
     return e;
 }
@@ -3012,7 +3761,7 @@ Expr* and_expr(Parser* p) {
     Expr* e = bit_or(p);
     while (p_check(p, TkAmpAmp)) {
         p_advance(p);
-        e = (({ __auto_type strata_t48_ = e; __auto_type strata_t49_ = bit_or(p); make_binary("&&", strata_t48_, strata_t49_); }));
+        e = (({ __auto_type strata_t59_ = e; __auto_type strata_t60_ = bit_or(p); make_binary("&&", strata_t59_, strata_t60_); }));
     }
     return e;
 }
@@ -3021,7 +3770,7 @@ Expr* bit_or(Parser* p) {
     Expr* e = bit_xor(p);
     while (p_check(p, TkPipe)) {
         p_advance(p);
-        e = (({ __auto_type strata_t50_ = e; __auto_type strata_t51_ = bit_xor(p); make_binary("|", strata_t50_, strata_t51_); }));
+        e = (({ __auto_type strata_t61_ = e; __auto_type strata_t62_ = bit_xor(p); make_binary("|", strata_t61_, strata_t62_); }));
     }
     return e;
 }
@@ -3030,7 +3779,7 @@ Expr* bit_xor(Parser* p) {
     Expr* e = bit_and(p);
     while (p_check(p, TkCaret)) {
         p_advance(p);
-        e = (({ __auto_type strata_t52_ = e; __auto_type strata_t53_ = bit_and(p); make_binary("^", strata_t52_, strata_t53_); }));
+        e = (({ __auto_type strata_t63_ = e; __auto_type strata_t64_ = bit_and(p); make_binary("^", strata_t63_, strata_t64_); }));
     }
     return e;
 }
@@ -3039,7 +3788,7 @@ Expr* bit_and(Parser* p) {
     Expr* e = equality(p);
     while (p_check(p, TkAmp)) {
         p_advance(p);
-        e = (({ __auto_type strata_t54_ = e; __auto_type strata_t55_ = equality(p); make_binary("&", strata_t54_, strata_t55_); }));
+        e = (({ __auto_type strata_t65_ = e; __auto_type strata_t66_ = equality(p); make_binary("&", strata_t65_, strata_t66_); }));
     }
     return e;
 }
@@ -3048,7 +3797,7 @@ Expr* equality(Parser* p) {
     Expr* e = comparison(p);
     while (p_check(p, TkEqEq) || p_check(p, TkBangEq)) {
         const char* op = p_advance(p).text;
-        e = (({ __auto_type strata_t56_ = op; __auto_type strata_t57_ = e; __auto_type strata_t58_ = comparison(p); make_binary(strata_t56_, strata_t57_, strata_t58_); }));
+        e = (({ __auto_type strata_t67_ = op; __auto_type strata_t68_ = e; __auto_type strata_t69_ = comparison(p); make_binary(strata_t67_, strata_t68_, strata_t69_); }));
     }
     return e;
 }
@@ -3057,7 +3806,7 @@ Expr* comparison(Parser* p) {
     Expr* e = shift(p);
     while (((p_check(p, TkLt) || p_check(p, TkLtEq)) || p_check(p, TkGt)) || p_check(p, TkGtEq)) {
         const char* op = p_advance(p).text;
-        e = (({ __auto_type strata_t59_ = op; __auto_type strata_t60_ = e; __auto_type strata_t61_ = shift(p); make_binary(strata_t59_, strata_t60_, strata_t61_); }));
+        e = (({ __auto_type strata_t70_ = op; __auto_type strata_t71_ = e; __auto_type strata_t72_ = shift(p); make_binary(strata_t70_, strata_t71_, strata_t72_); }));
     }
     return e;
 }
@@ -3066,7 +3815,7 @@ Expr* shift(Parser* p) {
     Expr* e = term(p);
     while (p_check(p, TkShl) || p_check(p, TkShr)) {
         const char* op = p_advance(p).text;
-        e = (({ __auto_type strata_t62_ = op; __auto_type strata_t63_ = e; __auto_type strata_t64_ = term(p); make_binary(strata_t62_, strata_t63_, strata_t64_); }));
+        e = (({ __auto_type strata_t73_ = op; __auto_type strata_t74_ = e; __auto_type strata_t75_ = term(p); make_binary(strata_t73_, strata_t74_, strata_t75_); }));
     }
     return e;
 }
@@ -3075,7 +3824,7 @@ Expr* term(Parser* p) {
     Expr* e = factor(p);
     while (p_check(p, TkPlus) || p_check(p, TkMinus)) {
         const char* op = p_advance(p).text;
-        e = (({ __auto_type strata_t65_ = op; __auto_type strata_t66_ = e; __auto_type strata_t67_ = factor(p); make_binary(strata_t65_, strata_t66_, strata_t67_); }));
+        e = (({ __auto_type strata_t76_ = op; __auto_type strata_t77_ = e; __auto_type strata_t78_ = factor(p); make_binary(strata_t76_, strata_t77_, strata_t78_); }));
     }
     return e;
 }
@@ -3084,7 +3833,7 @@ Expr* factor(Parser* p) {
     Expr* e = unary(p);
     while ((p_check(p, TkStar) || p_check(p, TkSlash)) || p_check(p, TkPercent)) {
         const char* op = p_advance(p).text;
-        e = (({ __auto_type strata_t68_ = op; __auto_type strata_t69_ = e; __auto_type strata_t70_ = unary(p); make_binary(strata_t68_, strata_t69_, strata_t70_); }));
+        e = (({ __auto_type strata_t79_ = op; __auto_type strata_t80_ = e; __auto_type strata_t81_ = unary(p); make_binary(strata_t79_, strata_t80_, strata_t81_); }));
     }
     return e;
 }
@@ -3301,7 +4050,7 @@ Expr* primary(Parser* p) {
             break;
         }
         default: {
-            (({ __auto_type strata_t71_ = p; __auto_type strata_t72_ = t; __auto_type strata_t73_ = str_concat("expected an expression, got ", tok_desc(t)); p_error(strata_t71_, strata_t72_, strata_t73_); }));
+            (({ __auto_type strata_t82_ = p; __auto_type strata_t83_ = t; __auto_type strata_t84_ = str_concat("expected an expression, got ", tok_desc(t)); p_error(strata_t82_, strata_t83_, strata_t84_); }));
             p_advance(p);
             return new_expr(ExName, t.line, t.col);
             break;
@@ -3356,7 +4105,7 @@ const char* module_rel_path(const char* name) {
         if (name[i] == '.') {
             rel = str_concat(rel, "/");
         } else {
-            rel = (({ __auto_type strata_t74_ = rel; __auto_type strata_t75_ = str_sub(name, i, 1); str_concat(strata_t74_, strata_t75_); }));
+            rel = (({ __auto_type strata_t85_ = rel; __auto_type strata_t86_ = str_sub(name, i, 1); str_concat(strata_t85_, strata_t86_); }));
         }
     }
     return str_concat(rel, ".strata");
@@ -3364,7 +4113,7 @@ const char* module_rel_path(const char* name) {
 
 void ld_error(Loader* ld, const char* file, int64_t line, int64_t col, const char* msg) {
     ld->had_error = true;
-    strata_report(str_concat(str_concat((({ __auto_type strata_t78_ = str_concat((({ __auto_type strata_t76_ = str_concat(file, ":"); __auto_type strata_t77_ = str_from_int(line); str_concat(strata_t76_, strata_t77_); })), ":"); __auto_type strata_t79_ = str_from_int(col); str_concat(strata_t78_, strata_t79_); })), ": error: "), msg));
+    strata_report(str_concat(str_concat((({ __auto_type strata_t89_ = str_concat((({ __auto_type strata_t87_ = str_concat(file, ":"); __auto_type strata_t88_ = str_from_int(line); str_concat(strata_t87_, strata_t88_); })), ":"); __auto_type strata_t90_ = str_from_int(col); str_concat(strata_t89_, strata_t90_); })), ": error: "), msg));
 }
 
 int64_t ld_find(Loader* ld, const char* path) {
@@ -3383,6 +4132,11 @@ int64_t ld_module(Loader* ld, const char* path, const char* file, const char* na
     }
     int64_t idx = ld->prog.modules.len;
     ({ Module _e = new_module(name, path, file); arr_push(&(ld->prog.modules), &_e); });
+    ld_part(ld, idx, path, file, is_root);
+    return idx;
+}
+
+void ld_part(Loader* ld, int64_t idx, const char* path, const char* file, bool is_root) {
     const char* src = "";
     if (is_root && ld->has_text) {
         src = str_sub(ld->root_text, 0, str_len(ld->root_text));
@@ -3393,9 +4147,9 @@ int64_t ld_module(Loader* ld, const char* path, const char* file, const char* na
     Program part = parse_program((&p));
     strata_array_free(((uint8_t*)((&p.toks))));
     if (p.had_error) {
-        strata_report(str_concat(str_concat((({ __auto_type strata_t82_ = str_concat((({ __auto_type strata_t80_ = str_concat(file, ":"); __auto_type strata_t81_ = str_from_int(p.err_line); str_concat(strata_t80_, strata_t81_); })), ":"); __auto_type strata_t83_ = str_from_int(p.err_col); str_concat(strata_t82_, strata_t83_); })), ": parse error: "), p.err_msg));
+        strata_report(str_concat(str_concat((({ __auto_type strata_t93_ = str_concat((({ __auto_type strata_t91_ = str_concat(file, ":"); __auto_type strata_t92_ = str_from_int(p.err_line); str_concat(strata_t91_, strata_t92_); })), ":"); __auto_type strata_t94_ = str_from_int(p.err_col); str_concat(strata_t93_, strata_t94_); })), ": parse error: "), p.err_msg));
         ld->had_error = true;
-        return idx;
+        return;
     }
     if (is_root) {
         ld->prog.main = part.main;
@@ -3410,8 +4164,11 @@ int64_t ld_module(Loader* ld, const char* path, const char* file, const char* na
         if (d->kind == DcImport) {
             const char* rel = module_rel_path(d->path);
             const char* mpath = str_concat(str_concat(ld->root, "/"), rel);
+            if (!strata_file_exists(mpath)) {
+                mpath = str_concat(str_concat(strata_host_libdir(), "/"), rel);
+            }
             if (str_len(strata_read_file(mpath)) == 0) {
-                ld_error(ld, file, d->line, d->col, str_concat(str_concat(str_concat(str_concat("cannot find module '", d->path), "' (looked for "), rel), " in the project folder)"));
+                ld_error(ld, file, d->line, d->col, str_concat(str_concat(str_concat(str_concat("cannot find module '", d->path), "' (looked for "), rel), " in the project folder and in Strata's lib/)"));
             } else {
                 int64_t m = ld_module(ld, mpath, rel, d->path, false);
                 ({ int64_t _e = m; arr_push(&(((Module*)(ld->prog.modules).data)[idx].imports), &_e); });
@@ -3423,7 +4180,6 @@ int64_t ld_module(Loader* ld, const char* path, const char* file, const char* na
             ({ Decl* _e = d; arr_push(&(ld->prog.decls), &_e); });
         }
     }
-    return idx;
 }
 
 LoadResult load_program(const char* path) {
@@ -3438,25 +4194,70 @@ LoadResult load_program_impl(const char* path, bool has_text, const char* text) 
     Array decls = ({ Array _a = arr_make(sizeof(Decl*)); _a; });
     Array main = ({ Array _a = arr_make(sizeof(Stmt*)); _a; });
     Array mods = ({ Array _a = arr_make(sizeof(Module)); _a; });
-    Loader ld = (({ __auto_type strata_t84_ = (Program){decls, main, mods}; __auto_type strata_t85_ = dirname_of(path); (Loader){strata_t84_, false, strata_t85_, has_text, text}; }));
-    (({ __auto_type strata_t86_ = (&ld); __auto_type strata_t87_ = path; __auto_type strata_t88_ = basename_of(path); __auto_type strata_t89_ = stem_of(basename_of(path)); ld_module(strata_t86_, strata_t87_, strata_t88_, strata_t89_, true); }));
+    Loader ld = (({ __auto_type strata_t95_ = (Program){decls, main, mods}; __auto_type strata_t96_ = dirname_of(path); (Loader){strata_t95_, false, strata_t96_, has_text, text}; }));
+    (({ __auto_type strata_t97_ = (&ld); __auto_type strata_t98_ = path; __auto_type strata_t99_ = basename_of(path); __auto_type strata_t100_ = stem_of(basename_of(path)); ld_module(strata_t97_, strata_t98_, strata_t99_, strata_t100_, true); }));
     return (LoadResult){ld.prog, (!ld.had_error)};
 }
 
 Type* ty(TCat c, const char* n) {
-    return ({ Type _v = (Type){c, n, 0}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
+    return ({ Type _v = (Type){c, n, 0, 0}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
 }
 
 Type* ty_arr(Type* e) {
-    return ({ Type _v = (Type){TcArray, "array", e}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
+    return ({ Type _v = (Type){TcArray, "array", e, 0}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
 }
 
 Type* ty_dynarr(Type* e) {
-    return ({ Type _v = (Type){TcDynArray, "array", e}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
+    return ({ Type _v = (Type){TcDynArray, "array", e, 0}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
 }
 
 Type* ty_ptr(Type* e) {
-    return ({ Type _v = (Type){TcPointer, "pointer", e}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
+    return ({ Type _v = (Type){TcPointer, "pointer", e, 0}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
+}
+
+Type* ty_fn(TypeNode* sig) {
+    return ({ Type _v = (Type){TcFunc, "fn", 0, sig}; Type* _p = (Type*)arena_alloc(strata_heap(), sizeof(Type)); *_p = _v; _p; });
+}
+
+const char* elem_str(TypeNode* t) {
+    if ((t != 0) && (t->kind == TyFunc)) {
+        return str_concat(str_concat("(", node_str(t)), ")");
+    }
+    return node_str(t);
+}
+
+const char* node_str(TypeNode* t) {
+    if (t == 0) {
+        return "void";
+    }
+    if (t->kind == TyPointer) {
+        return str_concat(elem_str(t->elem), "*");
+    }
+    if ((t->kind == TyArray) || (t->kind == TyFixedArray)) {
+        return str_concat(elem_str(t->elem), "[]");
+    }
+    if (t->kind == TyDynArray) {
+        return str_concat(elem_str(t->elem), "[dynamic]");
+    }
+    if (t->kind == TyFunc) {
+        const char* s = "fn(";
+        TypeNode* a = t->args;
+        bool first = true;
+        while (a != 0) {
+            if (!first) {
+                s = str_concat(s, ", ");
+            }
+            s = (({ __auto_type strata_t101_ = s; __auto_type strata_t102_ = node_str(a); str_concat(strata_t101_, strata_t102_); }));
+            first = false;
+            a = a->next;
+        }
+        s = str_concat(s, ")");
+        if ((t->elem != 0) && (!((t->elem->kind == TyNamed) && str_eq(t->elem->name, "void")))) {
+            s = (({ __auto_type strata_t103_ = str_concat(s, " -> "); __auto_type strata_t104_ = node_str(t->elem); str_concat(strata_t103_, strata_t104_); }));
+        }
+        return s;
+    }
+    return t->name;
 }
 
 bool t_is_numeric(Type* t) {
@@ -3530,7 +4331,7 @@ const char* t_str(Type* t) {
         case TcArray:
         {
             if (t->elem != 0) {
-                return str_concat(t_str(t->elem), "[]");
+                return str_concat(t_elem_str(t->elem), "[]");
             }
             return "?[]";
             break;
@@ -3538,7 +4339,7 @@ const char* t_str(Type* t) {
         case TcDynArray:
         {
             if (t->elem != 0) {
-                return str_concat(t_str(t->elem), "[dynamic]");
+                return str_concat(t_elem_str(t->elem), "[dynamic]");
             }
             return "?[dynamic]";
             break;
@@ -3546,9 +4347,14 @@ const char* t_str(Type* t) {
         case TcPointer:
         {
             if (t->elem != 0) {
-                return str_concat(t_str(t->elem), "*");
+                return str_concat(t_elem_str(t->elem), "*");
             }
             return "?*";
+            break;
+        }
+        case TcFunc:
+        {
+            return node_str(t->sig);
             break;
         }
         default: {
@@ -3557,6 +4363,13 @@ const char* t_str(Type* t) {
         }
     }
     return "?";
+}
+
+const char* t_elem_str(Type* t) {
+    if (t->cat == TcFunc) {
+        return str_concat(str_concat("(", t_str(t)), ")");
+    }
+    return t_str(t);
 }
 
 TypeNode* named_node(const char* n) {
@@ -3642,6 +4455,11 @@ TypeNode* type_to_node(Type* t) {
             }
             break;
         }
+        case TcFunc:
+        {
+            return t->sig;
+            break;
+        }
         default: {
             return 0;
             break;
@@ -3656,7 +4474,7 @@ void ck_error(Checker* c, int64_t line, int64_t col, const char* msg) {
     if ((c->cur >= 0) && (c->cur < c->mods.len)) {
         file = ((Module*)(c->mods).data)[c->cur].file;
     }
-    strata_report(str_concat(str_concat((({ __auto_type strata_t92_ = str_concat((({ __auto_type strata_t90_ = str_concat(file, ":"); __auto_type strata_t91_ = str_from_int(line); str_concat(strata_t90_, strata_t91_); })), ":"); __auto_type strata_t93_ = str_from_int(col); str_concat(strata_t92_, strata_t93_); })), ": error: "), msg));
+    strata_report(str_concat(str_concat((({ __auto_type strata_t107_ = str_concat((({ __auto_type strata_t105_ = str_concat(file, ":"); __auto_type strata_t106_ = str_from_int(line); str_concat(strata_t105_, strata_t106_); })), ":"); __auto_type strata_t108_ = str_from_int(col); str_concat(strata_t107_, strata_t108_); })), ": error: "), msg));
 }
 
 bool ck_sees(Checker* c, int64_t owner, bool exported) {
@@ -3903,6 +4721,17 @@ Type* ck_type(Checker* c, TypeNode* t) {
     if (t->kind == TyPointer) {
         return ty_ptr(ck_type(c, t->elem));
     }
+    if (t->kind == TyFunc) {
+        TypeNode* a = t->args;
+        while (a != 0) {
+            ck_type(c, a);
+            a = a->next;
+        }
+        if (t->elem != 0) {
+            ck_type(c, t->elem);
+        }
+        return ty_fn(t);
+    }
     Type* p = ck_prim(t->name);
     if (p != 0) {
         return p;
@@ -3916,6 +4745,14 @@ Type* ck_type(Checker* c, TypeNode* t) {
     if (ei >= 0) {
         t->name = ((EnumInfo*)(c->enums).data)[ei].cname;
         return ty(TcInt, t->name);
+    }
+    if (ck_struct_by_cname(c, t->name) >= 0) {
+        return ty(TcStruct, t->name);
+    }
+    for (int64_t k = 0; k < c->enums.len; k++) {
+        if (str_eq(((EnumInfo*)(c->enums).data)[k].cname, t->name)) {
+            return ty(TcInt, t->name);
+        }
     }
     const char* why = ck_hidden(c, t->name);
     if (!str_eq(why, "")) {
@@ -4042,6 +4879,14 @@ bool ck_assignable(Type* target, Type* value) {
             return (((target->elem != 0) && (value->elem != 0)) && ck_assignable(target->elem, value->elem));
             break;
         }
+        case TcFunc:
+        {
+            if (((value->cat == TcPointer) && (value->elem != 0)) && (value->elem->cat == TcUnknown)) {
+                return true;
+            }
+            return ((value->cat == TcFunc) && (({ __auto_type strata_t109_ = node_str(value->sig); __auto_type strata_t110_ = node_str(target->sig); str_eq(strata_t109_, strata_t110_); })));
+            break;
+        }
         default: {
             return false;
             break;
@@ -4068,6 +4913,12 @@ bool ck_castable(Type* from, Type* to) {
         return true;
     }
     if ((to->cat == TcPointer) && (from->cat == TcInt)) {
+        return true;
+    }
+    if ((from->cat == TcFunc) && (((to->cat == TcPointer) || (to->cat == TcInt)) || (to->cat == TcFunc))) {
+        return true;
+    }
+    if ((to->cat == TcFunc) && ((from->cat == TcPointer) || (from->cat == TcInt))) {
         return true;
     }
     if (((from->cat == TcStr) && (to->cat == TcPointer)) || ((from->cat == TcPointer) && (to->cat == TcStr))) {
@@ -4210,7 +5061,7 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
             if ((lt->cat == TcQuat) && (rt->cat == TcQuat)) {
                 return lt;
             }
-            (({ __auto_type strata_t94_ = c; __auto_type strata_t95_ = e->line; __auto_type strata_t96_ = e->col; __auto_type strata_t97_ = (({ __auto_type strata_t98_ = str_concat(str_concat("'*' is not defined between ", t_str(lt)), " and "); __auto_type strata_t99_ = t_str(rt); str_concat(strata_t98_, strata_t99_); })); ck_error(strata_t94_, strata_t95_, strata_t96_, strata_t97_); }));
+            (({ __auto_type strata_t111_ = c; __auto_type strata_t112_ = e->line; __auto_type strata_t113_ = e->col; __auto_type strata_t114_ = (({ __auto_type strata_t115_ = str_concat(str_concat("'*' is not defined between ", t_str(lt)), " and "); __auto_type strata_t116_ = t_str(rt); str_concat(strata_t115_, strata_t116_); })); ck_error(strata_t111_, strata_t112_, strata_t113_, strata_t114_); }));
             return c->t_unknown;
         }
         ck_error(c, e->line, e->col, "only '*' is defined for matrices/quaternions");
@@ -4221,7 +5072,7 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
             if (((lt->cat == TcVec) && (rt->cat == TcVec)) && str_eq(lt->name, rt->name)) {
                 return lt;
             }
-            (({ __auto_type strata_t100_ = c; __auto_type strata_t101_ = e->line; __auto_type strata_t102_ = e->col; __auto_type strata_t103_ = (({ __auto_type strata_t106_ = str_concat((({ __auto_type strata_t104_ = str_concat(str_concat("'", op), "' requires two vectors of the same size, got "); __auto_type strata_t105_ = t_str(lt); str_concat(strata_t104_, strata_t105_); })), " and "); __auto_type strata_t107_ = t_str(rt); str_concat(strata_t106_, strata_t107_); })); ck_error(strata_t100_, strata_t101_, strata_t102_, strata_t103_); }));
+            (({ __auto_type strata_t117_ = c; __auto_type strata_t118_ = e->line; __auto_type strata_t119_ = e->col; __auto_type strata_t120_ = (({ __auto_type strata_t123_ = str_concat((({ __auto_type strata_t121_ = str_concat(str_concat("'", op), "' requires two vectors of the same size, got "); __auto_type strata_t122_ = t_str(lt); str_concat(strata_t121_, strata_t122_); })), " and "); __auto_type strata_t124_ = t_str(rt); str_concat(strata_t123_, strata_t124_); })); ck_error(strata_t117_, strata_t118_, strata_t119_, strata_t120_); }));
             return c->t_unknown;
         }
         if (str_eq(op, "*")) {
@@ -4234,7 +5085,7 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
             if ((rt->cat == TcVec) && t_is_numeric(lt)) {
                 return rt;
             }
-            (({ __auto_type strata_t108_ = c; __auto_type strata_t109_ = e->line; __auto_type strata_t110_ = e->col; __auto_type strata_t111_ = (({ __auto_type strata_t112_ = str_concat(str_concat("'*' on a vector needs a matching vector or a scalar, got ", t_str(lt)), " and "); __auto_type strata_t113_ = t_str(rt); str_concat(strata_t112_, strata_t113_); })); ck_error(strata_t108_, strata_t109_, strata_t110_, strata_t111_); }));
+            (({ __auto_type strata_t125_ = c; __auto_type strata_t126_ = e->line; __auto_type strata_t127_ = e->col; __auto_type strata_t128_ = (({ __auto_type strata_t129_ = str_concat(str_concat("'*' on a vector needs a matching vector or a scalar, got ", t_str(lt)), " and "); __auto_type strata_t130_ = t_str(rt); str_concat(strata_t129_, strata_t130_); })); ck_error(strata_t125_, strata_t126_, strata_t127_, strata_t128_); }));
             return c->t_unknown;
         }
         ck_error(c, e->line, e->col, str_concat(str_concat("'", op), "' is not defined for vectors"));
@@ -4247,8 +5098,9 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
         return c->t_bool;
     }
     if (str_eq(op, "==") || str_eq(op, "!=")) {
-        if ((((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (lt->cat != rt->cat)) && (!(t_ordered(lt) && t_ordered(rt)))) {
-            (({ __auto_type strata_t114_ = c; __auto_type strata_t115_ = e->line; __auto_type strata_t116_ = e->col; __auto_type strata_t117_ = (({ __auto_type strata_t118_ = str_concat(str_concat("cannot compare ", t_str(lt)), " and "); __auto_type strata_t119_ = t_str(rt); str_concat(strata_t118_, strata_t119_); })); ck_error(strata_t114_, strata_t115_, strata_t116_, strata_t117_); }));
+        bool fn_null = (((lt->cat == TcFunc) && (rt->cat == TcPointer)) || ((lt->cat == TcPointer) && (rt->cat == TcFunc)));
+        if (((((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (lt->cat != rt->cat)) && (!(t_ordered(lt) && t_ordered(rt)))) && (!fn_null)) {
+            (({ __auto_type strata_t131_ = c; __auto_type strata_t132_ = e->line; __auto_type strata_t133_ = e->col; __auto_type strata_t134_ = (({ __auto_type strata_t135_ = str_concat(str_concat("cannot compare ", t_str(lt)), " and "); __auto_type strata_t136_ = t_str(rt); str_concat(strata_t135_, strata_t136_); })); ck_error(strata_t131_, strata_t132_, strata_t133_, strata_t134_); }));
         }
         return c->t_bool;
     }
@@ -4260,18 +5112,18 @@ Type* ck_binary(Checker* c, Expr* e, Type* lt, Type* rt) {
     }
     if (str_eq(op, "+") && ((lt->cat == TcStr) || (rt->cat == TcStr))) {
         if (((!t_is_unknown(lt)) && (!t_is_unknown(rt))) && (!((lt->cat == TcStr) && (rt->cat == TcStr)))) {
-            (({ __auto_type strata_t120_ = c; __auto_type strata_t121_ = e->line; __auto_type strata_t122_ = e->col; __auto_type strata_t123_ = (({ __auto_type strata_t124_ = str_concat(str_concat("cannot concatenate ", t_str(lt)), " and "); __auto_type strata_t125_ = t_str(rt); str_concat(strata_t124_, strata_t125_); })); ck_error(strata_t120_, strata_t121_, strata_t122_, strata_t123_); }));
+            (({ __auto_type strata_t137_ = c; __auto_type strata_t138_ = e->line; __auto_type strata_t139_ = e->col; __auto_type strata_t140_ = (({ __auto_type strata_t141_ = str_concat(str_concat("cannot concatenate ", t_str(lt)), " and "); __auto_type strata_t142_ = t_str(rt); str_concat(strata_t141_, strata_t142_); })); ck_error(strata_t137_, strata_t138_, strata_t139_, strata_t140_); }));
         }
         return c->t_str_;
     }
     if ((((str_eq(op, "|") || str_eq(op, "&")) || str_eq(op, "^")) || str_eq(op, "<<")) || str_eq(op, ">>")) {
         if ((((!t_is_integer(lt)) && (lt->cat != TcChar)) && (!t_is_unknown(lt))) || (((!t_is_integer(rt)) && (rt->cat != TcChar)) && (!t_is_unknown(rt)))) {
-            (({ __auto_type strata_t126_ = c; __auto_type strata_t127_ = e->line; __auto_type strata_t128_ = e->col; __auto_type strata_t129_ = (({ __auto_type strata_t132_ = str_concat((({ __auto_type strata_t130_ = str_concat(str_concat("'", op), "' requires integer operands, got "); __auto_type strata_t131_ = t_str(lt); str_concat(strata_t130_, strata_t131_); })), " and "); __auto_type strata_t133_ = t_str(rt); str_concat(strata_t132_, strata_t133_); })); ck_error(strata_t126_, strata_t127_, strata_t128_, strata_t129_); }));
+            (({ __auto_type strata_t143_ = c; __auto_type strata_t144_ = e->line; __auto_type strata_t145_ = e->col; __auto_type strata_t146_ = (({ __auto_type strata_t149_ = str_concat((({ __auto_type strata_t147_ = str_concat(str_concat("'", op), "' requires integer operands, got "); __auto_type strata_t148_ = t_str(lt); str_concat(strata_t147_, strata_t148_); })), " and "); __auto_type strata_t150_ = t_str(rt); str_concat(strata_t149_, strata_t150_); })); ck_error(strata_t143_, strata_t144_, strata_t145_, strata_t146_); }));
         }
         return c->t_int;
     }
     if (((!t_ordered(lt)) && (!t_is_unknown(lt))) || ((!t_ordered(rt)) && (!t_is_unknown(rt)))) {
-        (({ __auto_type strata_t134_ = c; __auto_type strata_t135_ = e->line; __auto_type strata_t136_ = e->col; __auto_type strata_t137_ = (({ __auto_type strata_t140_ = str_concat((({ __auto_type strata_t138_ = str_concat(str_concat("'", op), "' requires numeric operands, got "); __auto_type strata_t139_ = t_str(lt); str_concat(strata_t138_, strata_t139_); })), " and "); __auto_type strata_t141_ = t_str(rt); str_concat(strata_t140_, strata_t141_); })); ck_error(strata_t134_, strata_t135_, strata_t136_, strata_t137_); }));
+        (({ __auto_type strata_t151_ = c; __auto_type strata_t152_ = e->line; __auto_type strata_t153_ = e->col; __auto_type strata_t154_ = (({ __auto_type strata_t157_ = str_concat((({ __auto_type strata_t155_ = str_concat(str_concat("'", op), "' requires numeric operands, got "); __auto_type strata_t156_ = t_str(lt); str_concat(strata_t155_, strata_t156_); })), " and "); __auto_type strata_t158_ = t_str(rt); str_concat(strata_t157_, strata_t158_); })); ck_error(strata_t151_, strata_t152_, strata_t153_, strata_t154_); }));
         return c->t_unknown;
     }
     if (str_eq(op, "%") && ((lt->cat == TcFloat) || (rt->cat == TcFloat))) {
@@ -4331,6 +5183,11 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     e->text = ((EnumMember*)(c->enum_members).data)[mi].cname;
                     return ty(TcInt, ((EnumMember*)(c->enum_members).data)[mi].enum_name);
                 }
+                int64_t fi = ck_func_index(c, e->text);
+                if (fi >= 0) {
+                    e->text = ((FuncInfo*)(c->funcs).data)[fi].cname;
+                    return ty_fn(func_node(c, fi));
+                }
                 if (str_eq(e->text, "PI")) {
                     return c->t_float;
                 }
@@ -4368,24 +5225,24 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                         return c->t_unknown;
                     }
                     if (!t_is_unknown(t)) {
-                        (({ __auto_type strata_t142_ = c; __auto_type strata_t143_ = e->line; __auto_type strata_t144_ = e->col; __auto_type strata_t145_ = str_concat("cannot dereference a value of type ", t_str(t)); ck_error(strata_t142_, strata_t143_, strata_t144_, strata_t145_); }));
+                        (({ __auto_type strata_t159_ = c; __auto_type strata_t160_ = e->line; __auto_type strata_t161_ = e->col; __auto_type strata_t162_ = str_concat("cannot dereference a value of type ", t_str(t)); ck_error(strata_t159_, strata_t160_, strata_t161_, strata_t162_); }));
                     }
                     return c->t_unknown;
                 }
                 if (str_eq(e->text, "!")) {
                     if ((t->cat != TcBool) && (!t_is_unknown(t))) {
-                        (({ __auto_type strata_t146_ = c; __auto_type strata_t147_ = e->line; __auto_type strata_t148_ = e->col; __auto_type strata_t149_ = str_concat("'!' requires bool, got ", t_str(t)); ck_error(strata_t146_, strata_t147_, strata_t148_, strata_t149_); }));
+                        (({ __auto_type strata_t163_ = c; __auto_type strata_t164_ = e->line; __auto_type strata_t165_ = e->col; __auto_type strata_t166_ = str_concat("'!' requires bool, got ", t_str(t)); ck_error(strata_t163_, strata_t164_, strata_t165_, strata_t166_); }));
                     }
                     return c->t_bool;
                 }
                 if (str_eq(e->text, "~")) {
                     if (((!t_is_integer(t)) && (t->cat != TcChar)) && (!t_is_unknown(t))) {
-                        (({ __auto_type strata_t150_ = c; __auto_type strata_t151_ = e->line; __auto_type strata_t152_ = e->col; __auto_type strata_t153_ = str_concat("'~' requires an integer operand, got ", t_str(t)); ck_error(strata_t150_, strata_t151_, strata_t152_, strata_t153_); }));
+                        (({ __auto_type strata_t167_ = c; __auto_type strata_t168_ = e->line; __auto_type strata_t169_ = e->col; __auto_type strata_t170_ = str_concat("'~' requires an integer operand, got ", t_str(t)); ck_error(strata_t167_, strata_t168_, strata_t169_, strata_t170_); }));
                     }
                     return t;
                 }
                 if ((!t_is_numeric(t)) && (!t_is_unknown(t))) {
-                    (({ __auto_type strata_t154_ = c; __auto_type strata_t155_ = e->line; __auto_type strata_t156_ = e->col; __auto_type strata_t157_ = str_concat("'-' requires a numeric operand, got ", t_str(t)); ck_error(strata_t154_, strata_t155_, strata_t156_, strata_t157_); }));
+                    (({ __auto_type strata_t171_ = c; __auto_type strata_t172_ = e->line; __auto_type strata_t173_ = e->col; __auto_type strata_t174_ = str_concat("'-' requires a numeric operand, got ", t_str(t)); ck_error(strata_t171_, strata_t172_, strata_t173_, strata_t174_); }));
                 }
                 return t;
             }
@@ -4468,7 +5325,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     if (str_eq(e->field, "len")) {
                         return c->t_int;
                     }
-                    (({ __auto_type strata_t158_ = c; __auto_type strata_t159_ = e->line; __auto_type strata_t160_ = e->col; __auto_type strata_t161_ = str_concat(str_concat(str_concat(t_str(ot), " has no field '"), e->field), "' (did you mean 'len'?)"); ck_error(strata_t158_, strata_t159_, strata_t160_, strata_t161_); }));
+                    (({ __auto_type strata_t175_ = c; __auto_type strata_t176_ = e->line; __auto_type strata_t177_ = e->col; __auto_type strata_t178_ = str_concat(str_concat(str_concat(t_str(ot), " has no field '"), e->field), "' (did you mean 'len'?)"); ck_error(strata_t175_, strata_t176_, strata_t177_, strata_t178_); }));
                     return c->t_unknown;
                 }
                 const char* sname = "";
@@ -4478,7 +5335,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 if (((ot->cat == TcPointer) && (ot->elem != 0)) && (ot->elem->cat == TcStruct)) {
                     sname = ot->elem->name;
                 } else {
-                    (({ __auto_type strata_t162_ = c; __auto_type strata_t163_ = e->line; __auto_type strata_t164_ = e->col; __auto_type strata_t165_ = str_concat(str_concat("type ", t_str(ot)), " has no fields"); ck_error(strata_t162_, strata_t163_, strata_t164_, strata_t165_); }));
+                    (({ __auto_type strata_t179_ = c; __auto_type strata_t180_ = e->line; __auto_type strata_t181_ = e->col; __auto_type strata_t182_ = str_concat(str_concat("type ", t_str(ot)), " has no fields"); ck_error(strata_t179_, strata_t180_, strata_t181_, strata_t182_); }));
                     return c->t_unknown;
                 }
                 int64_t si = ck_struct_by_cname(c, sname);
@@ -4500,7 +5357,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 Type* ot = ck_expr(c, e->a);
                 Type* it = ck_expr(c, e->b);
                 if ((!t_is_integer(it)) && (!t_is_unknown(it))) {
-                    (({ __auto_type strata_t166_ = c; __auto_type strata_t167_ = e->line; __auto_type strata_t168_ = e->col; __auto_type strata_t169_ = str_concat("index must be an integer, got ", t_str(it)); ck_error(strata_t166_, strata_t167_, strata_t168_, strata_t169_); }));
+                    (({ __auto_type strata_t183_ = c; __auto_type strata_t184_ = e->line; __auto_type strata_t185_ = e->col; __auto_type strata_t186_ = str_concat("index must be an integer, got ", t_str(it)); ck_error(strata_t183_, strata_t184_, strata_t185_, strata_t186_); }));
                 }
                 if (ot->cat == TcStr) {
                     return c->t_char;
@@ -4524,7 +5381,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                     return c->t_unknown;
                 }
                 if (!t_is_unknown(ot)) {
-                    (({ __auto_type strata_t170_ = c; __auto_type strata_t171_ = e->line; __auto_type strata_t172_ = e->col; __auto_type strata_t173_ = str_concat("cannot index a value of type ", t_str(ot)); ck_error(strata_t170_, strata_t171_, strata_t172_, strata_t173_); }));
+                    (({ __auto_type strata_t187_ = c; __auto_type strata_t188_ = e->line; __auto_type strata_t189_ = e->col; __auto_type strata_t190_ = str_concat("cannot index a value of type ", t_str(ot)); ck_error(strata_t187_, strata_t188_, strata_t189_, strata_t190_); }));
                 }
                 return c->t_unknown;
             }
@@ -4540,7 +5397,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 for (int64_t i = 1; i < e->items.len; i++) {
                     Type* et = ck_expr(c, ((Expr**)(e->items).data)[i]);
                     if ((!ck_assignable(first, et)) && (!ck_assignable(et, first))) {
-                        (({ __auto_type strata_t174_ = c; __auto_type strata_t175_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t176_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t177_ = (({ __auto_type strata_t180_ = str_concat((({ __auto_type strata_t178_ = str_concat(str_concat("array element ", str_from_int((i + 1))), " has type "); __auto_type strata_t179_ = t_str(et); str_concat(strata_t178_, strata_t179_); })), ", expected "); __auto_type strata_t181_ = t_str(first); str_concat(strata_t180_, strata_t181_); })); ck_error(strata_t174_, strata_t175_, strata_t176_, strata_t177_); }));
+                        (({ __auto_type strata_t191_ = c; __auto_type strata_t192_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t193_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t194_ = (({ __auto_type strata_t197_ = str_concat((({ __auto_type strata_t195_ = str_concat(str_concat("array element ", str_from_int((i + 1))), " has type "); __auto_type strata_t196_ = t_str(et); str_concat(strata_t195_, strata_t196_); })), ", expected "); __auto_type strata_t198_ = t_str(first); str_concat(strata_t197_, strata_t198_); })); ck_error(strata_t191_, strata_t192_, strata_t193_, strata_t194_); }));
                     }
                 }
                 return ty_dynarr(first);
@@ -4565,7 +5422,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 }
                 int64_t nf = ((StructInfo*)(c->structs).data)[si].fields.len;
                 if (e->items.len != nf) {
-                    (({ __auto_type strata_t182_ = c; __auto_type strata_t183_ = e->line; __auto_type strata_t184_ = e->col; __auto_type strata_t185_ = str_concat((({ __auto_type strata_t188_ = str_concat((({ __auto_type strata_t186_ = str_concat(str_concat("struct ", e->type_name), " has "); __auto_type strata_t187_ = str_from_int(nf); str_concat(strata_t186_, strata_t187_); })), " field(s), but "); __auto_type strata_t189_ = str_from_int(e->items.len); str_concat(strata_t188_, strata_t189_); })), " given"); ck_error(strata_t182_, strata_t183_, strata_t184_, strata_t185_); }));
+                    (({ __auto_type strata_t199_ = c; __auto_type strata_t200_ = e->line; __auto_type strata_t201_ = e->col; __auto_type strata_t202_ = str_concat((({ __auto_type strata_t205_ = str_concat((({ __auto_type strata_t203_ = str_concat(str_concat("struct ", e->type_name), " has "); __auto_type strata_t204_ = str_from_int(nf); str_concat(strata_t203_, strata_t204_); })), " field(s), but "); __auto_type strata_t206_ = str_from_int(e->items.len); str_concat(strata_t205_, strata_t206_); })), " given"); ck_error(strata_t199_, strata_t200_, strata_t201_, strata_t202_); }));
                 }
                 int64_t k = e->items.len;
                 if (nf < k) {
@@ -4574,7 +5431,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 for (int64_t i = 0; i < k; i++) {
                     Type* at = ck_expr(c, ((Expr**)(e->items).data)[i]);
                     if (!ck_assignable(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type, at)) {
-                        (({ __auto_type strata_t190_ = c; __auto_type strata_t191_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t192_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t193_ = (({ __auto_type strata_t196_ = str_concat((({ __auto_type strata_t194_ = str_concat(str_concat(str_concat(str_concat("field '", ((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].name), "' of "), e->type_name), " expects "); __auto_type strata_t195_ = t_str(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type); str_concat(strata_t194_, strata_t195_); })), ", got "); __auto_type strata_t197_ = t_str(at); str_concat(strata_t196_, strata_t197_); })); ck_error(strata_t190_, strata_t191_, strata_t192_, strata_t193_); }));
+                        (({ __auto_type strata_t207_ = c; __auto_type strata_t208_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t209_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t210_ = (({ __auto_type strata_t213_ = str_concat((({ __auto_type strata_t211_ = str_concat(str_concat(str_concat(str_concat("field '", ((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].name), "' of "), e->type_name), " expects "); __auto_type strata_t212_ = t_str(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[i].type); str_concat(strata_t211_, strata_t212_); })), ", got "); __auto_type strata_t214_ = t_str(at); str_concat(strata_t213_, strata_t214_); })); ck_error(strata_t207_, strata_t208_, strata_t209_, strata_t210_); }));
                     }
                 }
                 for (int64_t i = k; i < e->items.len; i++) {
@@ -4591,7 +5448,7 @@ Type* ck_expr_i(Checker* c, Expr* e) {
                 Type* from = ck_expr(c, e->a);
                 Type* to = ck_type(c, e->type);
                 if (!ck_castable(from, to)) {
-                    (({ __auto_type strata_t198_ = c; __auto_type strata_t199_ = e->line; __auto_type strata_t200_ = e->col; __auto_type strata_t201_ = (({ __auto_type strata_t202_ = str_concat(str_concat("cannot cast ", t_str(from)), " to "); __auto_type strata_t203_ = t_str(to); str_concat(strata_t202_, strata_t203_); })); ck_error(strata_t198_, strata_t199_, strata_t200_, strata_t201_); }));
+                    (({ __auto_type strata_t215_ = c; __auto_type strata_t216_ = e->line; __auto_type strata_t217_ = e->col; __auto_type strata_t218_ = (({ __auto_type strata_t219_ = str_concat(str_concat("cannot cast ", t_str(from)), " to "); __auto_type strata_t220_ = t_str(to); str_concat(strata_t219_, strata_t220_); })); ck_error(strata_t215_, strata_t216_, strata_t217_, strata_t218_); }));
                 }
                 return to;
             }
@@ -4620,7 +5477,7 @@ Type* ck_call(Checker* c, Expr* e) {
             Type* recv = ck_expr(c, callee->a);
             if ((recv->cat != TcStruct) || (!str_eq(recv->name, "Arena"))) {
                 if (!t_is_unknown(recv)) {
-                    (({ __auto_type strata_t204_ = c; __auto_type strata_t205_ = e->line; __auto_type strata_t206_ = e->col; __auto_type strata_t207_ = str_concat(".new is only valid on an arena, got ", t_str(recv)); ck_error(strata_t204_, strata_t205_, strata_t206_, strata_t207_); }));
+                    (({ __auto_type strata_t221_ = c; __auto_type strata_t222_ = e->line; __auto_type strata_t223_ = e->col; __auto_type strata_t224_ = str_concat(".new is only valid on an arena, got ", t_str(recv)); ck_error(strata_t221_, strata_t222_, strata_t223_, strata_t224_); }));
                 }
             }
             if (e->items.len != 1) {
@@ -4659,12 +5516,12 @@ Type* ck_call(Checker* c, Expr* e) {
                 } else {
                     Type* at = ck_expr(c, ((Expr**)(e->items).data)[0]);
                     if ((recv->elem != 0) && (!ck_assignable(recv->elem, at))) {
-                        (({ __auto_type strata_t208_ = c; __auto_type strata_t209_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t210_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t211_ = (({ __auto_type strata_t212_ = str_concat(str_concat("push expects ", t_str(recv->elem)), ", got "); __auto_type strata_t213_ = t_str(at); str_concat(strata_t212_, strata_t213_); })); ck_error(strata_t208_, strata_t209_, strata_t210_, strata_t211_); }));
+                        (({ __auto_type strata_t225_ = c; __auto_type strata_t226_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t227_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t228_ = (({ __auto_type strata_t229_ = str_concat(str_concat("push expects ", t_str(recv->elem)), ", got "); __auto_type strata_t230_ = t_str(at); str_concat(strata_t229_, strata_t230_); })); ck_error(strata_t225_, strata_t226_, strata_t227_, strata_t228_); }));
                     }
                 }
             } else {
                 if (!t_is_unknown(recv)) {
-                    (({ __auto_type strata_t214_ = c; __auto_type strata_t215_ = e->line; __auto_type strata_t216_ = e->col; __auto_type strata_t217_ = str_concat("push is only valid on a dynamic array, got ", t_str(recv)); ck_error(strata_t214_, strata_t215_, strata_t216_, strata_t217_); }));
+                    (({ __auto_type strata_t231_ = c; __auto_type strata_t232_ = e->line; __auto_type strata_t233_ = e->col; __auto_type strata_t234_ = str_concat("push is only valid on a dynamic array, got ", t_str(recv)); ck_error(strata_t231_, strata_t232_, strata_t233_, strata_t234_); }));
                 }
                 for (int64_t i = 0; i < e->items.len; i++) {
                     ck_expr(c, ((Expr**)(e->items).data)[i]);
@@ -4672,7 +5529,12 @@ Type* ck_call(Checker* c, Expr* e) {
             }
             return c->t_void;
         }
-        ck_expr(c, callee->a);
+        Type* recv = ck_expr(c, callee->a);
+        Type* ft = ck_fn_field(c, recv, callee->field);
+        if (ft != 0) {
+            callee->rtype = ck_node(c, ft);
+            return ck_call_ind(c, e, ft);
+        }
         for (int64_t i = 0; i < e->items.len; i++) {
             ck_expr(c, ((Expr**)(e->items).data)[i]);
         }
@@ -4680,6 +5542,17 @@ Type* ck_call(Checker* c, Expr* e) {
     }
     if (callee->kind == ExName) {
         const char* name = callee->text;
+        LookupResult lv = ck_lookup(c, name);
+        if (lv.found && (lv.type->cat == TcFunc)) {
+            callee->rtype = ck_node(c, lv.type);
+            return ck_call_ind(c, e, lv.type);
+        }
+        int64_t gv = ck_global_index(c, name);
+        if (((!lv.found) && (gv >= 0)) && (((GlobalInfo*)(c->globals).data)[gv].type->cat == TcFunc)) {
+            callee->text = ((GlobalInfo*)(c->globals).data)[gv].cname;
+            callee->rtype = ck_node(c, ((GlobalInfo*)(c->globals).data)[gv].type);
+            return ck_call_ind(c, e, ((GlobalInfo*)(c->globals).data)[gv].type);
+        }
         if (str_eq(name, "arena")) {
             if (e->items.len != 0) {
                 ck_error(c, e->line, e->col, "arena() takes no arguments");
@@ -4702,7 +5575,7 @@ Type* ck_call(Checker* c, Expr* e) {
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
                 if ((!t_is_numeric(a)) && (!t_is_unknown(a))) {
-                    (({ __auto_type strata_t218_ = c; __auto_type strata_t219_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t220_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t221_ = (({ __auto_type strata_t222_ = str_concat(name, " expects numbers, got "); __auto_type strata_t223_ = t_str(a); str_concat(strata_t222_, strata_t223_); })); ck_error(strata_t218_, strata_t219_, strata_t220_, strata_t221_); }));
+                    (({ __auto_type strata_t235_ = c; __auto_type strata_t236_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t237_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t238_ = (({ __auto_type strata_t239_ = str_concat(name, " expects numbers, got "); __auto_type strata_t240_ = t_str(a); str_concat(strata_t239_, strata_t240_); })); ck_error(strata_t235_, strata_t236_, strata_t237_, strata_t238_); }));
                 }
             }
             return c->t_float;
@@ -4714,7 +5587,7 @@ Type* ck_call(Checker* c, Expr* e) {
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
                 if ((!t_is_numeric(a)) && (!t_is_unknown(a))) {
-                    (({ __auto_type strata_t224_ = c; __auto_type strata_t225_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t226_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t227_ = (({ __auto_type strata_t228_ = str_concat(name, " expects numbers, got "); __auto_type strata_t229_ = t_str(a); str_concat(strata_t228_, strata_t229_); })); ck_error(strata_t224_, strata_t225_, strata_t226_, strata_t227_); }));
+                    (({ __auto_type strata_t241_ = c; __auto_type strata_t242_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t243_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t244_ = (({ __auto_type strata_t245_ = str_concat(name, " expects numbers, got "); __auto_type strata_t246_ = t_str(a); str_concat(strata_t245_, strata_t246_); })); ck_error(strata_t241_, strata_t242_, strata_t243_, strata_t244_); }));
                 }
             }
             return c->t_float;
@@ -4727,13 +5600,13 @@ Type* ck_call(Checker* c, Expr* e) {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[1]);
                 Type* n = ck_expr(c, ((Expr**)(e->items).data)[2]);
                 if ((s->cat != TcStr) && (!t_is_unknown(s))) {
-                    (({ __auto_type strata_t230_ = c; __auto_type strata_t231_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t232_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t233_ = str_concat("substr expects a string, got ", t_str(s)); ck_error(strata_t230_, strata_t231_, strata_t232_, strata_t233_); }));
+                    (({ __auto_type strata_t247_ = c; __auto_type strata_t248_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t249_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t250_ = str_concat("substr expects a string, got ", t_str(s)); ck_error(strata_t247_, strata_t248_, strata_t249_, strata_t250_); }));
                 }
                 if ((!t_is_integer(a)) && (!t_is_unknown(a))) {
-                    (({ __auto_type strata_t234_ = c; __auto_type strata_t235_ = ((Expr**)(e->items).data)[1]->line; __auto_type strata_t236_ = ((Expr**)(e->items).data)[1]->col; __auto_type strata_t237_ = str_concat("substr start must be an integer, got ", t_str(a)); ck_error(strata_t234_, strata_t235_, strata_t236_, strata_t237_); }));
+                    (({ __auto_type strata_t251_ = c; __auto_type strata_t252_ = ((Expr**)(e->items).data)[1]->line; __auto_type strata_t253_ = ((Expr**)(e->items).data)[1]->col; __auto_type strata_t254_ = str_concat("substr start must be an integer, got ", t_str(a)); ck_error(strata_t251_, strata_t252_, strata_t253_, strata_t254_); }));
                 }
                 if ((!t_is_integer(n)) && (!t_is_unknown(n))) {
-                    (({ __auto_type strata_t238_ = c; __auto_type strata_t239_ = ((Expr**)(e->items).data)[2]->line; __auto_type strata_t240_ = ((Expr**)(e->items).data)[2]->col; __auto_type strata_t241_ = str_concat("substr length must be an integer, got ", t_str(n)); ck_error(strata_t238_, strata_t239_, strata_t240_, strata_t241_); }));
+                    (({ __auto_type strata_t255_ = c; __auto_type strata_t256_ = ((Expr**)(e->items).data)[2]->line; __auto_type strata_t257_ = ((Expr**)(e->items).data)[2]->col; __auto_type strata_t258_ = str_concat("substr length must be an integer, got ", t_str(n)); ck_error(strata_t255_, strata_t256_, strata_t257_, strata_t258_); }));
                 }
             }
             return c->t_str_;
@@ -4744,7 +5617,7 @@ Type* ck_call(Checker* c, Expr* e) {
             } else {
                 Type* n = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 if ((!t_is_integer(n)) && (!t_is_unknown(n))) {
-                    (({ __auto_type strata_t242_ = c; __auto_type strata_t243_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t244_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t245_ = str_concat("int_to_str expects an integer, got ", t_str(n)); ck_error(strata_t242_, strata_t243_, strata_t244_, strata_t245_); }));
+                    (({ __auto_type strata_t259_ = c; __auto_type strata_t260_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t261_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t262_ = str_concat("int_to_str expects an integer, got ", t_str(n)); ck_error(strata_t259_, strata_t260_, strata_t261_, strata_t262_); }));
                 }
             }
             return c->t_str_;
@@ -4755,7 +5628,7 @@ Type* ck_call(Checker* c, Expr* e) {
             } else {
                 Type* p = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 if ((p->cat != TcStr) && (!t_is_unknown(p))) {
-                    (({ __auto_type strata_t246_ = c; __auto_type strata_t247_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t248_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t249_ = (({ __auto_type strata_t250_ = str_concat(name, " expects a string, got "); __auto_type strata_t251_ = t_str(p); str_concat(strata_t250_, strata_t251_); })); ck_error(strata_t246_, strata_t247_, strata_t248_, strata_t249_); }));
+                    (({ __auto_type strata_t263_ = c; __auto_type strata_t264_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t265_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t266_ = (({ __auto_type strata_t267_ = str_concat(name, " expects a string, got "); __auto_type strata_t268_ = t_str(p); str_concat(strata_t267_, strata_t268_); })); ck_error(strata_t263_, strata_t264_, strata_t265_, strata_t266_); }));
                 }
             }
             return c->t_str_;
@@ -4773,7 +5646,7 @@ Type* ck_call(Checker* c, Expr* e) {
                 for (int64_t i = 0; i < 2; i++) {
                     Type* a = ck_expr(c, ((Expr**)(e->items).data)[i]);
                     if ((a->cat != TcStr) && (!t_is_unknown(a))) {
-                        (({ __auto_type strata_t252_ = c; __auto_type strata_t253_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t254_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t255_ = str_concat("write_file expects strings, got ", t_str(a)); ck_error(strata_t252_, strata_t253_, strata_t254_, strata_t255_); }));
+                        (({ __auto_type strata_t269_ = c; __auto_type strata_t270_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t271_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t272_ = str_concat("write_file expects strings, got ", t_str(a)); ck_error(strata_t269_, strata_t270_, strata_t271_, strata_t272_); }));
                     }
                 }
             }
@@ -4796,12 +5669,12 @@ Type* ck_call(Checker* c, Expr* e) {
                 n = 4;
             }
             if ((e->items.len != n) && (e->items.len != 1)) {
-                (({ __auto_type strata_t256_ = c; __auto_type strata_t257_ = e->line; __auto_type strata_t258_ = e->col; __auto_type strata_t259_ = str_concat((({ __auto_type strata_t260_ = str_concat(name, "() takes "); __auto_type strata_t261_ = str_from_int(n); str_concat(strata_t260_, strata_t261_); })), " components (or 1 to splat)"); ck_error(strata_t256_, strata_t257_, strata_t258_, strata_t259_); }));
+                (({ __auto_type strata_t273_ = c; __auto_type strata_t274_ = e->line; __auto_type strata_t275_ = e->col; __auto_type strata_t276_ = str_concat((({ __auto_type strata_t277_ = str_concat(name, "() takes "); __auto_type strata_t278_ = str_from_int(n); str_concat(strata_t277_, strata_t278_); })), " components (or 1 to splat)"); ck_error(strata_t273_, strata_t274_, strata_t275_, strata_t276_); }));
             }
             for (int64_t i = 0; i < e->items.len; i++) {
                 Type* at = ck_expr(c, ((Expr**)(e->items).data)[i]);
                 if ((!t_is_numeric(at)) && (!t_is_unknown(at))) {
-                    (({ __auto_type strata_t262_ = c; __auto_type strata_t263_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t264_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t265_ = (({ __auto_type strata_t266_ = str_concat(name, " components must be numeric, got "); __auto_type strata_t267_ = t_str(at); str_concat(strata_t266_, strata_t267_); })); ck_error(strata_t262_, strata_t263_, strata_t264_, strata_t265_); }));
+                    (({ __auto_type strata_t279_ = c; __auto_type strata_t280_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t281_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t282_ = (({ __auto_type strata_t283_ = str_concat(name, " components must be numeric, got "); __auto_type strata_t284_ = t_str(at); str_concat(strata_t283_, strata_t284_); })); ck_error(strata_t279_, strata_t280_, strata_t281_, strata_t282_); }));
                 }
             }
             return ty(TcVec, name);
@@ -4825,7 +5698,7 @@ Type* ck_call(Checker* c, Expr* e) {
             } else {
                 Type* a = ck_expr(c, ((Expr**)(e->items).data)[0]);
                 if ((a->cat != TcVec) && (!t_is_unknown(a))) {
-                    (({ __auto_type strata_t268_ = c; __auto_type strata_t269_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t270_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t271_ = (({ __auto_type strata_t272_ = str_concat(name, " expects a vector, got "); __auto_type strata_t273_ = t_str(a); str_concat(strata_t272_, strata_t273_); })); ck_error(strata_t268_, strata_t269_, strata_t270_, strata_t271_); }));
+                    (({ __auto_type strata_t285_ = c; __auto_type strata_t286_ = ((Expr**)(e->items).data)[0]->line; __auto_type strata_t287_ = ((Expr**)(e->items).data)[0]->col; __auto_type strata_t288_ = (({ __auto_type strata_t289_ = str_concat(name, " expects a vector, got "); __auto_type strata_t290_ = t_str(a); str_concat(strata_t289_, strata_t290_); })); ck_error(strata_t285_, strata_t286_, strata_t287_, strata_t288_); }));
                 }
                 if (str_eq(name, "normalize")) {
                     r = a;
@@ -4949,7 +5822,7 @@ Type* ck_call(Checker* c, Expr* e) {
             callee->text = ((FuncInfo*)(c->funcs).data)[fi].cname;
             int64_t np = ((FuncInfo*)(c->funcs).data)[fi].params.len;
             if (e->items.len != np) {
-                (({ __auto_type strata_t274_ = c; __auto_type strata_t275_ = e->line; __auto_type strata_t276_ = e->col; __auto_type strata_t277_ = (({ __auto_type strata_t280_ = str_concat((({ __auto_type strata_t278_ = str_concat(str_concat("function '", name), "' expects "); __auto_type strata_t279_ = str_from_int(np); str_concat(strata_t278_, strata_t279_); })), " argument(s), got "); __auto_type strata_t281_ = str_from_int(e->items.len); str_concat(strata_t280_, strata_t281_); })); ck_error(strata_t274_, strata_t275_, strata_t276_, strata_t277_); }));
+                (({ __auto_type strata_t291_ = c; __auto_type strata_t292_ = e->line; __auto_type strata_t293_ = e->col; __auto_type strata_t294_ = (({ __auto_type strata_t297_ = str_concat((({ __auto_type strata_t295_ = str_concat(str_concat("function '", name), "' expects "); __auto_type strata_t296_ = str_from_int(np); str_concat(strata_t295_, strata_t296_); })), " argument(s), got "); __auto_type strata_t298_ = str_from_int(e->items.len); str_concat(strata_t297_, strata_t298_); })); ck_error(strata_t291_, strata_t292_, strata_t293_, strata_t294_); }));
             }
             int64_t k = e->items.len;
             if (np < k) {
@@ -4958,7 +5831,7 @@ Type* ck_call(Checker* c, Expr* e) {
             for (int64_t i = 0; i < k; i++) {
                 Type* at = ck_expr_as(c, ((Expr**)(e->items).data)[i], ((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i]);
                 if (!ck_assignable(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i], at)) {
-                    (({ __auto_type strata_t282_ = c; __auto_type strata_t283_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t284_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t285_ = (({ __auto_type strata_t288_ = str_concat((({ __auto_type strata_t286_ = str_concat(str_concat(str_concat(str_concat("argument ", str_from_int((i + 1))), " to '"), name), "' expects "); __auto_type strata_t287_ = t_str(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i]); str_concat(strata_t286_, strata_t287_); })), ", got "); __auto_type strata_t289_ = t_str(at); str_concat(strata_t288_, strata_t289_); })); ck_error(strata_t282_, strata_t283_, strata_t284_, strata_t285_); }));
+                    (({ __auto_type strata_t299_ = c; __auto_type strata_t300_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t301_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t302_ = (({ __auto_type strata_t305_ = str_concat((({ __auto_type strata_t303_ = str_concat(str_concat(str_concat(str_concat("argument ", str_from_int((i + 1))), " to '"), name), "' expects "); __auto_type strata_t304_ = t_str(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[i]); str_concat(strata_t303_, strata_t304_); })), ", got "); __auto_type strata_t306_ = t_str(at); str_concat(strata_t305_, strata_t306_); })); ck_error(strata_t299_, strata_t300_, strata_t301_, strata_t302_); }));
                 }
             }
             for (int64_t i = k; i < e->items.len; i++) {
@@ -4982,10 +5855,87 @@ Type* ck_call(Checker* c, Expr* e) {
         }
         return c->t_unknown;
     }
+    Type* ct = ck_expr(c, callee);
+    if (ct->cat == TcFunc) {
+        return ck_call_ind(c, e, ct);
+    }
+    if (!t_is_unknown(ct)) {
+        (({ __auto_type strata_t307_ = c; __auto_type strata_t308_ = e->line; __auto_type strata_t309_ = e->col; __auto_type strata_t310_ = str_concat(str_concat("a ", t_str(ct)), " can't be called"); ck_error(strata_t307_, strata_t308_, strata_t309_, strata_t310_); }));
+    }
     for (int64_t i = 0; i < e->items.len; i++) {
         ck_expr(c, ((Expr**)(e->items).data)[i]);
     }
     return c->t_unknown;
+}
+
+Type* ck_call_ind(Checker* c, Expr* e, Type* ft) {
+    e->type = ft->sig;
+    Array ps = ({ Array _a = arr_make(sizeof(Type*)); _a; });
+    TypeNode* a = ft->sig->args;
+    while (a != 0) {
+        ({ Type* _e = ck_type(c, a); arr_push(&(ps), &_e); });
+        a = a->next;
+    }
+    if (e->items.len != ps.len) {
+        (({ __auto_type strata_t311_ = c; __auto_type strata_t312_ = e->line; __auto_type strata_t313_ = e->col; __auto_type strata_t314_ = (({ __auto_type strata_t317_ = str_concat((({ __auto_type strata_t315_ = str_concat(str_concat("a ", t_str(ft)), " takes "); __auto_type strata_t316_ = str_from_int(ps.len); str_concat(strata_t315_, strata_t316_); })), " argument(s), got "); __auto_type strata_t318_ = str_from_int(e->items.len); str_concat(strata_t317_, strata_t318_); })); ck_error(strata_t311_, strata_t312_, strata_t313_, strata_t314_); }));
+    }
+    for (int64_t i = 0; i < e->items.len; i++) {
+        if (i < ps.len) {
+            Type* at = ck_expr_as(c, ((Expr**)(e->items).data)[i], ((Type**)(ps).data)[i]);
+            if (!ck_assignable(((Type**)(ps).data)[i], at)) {
+                (({ __auto_type strata_t319_ = c; __auto_type strata_t320_ = ((Expr**)(e->items).data)[i]->line; __auto_type strata_t321_ = ((Expr**)(e->items).data)[i]->col; __auto_type strata_t322_ = (({ __auto_type strata_t325_ = str_concat((({ __auto_type strata_t323_ = str_concat(str_concat("argument ", str_from_int((i + 1))), " expects "); __auto_type strata_t324_ = t_str(((Type**)(ps).data)[i]); str_concat(strata_t323_, strata_t324_); })), ", got "); __auto_type strata_t326_ = t_str(at); str_concat(strata_t325_, strata_t326_); })); ck_error(strata_t319_, strata_t320_, strata_t321_, strata_t322_); }));
+            }
+        } else {
+            ck_expr(c, ((Expr**)(e->items).data)[i]);
+        }
+    }
+    return ck_type(c, ft->sig->elem);
+}
+
+Type* ck_fn_field(Checker* c, Type* recv, const char* name) {
+    Type* r = recv;
+    if ((r->cat == TcPointer) && (r->elem != 0)) {
+        r = r->elem;
+    }
+    if (r->cat != TcStruct) {
+        return 0;
+    }
+    int64_t si = ck_struct_by_cname(c, r->name);
+    if (si < 0) {
+        return 0;
+    }
+    for (int64_t k = 0; k < ((StructInfo*)(c->structs).data)[si].fields.len; k++) {
+        if (str_eq(((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[k].name, name) && (((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[k].type->cat == TcFunc)) {
+            return ((FieldInfo*)(((StructInfo*)(c->structs).data)[si].fields).data)[k].type;
+        }
+    }
+    return 0;
+}
+
+TypeNode* func_node(Checker* c, int64_t fi) {
+    TypeNode* t = new_type(TyFunc, 0, 0);
+    TypeNode* last = 0;
+    for (int64_t k = 0; k < ((FuncInfo*)(c->funcs).data)[fi].params.len; k++) {
+        TypeNode* p = type_to_node(((Type**)(((FuncInfo*)(c->funcs).data)[fi].params).data)[k]);
+        if (p == 0) {
+            p = named_node("int");
+        }
+        TypeNode* own = new_type(p->kind, 0, 0);
+        own->name = p->name;
+        own->elem = p->elem;
+        own->size = p->size;
+        own->args = p->args;
+        if (last == 0) {
+            t->args = own;
+        } else {
+            last->next = own;
+        }
+        last = own;
+    }
+    if (((FuncInfo*)(c->funcs).data)[fi].ret->cat != TcVoid) {
+        t->elem = type_to_node(((FuncInfo*)(c->funcs).data)[fi].ret);
+    }
+    return t;
 }
 
 void ck_block(Checker* c, Stmt* b) {
@@ -5017,7 +5967,7 @@ void ck_stmt(Checker* c, Stmt* s) {
                         s->type = type_to_node(vt);
                     } else {
                         if (!ck_assignable(declared, vt)) {
-                            (({ __auto_type strata_t290_ = c; __auto_type strata_t291_ = s->line; __auto_type strata_t292_ = s->col; __auto_type strata_t293_ = (({ __auto_type strata_t296_ = str_concat((({ __auto_type strata_t294_ = str_concat(str_concat("cannot initialize '", s->name), "' of type "); __auto_type strata_t295_ = t_str(declared); str_concat(strata_t294_, strata_t295_); })), " with a value of type "); __auto_type strata_t297_ = t_str(vt); str_concat(strata_t296_, strata_t297_); })); ck_error(strata_t290_, strata_t291_, strata_t292_, strata_t293_); }));
+                            (({ __auto_type strata_t327_ = c; __auto_type strata_t328_ = s->line; __auto_type strata_t329_ = s->col; __auto_type strata_t330_ = (({ __auto_type strata_t333_ = str_concat((({ __auto_type strata_t331_ = str_concat(str_concat("cannot initialize '", s->name), "' of type "); __auto_type strata_t332_ = t_str(declared); str_concat(strata_t331_, strata_t332_); })), " with a value of type "); __auto_type strata_t334_ = t_str(vt); str_concat(strata_t333_, strata_t334_); })); ck_error(strata_t327_, strata_t328_, strata_t329_, strata_t330_); }));
                         }
                     }
                 } else {
@@ -5038,11 +5988,11 @@ void ck_stmt(Checker* c, Stmt* s) {
                         ck_error(c, s->line, s->col, "returning a value from a void function");
                     } else 
                     if (!ck_assignable(c->cur_ret, vt)) {
-                        (({ __auto_type strata_t298_ = c; __auto_type strata_t299_ = s->line; __auto_type strata_t300_ = s->col; __auto_type strata_t301_ = (({ __auto_type strata_t302_ = str_concat(str_concat("returning ", t_str(vt)), " from a function declared to return "); __auto_type strata_t303_ = t_str(c->cur_ret); str_concat(strata_t302_, strata_t303_); })); ck_error(strata_t298_, strata_t299_, strata_t300_, strata_t301_); }));
+                        (({ __auto_type strata_t335_ = c; __auto_type strata_t336_ = s->line; __auto_type strata_t337_ = s->col; __auto_type strata_t338_ = (({ __auto_type strata_t339_ = str_concat(str_concat("returning ", t_str(vt)), " from a function declared to return "); __auto_type strata_t340_ = t_str(c->cur_ret); str_concat(strata_t339_, strata_t340_); })); ck_error(strata_t335_, strata_t336_, strata_t337_, strata_t338_); }));
                     }
                 } else {
                     if (c->cur_ret->cat != TcVoid) {
-                        (({ __auto_type strata_t304_ = c; __auto_type strata_t305_ = s->line; __auto_type strata_t306_ = s->col; __auto_type strata_t307_ = str_concat("missing return value; function returns ", t_str(c->cur_ret)); ck_error(strata_t304_, strata_t305_, strata_t306_, strata_t307_); }));
+                        (({ __auto_type strata_t341_ = c; __auto_type strata_t342_ = s->line; __auto_type strata_t343_ = s->col; __auto_type strata_t344_ = str_concat("missing return value; function returns ", t_str(c->cur_ret)); ck_error(strata_t341_, strata_t342_, strata_t343_, strata_t344_); }));
                     }
                 }
             }
@@ -5083,10 +6033,10 @@ void ck_stmt(Checker* c, Stmt* s) {
                     }
                 } else {
                     if (((!str_eq(s->op, "=")) && (!t_is_numeric(tt))) && (!t_is_unknown(tt))) {
-                        (({ __auto_type strata_t308_ = c; __auto_type strata_t309_ = s->line; __auto_type strata_t310_ = s->col; __auto_type strata_t311_ = (({ __auto_type strata_t312_ = str_concat(str_concat("'", s->op), "' requires a numeric operand, got "); __auto_type strata_t313_ = t_str(tt); str_concat(strata_t312_, strata_t313_); })); ck_error(strata_t308_, strata_t309_, strata_t310_, strata_t311_); }));
+                        (({ __auto_type strata_t345_ = c; __auto_type strata_t346_ = s->line; __auto_type strata_t347_ = s->col; __auto_type strata_t348_ = (({ __auto_type strata_t349_ = str_concat(str_concat("'", s->op), "' requires a numeric operand, got "); __auto_type strata_t350_ = t_str(tt); str_concat(strata_t349_, strata_t350_); })); ck_error(strata_t345_, strata_t346_, strata_t347_, strata_t348_); }));
                     }
                     if (!ck_assignable(tt, vt)) {
-                        (({ __auto_type strata_t314_ = c; __auto_type strata_t315_ = s->line; __auto_type strata_t316_ = s->col; __auto_type strata_t317_ = (({ __auto_type strata_t318_ = str_concat(str_concat("cannot assign ", t_str(vt)), " to "); __auto_type strata_t319_ = t_str(tt); str_concat(strata_t318_, strata_t319_); })); ck_error(strata_t314_, strata_t315_, strata_t316_, strata_t317_); }));
+                        (({ __auto_type strata_t351_ = c; __auto_type strata_t352_ = s->line; __auto_type strata_t353_ = s->col; __auto_type strata_t354_ = (({ __auto_type strata_t355_ = str_concat(str_concat("cannot assign ", t_str(vt)), " to "); __auto_type strata_t356_ = t_str(tt); str_concat(strata_t355_, strata_t356_); })); ck_error(strata_t351_, strata_t352_, strata_t353_, strata_t354_); }));
                     }
                 }
             }
@@ -5097,7 +6047,7 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 Type* cd = ck_expr(c, s->cond);
                 if ((cd->cat != TcBool) && (!t_is_unknown(cd))) {
-                    (({ __auto_type strata_t320_ = c; __auto_type strata_t321_ = s->line; __auto_type strata_t322_ = s->col; __auto_type strata_t323_ = str_concat("if condition must be bool, got ", t_str(cd)); ck_error(strata_t320_, strata_t321_, strata_t322_, strata_t323_); }));
+                    (({ __auto_type strata_t357_ = c; __auto_type strata_t358_ = s->line; __auto_type strata_t359_ = s->col; __auto_type strata_t360_ = str_concat("if condition must be bool, got ", t_str(cd)); ck_error(strata_t357_, strata_t358_, strata_t359_, strata_t360_); }));
                 }
                 ck_block(c, s->then_block);
                 if (s->else_branch != 0) {
@@ -5111,7 +6061,7 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 Type* cd = ck_expr(c, s->cond);
                 if ((cd->cat != TcBool) && (!t_is_unknown(cd))) {
-                    (({ __auto_type strata_t324_ = c; __auto_type strata_t325_ = s->line; __auto_type strata_t326_ = s->col; __auto_type strata_t327_ = str_concat("while condition must be bool, got ", t_str(cd)); ck_error(strata_t324_, strata_t325_, strata_t326_, strata_t327_); }));
+                    (({ __auto_type strata_t361_ = c; __auto_type strata_t362_ = s->line; __auto_type strata_t363_ = s->col; __auto_type strata_t364_ = str_concat("while condition must be bool, got ", t_str(cd)); ck_error(strata_t361_, strata_t362_, strata_t363_, strata_t364_); }));
                 }
                 c->loop_depth += 1;
                 ck_block(c, s->body);
@@ -5127,10 +6077,10 @@ void ck_stmt(Checker* c, Stmt* s) {
                     Type* lo = ck_expr(c, s->iter->a);
                     Type* hi = ck_expr(c, s->iter->b);
                     if ((!t_is_integer(lo)) && (!t_is_unknown(lo))) {
-                        (({ __auto_type strata_t328_ = c; __auto_type strata_t329_ = s->iter->line; __auto_type strata_t330_ = s->iter->col; __auto_type strata_t331_ = str_concat("range start must be an integer, got ", t_str(lo)); ck_error(strata_t328_, strata_t329_, strata_t330_, strata_t331_); }));
+                        (({ __auto_type strata_t365_ = c; __auto_type strata_t366_ = s->iter->line; __auto_type strata_t367_ = s->iter->col; __auto_type strata_t368_ = str_concat("range start must be an integer, got ", t_str(lo)); ck_error(strata_t365_, strata_t366_, strata_t367_, strata_t368_); }));
                     }
                     if ((!t_is_integer(hi)) && (!t_is_unknown(hi))) {
-                        (({ __auto_type strata_t332_ = c; __auto_type strata_t333_ = s->iter->line; __auto_type strata_t334_ = s->iter->col; __auto_type strata_t335_ = str_concat("range end must be an integer, got ", t_str(hi)); ck_error(strata_t332_, strata_t333_, strata_t334_, strata_t335_); }));
+                        (({ __auto_type strata_t369_ = c; __auto_type strata_t370_ = s->iter->line; __auto_type strata_t371_ = s->iter->col; __auto_type strata_t372_ = str_concat("range end must be an integer, got ", t_str(hi)); ck_error(strata_t369_, strata_t370_, strata_t371_, strata_t372_); }));
                     }
                 } else 
                 if (s->iter != 0) {
@@ -5143,7 +6093,7 @@ void ck_stmt(Checker* c, Stmt* s) {
                         }
                     } else 
                     if (!t_is_unknown(it)) {
-                        (({ __auto_type strata_t336_ = c; __auto_type strata_t337_ = s->line; __auto_type strata_t338_ = s->col; __auto_type strata_t339_ = str_concat("for-in needs an integer range or an array, got ", t_str(it)); ck_error(strata_t336_, strata_t337_, strata_t338_, strata_t339_); }));
+                        (({ __auto_type strata_t373_ = c; __auto_type strata_t374_ = s->line; __auto_type strata_t375_ = s->col; __auto_type strata_t376_ = str_concat("for-in needs an integer range or an array, got ", t_str(it)); ck_error(strata_t373_, strata_t374_, strata_t375_, strata_t376_); }));
                     } else {
                         elemT = c->t_unknown;
                     }
@@ -5164,7 +6114,7 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 ck_push(c);
                 if (str_len(s->name) > 0) {
-                    (({ __auto_type strata_t340_ = c; __auto_type strata_t341_ = s->name; __auto_type strata_t342_ = ty(TcStruct, "Arena"); ck_declare(strata_t340_, strata_t341_, strata_t342_, false, s->line, s->col); }));
+                    (({ __auto_type strata_t377_ = c; __auto_type strata_t378_ = s->name; __auto_type strata_t379_ = ty(TcStruct, "Arena"); ck_declare(strata_t377_, strata_t378_, strata_t379_, false, s->line, s->col); }));
                 }
                 ck_block(c, s->body);
                 ck_pop(c);
@@ -5176,14 +6126,14 @@ void ck_stmt(Checker* c, Stmt* s) {
             {
                 Type* st = ck_expr(c, s->subject);
                 if (((!t_is_integer(st)) && (st->cat != TcChar)) && (!t_is_unknown(st))) {
-                    (({ __auto_type strata_t343_ = c; __auto_type strata_t344_ = s->line; __auto_type strata_t345_ = s->col; __auto_type strata_t346_ = str_concat("switch subject must be an integer, char, or enum, got ", t_str(st)); ck_error(strata_t343_, strata_t344_, strata_t345_, strata_t346_); }));
+                    (({ __auto_type strata_t380_ = c; __auto_type strata_t381_ = s->line; __auto_type strata_t382_ = s->col; __auto_type strata_t383_ = str_concat("switch subject must be an integer, char, or enum, got ", t_str(st)); ck_error(strata_t380_, strata_t381_, strata_t382_, strata_t383_); }));
                 }
                 for (int64_t i = 0; i < s->cases.len; i++) {
                     SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
                     for (int64_t j = 0; j < sc.values.len; j++) {
                         Type* vt = ck_expr(c, ((Expr**)(sc.values).data)[j]);
                         if (((!t_is_integer(vt)) && (vt->cat != TcChar)) && (!t_is_unknown(vt))) {
-                            (({ __auto_type strata_t347_ = c; __auto_type strata_t348_ = ((Expr**)(sc.values).data)[j]->line; __auto_type strata_t349_ = ((Expr**)(sc.values).data)[j]->col; __auto_type strata_t350_ = str_concat("switch case value must be an integer, char, or enum, got ", t_str(vt)); ck_error(strata_t347_, strata_t348_, strata_t349_, strata_t350_); }));
+                            (({ __auto_type strata_t384_ = c; __auto_type strata_t385_ = ((Expr**)(sc.values).data)[j]->line; __auto_type strata_t386_ = ((Expr**)(sc.values).data)[j]->col; __auto_type strata_t387_ = str_concat("switch case value must be an integer, char, or enum, got ", t_str(vt)); ck_error(strata_t384_, strata_t385_, strata_t386_, strata_t387_); }));
                         }
                     }
                     ck_block(c, sc.body);
@@ -5277,7 +6227,7 @@ const char* ck_c_ident(const char* s) {
     for (int64_t i = 0; i < str_len(s); i++) {
         char ch = s[i];
         if (((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9'))) || (ch == '_')) {
-            r = (({ __auto_type strata_t351_ = r; __auto_type strata_t352_ = str_sub(s, i, 1); str_concat(strata_t351_, strata_t352_); }));
+            r = (({ __auto_type strata_t388_ = r; __auto_type strata_t389_ = str_sub(s, i, 1); str_concat(strata_t388_, strata_t389_); }));
         } else {
             r = str_concat(r, "_");
         }
@@ -5447,7 +6397,7 @@ bool ck_check(Checker* c, Program prog) {
             c->cur = d->module;
             int64_t si = ck_own_struct(c, d->name, d->module);
             for (int64_t fld = 0; fld < d->fields.len; fld++) {
-                ({ FieldInfo _e = (({ __auto_type strata_t353_ = ((FieldDef*)(d->fields).data)[fld].name; __auto_type strata_t354_ = ck_type(c, ((FieldDef*)(d->fields).data)[fld].type); (FieldInfo){strata_t353_, strata_t354_}; })); arr_push(&(((StructInfo*)(c->structs).data)[si].fields), &_e); });
+                ({ FieldInfo _e = (({ __auto_type strata_t390_ = ((FieldDef*)(d->fields).data)[fld].name; __auto_type strata_t391_ = ck_type(c, ((FieldDef*)(d->fields).data)[fld].type); (FieldInfo){strata_t390_, strata_t391_}; })); arr_push(&(((StructInfo*)(c->structs).data)[si].fields), &_e); });
             }
         }
     }
@@ -5484,7 +6434,7 @@ bool ck_check(Checker* c, Program prog) {
                     d->ret = type_to_node(vt);
                 } else 
                 if (!ck_assignable(declared, vt)) {
-                    (({ __auto_type strata_t355_ = c; __auto_type strata_t356_ = d->line; __auto_type strata_t357_ = d->col; __auto_type strata_t358_ = (({ __auto_type strata_t361_ = str_concat((({ __auto_type strata_t359_ = str_concat(str_concat("cannot initialize global '", d->name), "' of type "); __auto_type strata_t360_ = t_str(declared); str_concat(strata_t359_, strata_t360_); })), " with a value of type "); __auto_type strata_t362_ = t_str(vt); str_concat(strata_t361_, strata_t362_); })); ck_error(strata_t355_, strata_t356_, strata_t357_, strata_t358_); }));
+                    (({ __auto_type strata_t392_ = c; __auto_type strata_t393_ = d->line; __auto_type strata_t394_ = d->col; __auto_type strata_t395_ = (({ __auto_type strata_t398_ = str_concat((({ __auto_type strata_t396_ = str_concat(str_concat("cannot initialize global '", d->name), "' of type "); __auto_type strata_t397_ = t_str(declared); str_concat(strata_t396_, strata_t397_); })), " with a value of type "); __auto_type strata_t399_ = t_str(vt); str_concat(strata_t398_, strata_t399_); })); ck_error(strata_t392_, strata_t393_, strata_t394_, strata_t395_); }));
                 }
             } else 
             if (d->ret == 0) {
@@ -5497,7 +6447,7 @@ bool ck_check(Checker* c, Program prog) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcFunc) && (!d->is_foreign)) {
             c->cur = d->module;
-            (({ __auto_type strata_t363_ = c; __auto_type strata_t364_ = d; __auto_type strata_t365_ = ck_own_func(c, d->name, d->module); ck_func(strata_t363_, strata_t364_, strata_t365_); }));
+            (({ __auto_type strata_t400_ = c; __auto_type strata_t401_ = d; __auto_type strata_t402_ = ck_own_func(c, d->name, d->module); ck_func(strata_t400_, strata_t401_, strata_t402_); }));
         }
     }
     c->cur = 0;
@@ -5537,7 +6487,18 @@ Checker* new_checker(const char* file) {
     Array mods = ({ Array _a = arr_make(sizeof(Module)); _a; });
     Array names = ({ Array _a = arr_make(sizeof(NameEntry)); _a; });
     Array nodes = ({ Array _a = arr_make(sizeof(TypeNode*)); _a; });
-    return ({ Checker _v = (({ __auto_type strata_t366_ = file; __auto_type strata_t367_ = ss; __auto_type strata_t368_ = fs; __auto_type strata_t369_ = es; __auto_type strata_t370_ = ems; __auto_type strata_t371_ = gls; __auto_type strata_t372_ = new_idx(0); __auto_type strata_t373_ = ty(TcVoid, "void"); __auto_type strata_t374_ = mods; __auto_type strata_t375_ = names; __auto_type strata_t376_ = new_idx(0); __auto_type strata_t377_ = new_idx(0); __auto_type strata_t378_ = new_idx(0); __auto_type strata_t379_ = new_idx(0); __auto_type strata_t380_ = new_idx(0); __auto_type strata_t381_ = new_idx(0); __auto_type strata_t382_ = nodes; __auto_type strata_t383_ = new_idx(0); __auto_type strata_t384_ = ty(TcInt, "int"); __auto_type strata_t385_ = ty(TcBool, "bool"); __auto_type strata_t386_ = ty(TcFloat, "float"); __auto_type strata_t387_ = ty(TcStr, "string"); __auto_type strata_t388_ = ty(TcVoid, "void"); __auto_type strata_t389_ = ty(TcUnknown, "?"); __auto_type strata_t390_ = ty(TcChar, "char"); (Checker){strata_t366_, false, false, strata_t367_, strata_t368_, strata_t369_, strata_t370_, strata_t371_, strata_t372_, 0, strata_t373_, strata_t374_, 0, strata_t375_, strata_t376_, strata_t377_, strata_t378_, strata_t379_, strata_t380_, strata_t381_, strata_t382_, strata_t383_, 0, strata_t384_, strata_t385_, strata_t386_, strata_t387_, strata_t388_, strata_t389_, strata_t390_}; })); Checker* _p = (Checker*)arena_alloc(strata_heap(), sizeof(Checker)); *_p = _v; _p; });
+    return ({ Checker _v = (({ __auto_type strata_t403_ = file; __auto_type strata_t404_ = ss; __auto_type strata_t405_ = fs; __auto_type strata_t406_ = es; __auto_type strata_t407_ = ems; __auto_type strata_t408_ = gls; __auto_type strata_t409_ = new_idx(0); __auto_type strata_t410_ = ty(TcVoid, "void"); __auto_type strata_t411_ = mods; __auto_type strata_t412_ = names; __auto_type strata_t413_ = new_idx(0); __auto_type strata_t414_ = new_idx(0); __auto_type strata_t415_ = new_idx(0); __auto_type strata_t416_ = new_idx(0); __auto_type strata_t417_ = new_idx(0); __auto_type strata_t418_ = new_idx(0); __auto_type strata_t419_ = nodes; __auto_type strata_t420_ = new_idx(0); __auto_type strata_t421_ = ty(TcInt, "int"); __auto_type strata_t422_ = ty(TcBool, "bool"); __auto_type strata_t423_ = ty(TcFloat, "float"); __auto_type strata_t424_ = ty(TcStr, "string"); __auto_type strata_t425_ = ty(TcVoid, "void"); __auto_type strata_t426_ = ty(TcUnknown, "?"); __auto_type strata_t427_ = ty(TcChar, "char"); (Checker){strata_t403_, false, false, strata_t404_, strata_t405_, strata_t406_, strata_t407_, strata_t408_, strata_t409_, 0, strata_t410_, strata_t411_, 0, strata_t412_, strata_t413_, strata_t414_, strata_t415_, strata_t416_, strata_t417_, strata_t418_, strata_t419_, strata_t420_, 0, strata_t421_, strata_t422_, strata_t423_, strata_t424_, strata_t425_, strata_t426_, strata_t427_}; })); Checker* _p = (Checker*)arena_alloc(strata_heap(), sizeof(Checker)); *_p = _v; _p; });
+}
+
+const char* link_label(Decl* d) {
+    if (str_eq(d->link_name, "")) {
+        return "";
+    }
+    const char* prefix = "";
+    if (str_eq(target_os(), "macos")) {
+        prefix = "_";
+    }
+    return str_concat(str_concat(str_concat(" __asm__(\"", prefix), d->link_name), "\")");
 }
 
 Codegen new_codegen(void) {
@@ -5547,14 +6508,14 @@ Codegen new_codegen(void) {
     Array ls = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array ll = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array lu = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return (Codegen){parts, false, false, regions, lr, ls, ll, lu, 0, 0, "void", 0};
+    return (Codegen){parts, 0, false, false, regions, lr, ls, ll, lu, 0, 0, "void", 0};
 }
 
 const char* region_frees(Codegen* cg, int64_t from, int64_t ind) {
     const char* r = "";
     int64_t k = (cg->regions.len - 1);
     while (k >= from) {
-        r = str_concat(str_concat(str_concat((({ __auto_type strata_t391_ = r; __auto_type strata_t392_ = cg_indent(ind); str_concat(strata_t391_, strata_t392_); })), "arena_free(&"), ((const char**)(cg->regions).data)[k]), ");\n");
+        r = str_concat(str_concat(str_concat((({ __auto_type strata_t428_ = r; __auto_type strata_t429_ = cg_indent(ind); str_concat(strata_t428_, strata_t429_); })), "arena_free(&"), ((const char**)(cg->regions).data)[k]), ");\n");
         k -= 1;
     }
     return r;
@@ -5572,7 +6533,7 @@ const char* loop_leave(Codegen* cg, int64_t ind) {
     int64_t top = (cg->loop_labels.len - 1);
     const char* label = "";
     if (((int64_t*)(cg->loop_label_used).data)[top] == 1) {
-        label = str_concat((({ __auto_type strata_t393_ = str_concat(cg_indent(ind), "strata_break_"); __auto_type strata_t394_ = str_from_int(((int64_t*)(cg->loop_labels).data)[top]); str_concat(strata_t393_, strata_t394_); })), ": ;\n");
+        label = str_concat((({ __auto_type strata_t430_ = str_concat(cg_indent(ind), "strata_break_"); __auto_type strata_t431_ = str_from_int(((int64_t*)(cg->loop_labels).data)[top]); str_concat(strata_t430_, strata_t431_); })), ": ;\n");
     }
     cg->loop_regions.len = top;
     cg->loop_switches.len = top;
@@ -5784,8 +6745,55 @@ const char* ty_to_c(TypeNode* t) {
             return "Array";
             break;
         }
+        case TyFunc:
+        {
+            return fn_typedef(t);
+            break;
+        }
     }
     return "void";
+}
+
+void fn_reset(void) {
+    Array k = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array d = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    fn_keys = k;
+    fn_defs = d;
+}
+
+const char* fn_typedef(TypeNode* t) {
+    const char* ret = "void";
+    if (t->elem != 0) {
+        ret = ty_to_c(t->elem);
+    }
+    Array ps = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    TypeNode* a = t->args;
+    while (a != 0) {
+        ({ const char* _e = ty_to_c(a); arr_push(&(ps), &_e); });
+        a = a->next;
+    }
+    const char* params = "void";
+    if (ps.len > 0) {
+        params = join_with(ps, ", ");
+    }
+    const char* key = str_concat(str_concat(str_concat(ret, "("), params), ")");
+    for (int64_t i = 0; i < fn_keys.len; i++) {
+        if (str_eq(((const char**)(fn_keys).data)[i], key)) {
+            return str_concat("strata_fn", str_from_int(i));
+        }
+    }
+    const char* name = str_concat("strata_fn", str_from_int(fn_keys.len));
+    ({ const char* _e = key; arr_push(&(fn_keys), &_e); });
+    ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("typedef ", ret), " (*"), name), ")("), params), ");\n"); arr_push(&(fn_defs), &_e); });
+    return name;
+}
+
+const char* fn_typedefs(void) {
+    Array all = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t i = 0; i < fn_defs.len; i++) {
+        ({ const char* _e = ((const char**)(fn_defs).data)[i]; arr_push(&(all), &_e); });
+    }
+    return strata_join((&all));
 }
 
 bool cg_is_vec_name(const char* n) {
@@ -5937,11 +6945,12 @@ const char* cg_ordered(Codegen* cg, Expr* e, int64_t n) {
     c->text = e->text;
     c->type_name = e->type_name;
     c->rtype = e->rtype;
+    c->type = e->type;
     for (int64_t i = 0; i < e->items.len; i++) {
         Expr* it = ((Expr**)(e->items).data)[i];
         if ((i < n) && (!cg_constant(it))) {
             const char* t = cg_temp(cg);
-            ({ const char* _e = str_concat((({ __auto_type strata_t395_ = str_concat(str_concat("__auto_type ", t), " = "); __auto_type strata_t396_ = gen_expr(cg, it); str_concat(strata_t395_, strata_t396_); })), "; "); arr_push(&(out), &_e); });
+            ({ const char* _e = str_concat((({ __auto_type strata_t432_ = str_concat(str_concat("__auto_type ", t), " = "); __auto_type strata_t433_ = gen_expr(cg, it); str_concat(strata_t432_, strata_t433_); })), "; "); arr_push(&(out), &_e); });
             Expr* r = new_expr(ExName, it->line, it->col);
             r->text = t;
             r->rtype = it->rtype;
@@ -5959,6 +6968,13 @@ const char* gen_call(Codegen* cg, Expr* e) {
     int64_t hoist = cg_hoist_count(e->items);
     if (hoist > 0) {
         return cg_ordered(cg, e, hoist);
+    }
+    if (e->type != 0) {
+        Array args = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+        for (int64_t i = 0; i < e->items.len; i++) {
+            ({ const char* _e = gen_expr(cg, ((Expr**)(e->items).data)[i]); arr_push(&(args), &_e); });
+        }
+        return str_concat((({ __auto_type strata_t434_ = str_concat(str_concat("(", gen_expr(cg, e->a)), ")("); __auto_type strata_t435_ = join_with(args, ", "); str_concat(strata_t434_, strata_t435_); })), ")");
     }
     if (((e->a->kind == ExName) && str_eq(e->a->text, "arena")) && (e->items.len == 0)) {
         return "arena_make()";
@@ -6005,7 +7021,7 @@ const char* gen_call(Codegen* cg, Expr* e) {
                 for (int64_t i = 0; i < e->items.len; i++) {
                     ({ const char* _e = gen_expr(cg, ((Expr**)(e->items).data)[i]); arr_push(&(a), &_e); });
                 }
-                s = (({ __auto_type strata_t397_ = s; __auto_type strata_t398_ = join_with(a, ", "); str_concat(strata_t397_, strata_t398_); }));
+                s = (({ __auto_type strata_t436_ = s; __auto_type strata_t437_ = join_with(a, ", "); str_concat(strata_t436_, strata_t437_); }));
             }
             return str_concat(s, "}");
         }
@@ -6014,26 +7030,26 @@ const char* gen_call(Codegen* cg, Expr* e) {
             if (str_len(vn) == 0) {
                 vn = cg_vec_name_rt(((Expr**)(e->items).data)[1]->rtype);
             }
-            return str_concat((({ __auto_type strata_t401_ = str_concat((({ __auto_type strata_t399_ = str_concat(vn, "_dot("); __auto_type strata_t400_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t399_, strata_t400_); })), ", "); __auto_type strata_t402_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t401_, strata_t402_); })), ")");
+            return str_concat((({ __auto_type strata_t440_ = str_concat((({ __auto_type strata_t438_ = str_concat(vn, "_dot("); __auto_type strata_t439_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t438_, strata_t439_); })), ", "); __auto_type strata_t441_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t440_, strata_t441_); })), ")");
         }
         if (str_eq(nm, "cross") && (e->items.len == 2)) {
-            return str_concat((({ __auto_type strata_t403_ = str_concat(str_concat("vec3_cross(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t404_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t403_, strata_t404_); })), ")");
+            return str_concat((({ __auto_type strata_t442_ = str_concat(str_concat("vec3_cross(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t443_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t442_, strata_t443_); })), ")");
         }
         if (str_eq(nm, "length") && (e->items.len == 1)) {
-            return str_concat((({ __auto_type strata_t405_ = str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_length("); __auto_type strata_t406_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t405_, strata_t406_); })), ")");
+            return str_concat((({ __auto_type strata_t444_ = str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_length("); __auto_type strata_t445_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t444_, strata_t445_); })), ")");
         }
         if (str_eq(nm, "normalize") && (e->items.len == 1)) {
-            return str_concat((({ __auto_type strata_t407_ = str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_normalize("); __auto_type strata_t408_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t407_, strata_t408_); })), ")");
+            return str_concat((({ __auto_type strata_t446_ = str_concat(cg_vec_name_rt(((Expr**)(e->items).data)[0]->rtype), "_normalize("); __auto_type strata_t447_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t446_, strata_t447_); })), ")");
         }
         if (str_eq(nm, "alloc") && (e->items.len == 1)) {
             const char* ct = "int64_t";
             if (((Expr**)(e->items).data)[0]->rtype != 0) {
                 ct = ty_to_c(((Expr**)(e->items).data)[0]->rtype);
             }
-            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t409_ = str_concat(str_concat("({ ", ct), " _v = "); __auto_type strata_t410_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t409_, strata_t410_); })), "; "), ct), "* _p = ("), ct), "*)arena_alloc(strata_heap(), sizeof("), ct), ")); *_p = _v; _p; })");
+            return str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t448_ = str_concat(str_concat("({ ", ct), " _v = "); __auto_type strata_t449_ = gen_expr(cg, ((Expr**)(e->items).data)[0]); str_concat(strata_t448_, strata_t449_); })), "; "), ct), "* _p = ("), ct), "*)arena_alloc(strata_heap(), sizeof("), ct), ")); *_p = _v; _p; })");
         }
         if (str_eq(nm, "substr") && (e->items.len == 3)) {
-            return str_concat((({ __auto_type strata_t413_ = str_concat((({ __auto_type strata_t411_ = str_concat(str_concat("str_sub(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t412_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t411_, strata_t412_); })), ", "); __auto_type strata_t414_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t413_, strata_t414_); })), ")");
+            return str_concat((({ __auto_type strata_t452_ = str_concat((({ __auto_type strata_t450_ = str_concat(str_concat("str_sub(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t451_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t450_, strata_t451_); })), ", "); __auto_type strata_t453_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t452_, strata_t453_); })), ")");
         }
         if (str_eq(nm, "int_to_str") && (e->items.len == 1)) {
             return str_concat(str_concat("str_from_int(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
@@ -6042,7 +7058,7 @@ const char* gen_call(Codegen* cg, Expr* e) {
             return str_concat(str_concat("strata_read_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
         if (str_eq(nm, "write_file") && (e->items.len == 2)) {
-            return str_concat((({ __auto_type strata_t415_ = str_concat(str_concat("strata_write_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t416_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t415_, strata_t416_); })), ")");
+            return str_concat((({ __auto_type strata_t454_ = str_concat(str_concat("strata_write_file(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t455_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t454_, strata_t455_); })), ")");
         }
         if (str_eq(nm, "args") && (e->items.len == 0)) {
             return "strata_args()";
@@ -6051,16 +7067,16 @@ const char* gen_call(Codegen* cg, Expr* e) {
             return str_concat(str_concat("(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ")");
         }
         if (str_eq(nm, "min") && (e->items.len == 2)) {
-            return str_concat((({ __auto_type strata_t417_ = str_concat(str_concat("sp_min(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t418_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t417_, strata_t418_); })), ")");
+            return str_concat((({ __auto_type strata_t456_ = str_concat(str_concat("sp_min(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t457_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t456_, strata_t457_); })), ")");
         }
         if (str_eq(nm, "max") && (e->items.len == 2)) {
-            return str_concat((({ __auto_type strata_t419_ = str_concat(str_concat("sp_max(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t420_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t419_, strata_t420_); })), ")");
+            return str_concat((({ __auto_type strata_t458_ = str_concat(str_concat("sp_max(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t459_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t458_, strata_t459_); })), ")");
         }
         if (str_eq(nm, "clamp") && (e->items.len == 3)) {
-            return str_concat((({ __auto_type strata_t423_ = str_concat((({ __auto_type strata_t421_ = str_concat(str_concat("sp_clamp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t422_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t421_, strata_t422_); })), ", "); __auto_type strata_t424_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t423_, strata_t424_); })), ")");
+            return str_concat((({ __auto_type strata_t462_ = str_concat((({ __auto_type strata_t460_ = str_concat(str_concat("sp_clamp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t461_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t460_, strata_t461_); })), ", "); __auto_type strata_t463_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t462_, strata_t463_); })), ")");
         }
         if (str_eq(nm, "lerp") && (e->items.len == 3)) {
-            return str_concat((({ __auto_type strata_t427_ = str_concat((({ __auto_type strata_t425_ = str_concat(str_concat("sp_lerp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t426_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t425_, strata_t426_); })), ", "); __auto_type strata_t428_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t427_, strata_t428_); })), ")");
+            return str_concat((({ __auto_type strata_t466_ = str_concat((({ __auto_type strata_t464_ = str_concat(str_concat("sp_lerp(", gen_expr(cg, ((Expr**)(e->items).data)[0])), ", "); __auto_type strata_t465_ = gen_expr(cg, ((Expr**)(e->items).data)[1]); str_concat(strata_t464_, strata_t465_); })), ", "); __auto_type strata_t467_ = gen_expr(cg, ((Expr**)(e->items).data)[2]); str_concat(strata_t466_, strata_t467_); })), ")");
         }
     }
     const char* s = str_concat(gen_expr(cg, e->a), "(");
@@ -6068,7 +7084,7 @@ const char* gen_call(Codegen* cg, Expr* e) {
     for (int64_t i = 0; i < e->items.len; i++) {
         ({ const char* _e = gen_expr(cg, ((Expr**)(e->items).data)[i]); arr_push(&(a), &_e); });
     }
-    return str_concat((({ __auto_type strata_t429_ = s; __auto_type strata_t430_ = join_with(a, ", "); str_concat(strata_t429_, strata_t430_); })), ")");
+    return str_concat((({ __auto_type strata_t468_ = s; __auto_type strata_t469_ = join_with(a, ", "); str_concat(strata_t468_, strata_t469_); })), ")");
 }
 
 BinParts gen_binary(Codegen* cg, Expr* e, const char* b) {
@@ -6180,7 +7196,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
         }
         case ExUnary:
         {
-            return str_concat((({ __auto_type strata_t431_ = str_concat("(", e->text); __auto_type strata_t432_ = gen_expr(cg, e->a); str_concat(strata_t431_, strata_t432_); })), ")");
+            return str_concat((({ __auto_type strata_t470_ = str_concat("(", e->text); __auto_type strata_t471_ = gen_expr(cg, e->a); str_concat(strata_t470_, strata_t471_); })), ")");
             break;
         }
         case ExBinary:
@@ -6217,11 +7233,11 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                         const char* lt = cg_temp(cg);
                         const char* rt = cg_temp(cg);
                         BinParts op = gen_binary(cg, ((Expr**)(spine).data)[k], rt);
-                        inner = str_concat(str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t435_ = str_concat(str_concat(str_concat((({ __auto_type strata_t433_ = str_concat(str_concat("(({ __auto_type ", lt), " = "); __auto_type strata_t434_ = strata_join((&whole)); str_concat(strata_t433_, strata_t434_); })), "; __auto_type "), rt), " = "); __auto_type strata_t436_ = gen_expr(cg, right); str_concat(strata_t435_, strata_t436_); })), "; "), op.pre), lt), op.post), "; }))");
+                        inner = str_concat(str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t474_ = str_concat(str_concat(str_concat((({ __auto_type strata_t472_ = str_concat(str_concat("(({ __auto_type ", lt), " = "); __auto_type strata_t473_ = strata_join((&whole)); str_concat(strata_t472_, strata_t473_); })), "; __auto_type "), rt), " = "); __auto_type strata_t475_ = gen_expr(cg, right); str_concat(strata_t474_, strata_t475_); })), "; "), op.pre), lt), op.post), "; }))");
                         pre = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                         post = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                     } else {
-                        BinParts bp = (({ __auto_type strata_t437_ = cg; __auto_type strata_t438_ = ((Expr**)(spine).data)[k]; __auto_type strata_t439_ = gen_expr(cg, right); gen_binary(strata_t437_, strata_t438_, strata_t439_); }));
+                        BinParts bp = (({ __auto_type strata_t476_ = cg; __auto_type strata_t477_ = ((Expr**)(spine).data)[k]; __auto_type strata_t478_ = gen_expr(cg, right); gen_binary(strata_t476_, strata_t477_, strata_t478_); }));
                         ({ const char* _e = bp.pre; arr_push(&(pre), &_e); });
                         ({ const char* _e = bp.post; arr_push(&(post), &_e); });
                     }
@@ -6267,7 +7283,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                         if (i > 0) {
                             s = str_concat(s, ", ");
                         }
-                        s = (({ __auto_type strata_t440_ = str_concat(str_concat(str_concat(s, "("), base), ")."); __auto_type strata_t441_ = str_sub(e->field, i, 1); str_concat(strata_t440_, strata_t441_); }));
+                        s = (({ __auto_type strata_t479_ = str_concat(str_concat(str_concat(s, "("), base), ")."); __auto_type strata_t480_ = str_sub(e->field, i, 1); str_concat(strata_t479_, strata_t480_); }));
                     }
                     return str_concat(s, "}");
                 }
@@ -6284,9 +7300,9 @@ const char* gen_expr(Codegen* cg, Expr* e) {
             {
                 if (cg_is_dynarr_rt(e->a->rtype)) {
                     const char* elemc = cg_dynarr_elem(e->a->rtype);
-                    return str_concat((({ __auto_type strata_t444_ = str_concat((({ __auto_type strata_t442_ = str_concat(str_concat("((", elemc), "*)("); __auto_type strata_t443_ = gen_expr(cg, e->a); str_concat(strata_t442_, strata_t443_); })), ").data)["); __auto_type strata_t445_ = gen_expr(cg, e->b); str_concat(strata_t444_, strata_t445_); })), "]");
+                    return str_concat((({ __auto_type strata_t483_ = str_concat((({ __auto_type strata_t481_ = str_concat(str_concat("((", elemc), "*)("); __auto_type strata_t482_ = gen_expr(cg, e->a); str_concat(strata_t481_, strata_t482_); })), ").data)["); __auto_type strata_t484_ = gen_expr(cg, e->b); str_concat(strata_t483_, strata_t484_); })), "]");
                 }
-                return str_concat((({ __auto_type strata_t446_ = str_concat(gen_expr(cg, e->a), "["); __auto_type strata_t447_ = gen_expr(cg, e->b); str_concat(strata_t446_, strata_t447_); })), "]");
+                return str_concat((({ __auto_type strata_t485_ = str_concat(gen_expr(cg, e->a), "["); __auto_type strata_t486_ = gen_expr(cg, e->b); str_concat(strata_t485_, strata_t486_); })), "]");
             }
             break;
         }
@@ -6301,7 +7317,7 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                 Array a = ({ Array _a = arr_make(sizeof(const char*)); _a; });
                 ({ const char* _e = s; arr_push(&(a), &_e); });
                 for (int64_t i = 0; i < e->items.len; i++) {
-                    ({ const char* _e = str_concat((({ __auto_type strata_t448_ = str_concat(str_concat(" { ", elemc), " _e = "); __auto_type strata_t449_ = gen_expr(cg, ((Expr**)(e->items).data)[i]); str_concat(strata_t448_, strata_t449_); })), "; arr_push(&_a, &_e); }"); arr_push(&(a), &_e); });
+                    ({ const char* _e = str_concat((({ __auto_type strata_t487_ = str_concat(str_concat(" { ", elemc), " _e = "); __auto_type strata_t488_ = gen_expr(cg, ((Expr**)(e->items).data)[i]); str_concat(strata_t487_, strata_t488_); })), "; arr_push(&_a, &_e); }"); arr_push(&(a), &_e); });
                 }
                 s = strata_join((&a));
                 return str_concat(s, " _a; })");
@@ -6320,13 +7336,13 @@ const char* gen_expr(Codegen* cg, Expr* e) {
                 for (int64_t i = 0; i < e->items.len; i++) {
                     ({ const char* _e = gen_expr(cg, ((Expr**)(e->items).data)[i]); arr_push(&(a), &_e); });
                 }
-                return str_concat((({ __auto_type strata_t450_ = s; __auto_type strata_t451_ = join_with(a, ", "); str_concat(strata_t450_, strata_t451_); })), "}");
+                return str_concat((({ __auto_type strata_t489_ = s; __auto_type strata_t490_ = join_with(a, ", "); str_concat(strata_t489_, strata_t490_); })), "}");
             }
             break;
         }
         case ExCast:
         {
-            return str_concat((({ __auto_type strata_t452_ = str_concat(str_concat("((", ty_to_c(e->type)), ")("); __auto_type strata_t453_ = gen_expr(cg, e->a); str_concat(strata_t452_, strata_t453_); })), "))");
+            return str_concat((({ __auto_type strata_t491_ = str_concat(str_concat("((", ty_to_c(e->type)), ")("); __auto_type strata_t492_ = gen_expr(cg, e->a); str_concat(strata_t491_, strata_t492_); })), "))");
             break;
         }
         case ExSizeof:
@@ -6350,7 +7366,7 @@ void gen_braced(Codegen* cg, int64_t ind, Stmt* blk) {
             gen_stmt(cg, (ind + 1), ((Stmt**)(blk->stmts).data)[i]);
         }
     }
-    (({ __auto_type strata_t454_ = cg; __auto_type strata_t455_ = str_concat(cg_indent(ind), "}"); cg_out(strata_t454_, strata_t455_); }));
+    (({ __auto_type strata_t493_ = cg; __auto_type strata_t494_ = str_concat(cg_indent(ind), "}"); cg_out(strata_t493_, strata_t494_); }));
 }
 
 void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
@@ -6360,7 +7376,7 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
     switch (s->kind) {
         case StBlock:
         {
-            (({ __auto_type strata_t456_ = cg; __auto_type strata_t457_ = cg_indent(ind); cg_out(strata_t456_, strata_t457_); }));
+            (({ __auto_type strata_t495_ = cg; __auto_type strata_t496_ = cg_indent(ind); cg_out(strata_t495_, strata_t496_); }));
             gen_braced(cg, ind, s);
             cg_out(cg, "\n");
             break;
@@ -6377,12 +7393,12 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     head = "const ";
                 }
                 if (s->init != 0) {
-                    (({ __auto_type strata_t458_ = cg; __auto_type strata_t459_ = str_concat((({ __auto_type strata_t460_ = str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), " = "); __auto_type strata_t461_ = gen_expr(cg, s->init); str_concat(strata_t460_, strata_t461_); })), ";\n"); cg_out(strata_t458_, strata_t459_); }));
+                    (({ __auto_type strata_t497_ = cg; __auto_type strata_t498_ = str_concat((({ __auto_type strata_t499_ = str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), " = "); __auto_type strata_t500_ = gen_expr(cg, s->init); str_concat(strata_t499_, strata_t500_); })), ";\n"); cg_out(strata_t497_, strata_t498_); }));
                 } else 
                 if ((s->type != 0) && (s->type->kind == TyDynArray)) {
-                    (({ __auto_type strata_t462_ = cg; __auto_type strata_t463_ = str_concat((({ __auto_type strata_t464_ = str_concat(str_concat(str_concat(cg_indent(ind), "Array "), s->name), " = arr_make(sizeof("); __auto_type strata_t465_ = ty_to_c(s->type->elem); str_concat(strata_t464_, strata_t465_); })), "));\n"); cg_out(strata_t462_, strata_t463_); }));
+                    (({ __auto_type strata_t501_ = cg; __auto_type strata_t502_ = str_concat((({ __auto_type strata_t503_ = str_concat(str_concat(str_concat(cg_indent(ind), "Array "), s->name), " = arr_make(sizeof("); __auto_type strata_t504_ = ty_to_c(s->type->elem); str_concat(strata_t503_, strata_t504_); })), "));\n"); cg_out(strata_t501_, strata_t502_); }));
                 } else {
-                    (({ __auto_type strata_t466_ = cg; __auto_type strata_t467_ = str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), ";\n"); cg_out(strata_t466_, strata_t467_); }));
+                    (({ __auto_type strata_t505_ = cg; __auto_type strata_t506_ = str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), head), ct), " "), s->name), ";\n"); cg_out(strata_t505_, strata_t506_); }));
                 }
             }
             break;
@@ -6391,17 +7407,17 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         {
             if (cg->regions.len == 0) {
                 if (s->expr != 0) {
-                    (({ __auto_type strata_t468_ = cg; __auto_type strata_t469_ = str_concat((({ __auto_type strata_t470_ = str_concat(cg_indent(ind), "return "); __auto_type strata_t471_ = gen_expr(cg, s->expr); str_concat(strata_t470_, strata_t471_); })), ";\n"); cg_out(strata_t468_, strata_t469_); }));
+                    (({ __auto_type strata_t507_ = cg; __auto_type strata_t508_ = str_concat((({ __auto_type strata_t509_ = str_concat(cg_indent(ind), "return "); __auto_type strata_t510_ = gen_expr(cg, s->expr); str_concat(strata_t509_, strata_t510_); })), ";\n"); cg_out(strata_t507_, strata_t508_); }));
                 } else {
-                    (({ __auto_type strata_t472_ = cg; __auto_type strata_t473_ = str_concat(cg_indent(ind), "return;\n"); cg_out(strata_t472_, strata_t473_); }));
+                    (({ __auto_type strata_t511_ = cg; __auto_type strata_t512_ = str_concat(cg_indent(ind), "return;\n"); cg_out(strata_t511_, strata_t512_); }));
                 }
             } else 
             if (s->expr != 0) {
-                (({ __auto_type strata_t474_ = cg; __auto_type strata_t475_ = str_concat((({ __auto_type strata_t476_ = str_concat(str_concat(str_concat(cg_indent(ind), "{ "), cg->ret_c), " _ret = "); __auto_type strata_t477_ = gen_expr(cg, s->expr); str_concat(strata_t476_, strata_t477_); })), ";\n"); cg_out(strata_t474_, strata_t475_); }));
-                (({ __auto_type strata_t478_ = cg; __auto_type strata_t479_ = region_frees(cg, 0, (ind + 1)); cg_out(strata_t478_, strata_t479_); }));
-                (({ __auto_type strata_t480_ = cg; __auto_type strata_t481_ = str_concat(cg_indent((ind + 1)), "return _ret; }\n"); cg_out(strata_t480_, strata_t481_); }));
+                (({ __auto_type strata_t513_ = cg; __auto_type strata_t514_ = str_concat((({ __auto_type strata_t515_ = str_concat(str_concat(str_concat(cg_indent(ind), "{ "), cg->ret_c), " _ret = "); __auto_type strata_t516_ = gen_expr(cg, s->expr); str_concat(strata_t515_, strata_t516_); })), ";\n"); cg_out(strata_t513_, strata_t514_); }));
+                (({ __auto_type strata_t517_ = cg; __auto_type strata_t518_ = region_frees(cg, 0, (ind + 1)); cg_out(strata_t517_, strata_t518_); }));
+                (({ __auto_type strata_t519_ = cg; __auto_type strata_t520_ = str_concat(cg_indent((ind + 1)), "return _ret; }\n"); cg_out(strata_t519_, strata_t520_); }));
             } else {
-                (({ __auto_type strata_t482_ = cg; __auto_type strata_t483_ = str_concat((({ __auto_type strata_t486_ = (({ __auto_type strata_t484_ = str_concat(cg_indent(ind), "{\n"); __auto_type strata_t485_ = region_frees(cg, 0, (ind + 1)); str_concat(strata_t484_, strata_t485_); })); __auto_type strata_t487_ = cg_indent((ind + 1)); str_concat(strata_t486_, strata_t487_); })), "return; }\n"); cg_out(strata_t482_, strata_t483_); }));
+                (({ __auto_type strata_t521_ = cg; __auto_type strata_t522_ = str_concat((({ __auto_type strata_t525_ = (({ __auto_type strata_t523_ = str_concat(cg_indent(ind), "{\n"); __auto_type strata_t524_ = region_frees(cg, 0, (ind + 1)); str_concat(strata_t523_, strata_t524_); })); __auto_type strata_t526_ = cg_indent((ind + 1)); str_concat(strata_t525_, strata_t526_); })), "return; }\n"); cg_out(strata_t521_, strata_t522_); }));
             }
             break;
         }
@@ -6410,22 +7426,22 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         {
             {
                 int64_t top = (cg->loop_labels.len - 1);
-                (({ __auto_type strata_t488_ = cg; __auto_type strata_t489_ = region_frees(cg, ((int64_t*)(cg->loop_regions).data)[top], ind); cg_out(strata_t488_, strata_t489_); }));
+                (({ __auto_type strata_t527_ = cg; __auto_type strata_t528_ = region_frees(cg, ((int64_t*)(cg->loop_regions).data)[top], ind); cg_out(strata_t527_, strata_t528_); }));
                 if (s->kind == StContinue) {
-                    (({ __auto_type strata_t490_ = cg; __auto_type strata_t491_ = str_concat(cg_indent(ind), "continue;\n"); cg_out(strata_t490_, strata_t491_); }));
+                    (({ __auto_type strata_t529_ = cg; __auto_type strata_t530_ = str_concat(cg_indent(ind), "continue;\n"); cg_out(strata_t529_, strata_t530_); }));
                 } else 
                 if (cg->switch_depth > ((int64_t*)(cg->loop_switches).data)[top]) {
                     ((int64_t*)(cg->loop_label_used).data)[top] = 1;
-                    (({ __auto_type strata_t492_ = cg; __auto_type strata_t493_ = str_concat((({ __auto_type strata_t494_ = str_concat(cg_indent(ind), "goto strata_break_"); __auto_type strata_t495_ = str_from_int(((int64_t*)(cg->loop_labels).data)[top]); str_concat(strata_t494_, strata_t495_); })), ";\n"); cg_out(strata_t492_, strata_t493_); }));
+                    (({ __auto_type strata_t531_ = cg; __auto_type strata_t532_ = str_concat((({ __auto_type strata_t533_ = str_concat(cg_indent(ind), "goto strata_break_"); __auto_type strata_t534_ = str_from_int(((int64_t*)(cg->loop_labels).data)[top]); str_concat(strata_t533_, strata_t534_); })), ";\n"); cg_out(strata_t531_, strata_t532_); }));
                 } else {
-                    (({ __auto_type strata_t496_ = cg; __auto_type strata_t497_ = str_concat(cg_indent(ind), "break;\n"); cg_out(strata_t496_, strata_t497_); }));
+                    (({ __auto_type strata_t535_ = cg; __auto_type strata_t536_ = str_concat(cg_indent(ind), "break;\n"); cg_out(strata_t535_, strata_t536_); }));
                 }
             }
             break;
         }
         case StExprStmt:
         {
-            (({ __auto_type strata_t498_ = cg; __auto_type strata_t499_ = str_concat((({ __auto_type strata_t500_ = cg_indent(ind); __auto_type strata_t501_ = gen_expr(cg, s->expr); str_concat(strata_t500_, strata_t501_); })), ";\n"); cg_out(strata_t498_, strata_t499_); }));
+            (({ __auto_type strata_t537_ = cg; __auto_type strata_t538_ = str_concat((({ __auto_type strata_t539_ = cg_indent(ind); __auto_type strata_t540_ = gen_expr(cg, s->expr); str_concat(strata_t539_, strata_t540_); })), ";\n"); cg_out(strata_t537_, strata_t538_); }));
             break;
         }
         case StAssign:
@@ -6451,16 +7467,16 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     } else {
                         cg->had_error = true;
                     }
-                    (({ __auto_type strata_t502_ = cg; __auto_type strata_t503_ = str_concat(str_concat(str_concat(str_concat(cg_indent(ind), tgt), " = "), rhs), ";\n"); cg_out(strata_t502_, strata_t503_); }));
+                    (({ __auto_type strata_t541_ = cg; __auto_type strata_t542_ = str_concat(str_concat(str_concat(str_concat(cg_indent(ind), tgt), " = "), rhs), ";\n"); cg_out(strata_t541_, strata_t542_); }));
                 } else {
-                    (({ __auto_type strata_t504_ = cg; __auto_type strata_t505_ = str_concat((({ __auto_type strata_t508_ = str_concat(str_concat(str_concat((({ __auto_type strata_t506_ = cg_indent(ind); __auto_type strata_t507_ = gen_expr(cg, s->target); str_concat(strata_t506_, strata_t507_); })), " "), s->op), " "); __auto_type strata_t509_ = gen_expr(cg, s->value); str_concat(strata_t508_, strata_t509_); })), ";\n"); cg_out(strata_t504_, strata_t505_); }));
+                    (({ __auto_type strata_t543_ = cg; __auto_type strata_t544_ = str_concat((({ __auto_type strata_t547_ = str_concat(str_concat(str_concat((({ __auto_type strata_t545_ = cg_indent(ind); __auto_type strata_t546_ = gen_expr(cg, s->target); str_concat(strata_t545_, strata_t546_); })), " "), s->op), " "); __auto_type strata_t548_ = gen_expr(cg, s->value); str_concat(strata_t547_, strata_t548_); })), ";\n"); cg_out(strata_t543_, strata_t544_); }));
                 }
             }
             break;
         }
         case StIf:
         {
-            (({ __auto_type strata_t510_ = cg; __auto_type strata_t511_ = str_concat((({ __auto_type strata_t512_ = str_concat(cg_indent(ind), "if "); __auto_type strata_t513_ = paren_cond(gen_expr(cg, s->cond)); str_concat(strata_t512_, strata_t513_); })), " "); cg_out(strata_t510_, strata_t511_); }));
+            (({ __auto_type strata_t549_ = cg; __auto_type strata_t550_ = str_concat((({ __auto_type strata_t551_ = str_concat(cg_indent(ind), "if "); __auto_type strata_t552_ = paren_cond(gen_expr(cg, s->cond)); str_concat(strata_t551_, strata_t552_); })), " "); cg_out(strata_t549_, strata_t550_); }));
             gen_braced(cg, ind, s->then_block);
             if (s->else_branch != 0) {
                 cg_out(cg, " else ");
@@ -6478,11 +7494,11 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
         }
         case StWhile:
         {
-            (({ __auto_type strata_t514_ = cg; __auto_type strata_t515_ = str_concat((({ __auto_type strata_t516_ = str_concat(cg_indent(ind), "while "); __auto_type strata_t517_ = paren_cond(gen_expr(cg, s->cond)); str_concat(strata_t516_, strata_t517_); })), " "); cg_out(strata_t514_, strata_t515_); }));
+            (({ __auto_type strata_t553_ = cg; __auto_type strata_t554_ = str_concat((({ __auto_type strata_t555_ = str_concat(cg_indent(ind), "while "); __auto_type strata_t556_ = paren_cond(gen_expr(cg, s->cond)); str_concat(strata_t555_, strata_t556_); })), " "); cg_out(strata_t553_, strata_t554_); }));
             loop_enter(cg);
             gen_braced(cg, ind, s->body);
             cg_out(cg, "\n");
-            (({ __auto_type strata_t518_ = cg; __auto_type strata_t519_ = loop_leave(cg, ind); cg_out(strata_t518_, strata_t519_); }));
+            (({ __auto_type strata_t557_ = cg; __auto_type strata_t558_ = loop_leave(cg, ind); cg_out(strata_t557_, strata_t558_); }));
             break;
         }
         case StForIn:
@@ -6490,18 +7506,18 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
             if (((s->iter != 0) && (s->iter->kind == ExBinary)) && str_eq(s->iter->text, "..")) {
                 const char* lo = gen_expr(cg, s->iter->a);
                 const char* hi = gen_expr(cg, s->iter->b);
-                (({ __auto_type strata_t520_ = cg; __auto_type strata_t521_ = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "for (int64_t "), s->name), " = "), lo), "; "), s->name), " < "), hi), "; "), s->name), "++) "); cg_out(strata_t520_, strata_t521_); }));
+                (({ __auto_type strata_t559_ = cg; __auto_type strata_t560_ = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent(ind), "for (int64_t "), s->name), " = "), lo), "; "), s->name), " < "), hi), "; "), s->name), "++) "); cg_out(strata_t559_, strata_t560_); }));
                 loop_enter(cg);
                 gen_braced(cg, ind, s->body);
                 cg_out(cg, "\n");
-                (({ __auto_type strata_t522_ = cg; __auto_type strata_t523_ = loop_leave(cg, ind); cg_out(strata_t522_, strata_t523_); }));
+                (({ __auto_type strata_t561_ = cg; __auto_type strata_t562_ = loop_leave(cg, ind); cg_out(strata_t561_, strata_t562_); }));
             } else 
             if (cg_is_dynarr_rt(s->iter->rtype)) {
                 const char* elemc = cg_dynarr_elem(s->iter->rtype);
                 const char* arrx = gen_expr(cg, s->iter);
-                (({ __auto_type strata_t524_ = cg; __auto_type strata_t525_ = str_concat(str_concat(str_concat(cg_indent(ind), "{ Array _arr = "), arrx), ";\n"); cg_out(strata_t524_, strata_t525_); }));
-                (({ __auto_type strata_t526_ = cg; __auto_type strata_t527_ = str_concat(cg_indent((ind + 1)), "for (int64_t _i = 0; _i < _arr.len; _i++) {\n"); cg_out(strata_t526_, strata_t527_); }));
-                (({ __auto_type strata_t528_ = cg; __auto_type strata_t529_ = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent((ind + 2)), elemc), " "), s->name), " = (("), elemc), "*)_arr.data)[_i];\n"); cg_out(strata_t528_, strata_t529_); }));
+                (({ __auto_type strata_t563_ = cg; __auto_type strata_t564_ = str_concat(str_concat(str_concat(cg_indent(ind), "{ Array _arr = "), arrx), ";\n"); cg_out(strata_t563_, strata_t564_); }));
+                (({ __auto_type strata_t565_ = cg; __auto_type strata_t566_ = str_concat(cg_indent((ind + 1)), "for (int64_t _i = 0; _i < _arr.len; _i++) {\n"); cg_out(strata_t565_, strata_t566_); }));
+                (({ __auto_type strata_t567_ = cg; __auto_type strata_t568_ = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat(cg_indent((ind + 2)), elemc), " "), s->name), " = (("), elemc), "*)_arr.data)[_i];\n"); cg_out(strata_t567_, strata_t568_); }));
                 loop_enter(cg);
                 if ((s->body != 0) && (s->body->kind == StBlock)) {
                     for (int64_t i = 0; i < s->body->stmts.len; i++) {
@@ -6509,39 +7525,39 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     }
                 }
                 const char* label = loop_leave(cg, (ind + 1));
-                (({ __auto_type strata_t530_ = cg; __auto_type strata_t531_ = str_concat(cg_indent((ind + 1)), "}\n"); cg_out(strata_t530_, strata_t531_); }));
+                (({ __auto_type strata_t569_ = cg; __auto_type strata_t570_ = str_concat(cg_indent((ind + 1)), "}\n"); cg_out(strata_t569_, strata_t570_); }));
                 cg_out(cg, label);
-                (({ __auto_type strata_t532_ = cg; __auto_type strata_t533_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t532_, strata_t533_); }));
+                (({ __auto_type strata_t571_ = cg; __auto_type strata_t572_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t571_, strata_t572_); }));
             } else {
                 cg->had_error = true;
-                (({ __auto_type strata_t534_ = cg; __auto_type strata_t535_ = str_concat(cg_indent(ind), "/* unsupported for-in iterable */\n"); cg_out(strata_t534_, strata_t535_); }));
+                (({ __auto_type strata_t573_ = cg; __auto_type strata_t574_ = str_concat(cg_indent(ind), "/* unsupported for-in iterable */\n"); cg_out(strata_t573_, strata_t574_); }));
             }
             break;
         }
         case StSwitch:
         {
-            (({ __auto_type strata_t536_ = cg; __auto_type strata_t537_ = str_concat((({ __auto_type strata_t538_ = str_concat(cg_indent(ind), "switch ("); __auto_type strata_t539_ = gen_expr(cg, s->subject); str_concat(strata_t538_, strata_t539_); })), ") {\n"); cg_out(strata_t536_, strata_t537_); }));
+            (({ __auto_type strata_t575_ = cg; __auto_type strata_t576_ = str_concat((({ __auto_type strata_t577_ = str_concat(cg_indent(ind), "switch ("); __auto_type strata_t578_ = gen_expr(cg, s->subject); str_concat(strata_t577_, strata_t578_); })), ") {\n"); cg_out(strata_t575_, strata_t576_); }));
             cg->switch_depth += 1;
             for (int64_t i = 0; i < s->cases.len; i++) {
                 SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
                 if (sc.is_default) {
-                    (({ __auto_type strata_t540_ = cg; __auto_type strata_t541_ = str_concat(cg_indent((ind + 1)), "default: {\n"); cg_out(strata_t540_, strata_t541_); }));
+                    (({ __auto_type strata_t579_ = cg; __auto_type strata_t580_ = str_concat(cg_indent((ind + 1)), "default: {\n"); cg_out(strata_t579_, strata_t580_); }));
                 } else {
                     for (int64_t j = 0; j < sc.values.len; j++) {
-                        (({ __auto_type strata_t542_ = cg; __auto_type strata_t543_ = str_concat((({ __auto_type strata_t544_ = str_concat(cg_indent((ind + 1)), "case "); __auto_type strata_t545_ = gen_expr(cg, ((Expr**)(sc.values).data)[j]); str_concat(strata_t544_, strata_t545_); })), ":\n"); cg_out(strata_t542_, strata_t543_); }));
+                        (({ __auto_type strata_t581_ = cg; __auto_type strata_t582_ = str_concat((({ __auto_type strata_t583_ = str_concat(cg_indent((ind + 1)), "case "); __auto_type strata_t584_ = gen_expr(cg, ((Expr**)(sc.values).data)[j]); str_concat(strata_t583_, strata_t584_); })), ":\n"); cg_out(strata_t581_, strata_t582_); }));
                     }
-                    (({ __auto_type strata_t546_ = cg; __auto_type strata_t547_ = str_concat(cg_indent((ind + 1)), "{\n"); cg_out(strata_t546_, strata_t547_); }));
+                    (({ __auto_type strata_t585_ = cg; __auto_type strata_t586_ = str_concat(cg_indent((ind + 1)), "{\n"); cg_out(strata_t585_, strata_t586_); }));
                 }
                 if ((sc.body != 0) && (sc.body->kind == StBlock)) {
                     for (int64_t j = 0; j < sc.body->stmts.len; j++) {
                         gen_stmt(cg, (ind + 2), ((Stmt**)(sc.body->stmts).data)[j]);
                     }
                 }
-                (({ __auto_type strata_t548_ = cg; __auto_type strata_t549_ = str_concat(cg_indent((ind + 2)), "break;\n"); cg_out(strata_t548_, strata_t549_); }));
-                (({ __auto_type strata_t550_ = cg; __auto_type strata_t551_ = str_concat(cg_indent((ind + 1)), "}\n"); cg_out(strata_t550_, strata_t551_); }));
+                (({ __auto_type strata_t587_ = cg; __auto_type strata_t588_ = str_concat(cg_indent((ind + 2)), "break;\n"); cg_out(strata_t587_, strata_t588_); }));
+                (({ __auto_type strata_t589_ = cg; __auto_type strata_t590_ = str_concat(cg_indent((ind + 1)), "}\n"); cg_out(strata_t589_, strata_t590_); }));
             }
             cg->switch_depth -= 1;
-            (({ __auto_type strata_t552_ = cg; __auto_type strata_t553_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t552_, strata_t553_); }));
+            (({ __auto_type strata_t591_ = cg; __auto_type strata_t592_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t591_, strata_t592_); }));
             break;
         }
         case StRegion:
@@ -6554,8 +7570,8 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                         rname = str_concat("_region", str_from_int((cg->regions.len + 1)));
                     }
                 }
-                (({ __auto_type strata_t554_ = cg; __auto_type strata_t555_ = str_concat(cg_indent(ind), "{\n"); cg_out(strata_t554_, strata_t555_); }));
-                (({ __auto_type strata_t556_ = cg; __auto_type strata_t557_ = str_concat(str_concat(str_concat(cg_indent((ind + 1)), "Arena "), rname), " = arena_make();\n"); cg_out(strata_t556_, strata_t557_); }));
+                (({ __auto_type strata_t593_ = cg; __auto_type strata_t594_ = str_concat(cg_indent(ind), "{\n"); cg_out(strata_t593_, strata_t594_); }));
+                (({ __auto_type strata_t595_ = cg; __auto_type strata_t596_ = str_concat(str_concat(str_concat(cg_indent((ind + 1)), "Arena "), rname), " = arena_make();\n"); cg_out(strata_t595_, strata_t596_); }));
                 ({ const char* _e = rname; arr_push(&(cg->regions), &_e); });
                 if ((s->body != 0) && (s->body->kind == StBlock)) {
                     for (int64_t i = 0; i < s->body->stmts.len; i++) {
@@ -6563,8 +7579,8 @@ void gen_stmt(Codegen* cg, int64_t ind, Stmt* s) {
                     }
                 }
                 cg->regions.len = (cg->regions.len - 1);
-                (({ __auto_type strata_t558_ = cg; __auto_type strata_t559_ = str_concat(str_concat(str_concat(cg_indent((ind + 1)), "arena_free(&"), rname), ");\n"); cg_out(strata_t558_, strata_t559_); }));
-                (({ __auto_type strata_t560_ = cg; __auto_type strata_t561_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t560_, strata_t561_); }));
+                (({ __auto_type strata_t597_ = cg; __auto_type strata_t598_ = str_concat(str_concat(str_concat(cg_indent((ind + 1)), "arena_free(&"), rname), ");\n"); cg_out(strata_t597_, strata_t598_); }));
+                (({ __auto_type strata_t599_ = cg; __auto_type strata_t600_ = str_concat(cg_indent(ind), "}\n"); cg_out(strata_t599_, strata_t600_); }));
             }
             break;
         }
@@ -6584,7 +7600,7 @@ const char* func_sig(Decl* d) {
         for (int64_t i = 0; i < d->params.len; i++) {
             ({ const char* _e = str_concat(str_concat(ty_to_c(((Param*)(d->params).data)[i].type), " "), ((Param*)(d->params).data)[i].name); arr_push(&(ps), &_e); });
         }
-        s = (({ __auto_type strata_t562_ = s; __auto_type strata_t563_ = join_with(ps, ", "); str_concat(strata_t562_, strata_t563_); }));
+        s = (({ __auto_type strata_t601_ = s; __auto_type strata_t602_ = join_with(ps, ", "); str_concat(strata_t601_, strata_t602_); }));
     }
     return str_concat(s, ")");
 }
@@ -6656,12 +7672,14 @@ void gen_types(Codegen* cg, Program prog) {
             cg_out(cg, str_concat(str_concat(str_concat(str_concat("typedef struct ", d->name), " "), d->name), ";\n"));
         }
     }
+    cg->fn_slot = cg->parts.len;
+    cg_out(cg, "");
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcStruct) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
             cg_out(cg, str_concat(str_concat("struct ", d->name), " {\n"));
             for (int64_t f = 0; f < d->fields.len; f++) {
-                (({ __auto_type strata_t564_ = cg; __auto_type strata_t565_ = str_concat(str_concat(str_concat(str_concat("    ", ty_to_c(((FieldDef*)(d->fields).data)[f].type)), " "), ((FieldDef*)(d->fields).data)[f].name), ";\n"); cg_out(strata_t564_, strata_t565_); }));
+                (({ __auto_type strata_t603_ = cg; __auto_type strata_t604_ = str_concat(str_concat(str_concat(str_concat("    ", ty_to_c(((FieldDef*)(d->fields).data)[f].type)), " "), ((FieldDef*)(d->fields).data)[f].name), ";\n"); cg_out(strata_t603_, strata_t604_); }));
             }
             cg_out(cg, "};\n");
         }
@@ -6671,7 +7689,7 @@ void gen_types(Codegen* cg, Program prog) {
 
 void gen_function(Codegen* cg, Decl* d, const char* prefix) {
     cg->ret_c = ty_to_c(d->ret);
-    (({ __auto_type strata_t566_ = cg; __auto_type strata_t567_ = str_concat((({ __auto_type strata_t568_ = prefix; __auto_type strata_t569_ = func_sig(d); str_concat(strata_t568_, strata_t569_); })), " "); cg_out(strata_t566_, strata_t567_); }));
+    (({ __auto_type strata_t605_ = cg; __auto_type strata_t606_ = str_concat((({ __auto_type strata_t607_ = prefix; __auto_type strata_t608_ = func_sig(d); str_concat(strata_t607_, strata_t608_); })), " "); cg_out(strata_t605_, strata_t606_); }));
     gen_braced(cg, 0, d->body);
     cg_out(cg, "\n\n");
 }
@@ -6692,7 +7710,7 @@ void gen_globals(Codegen* cg, Program prog, int64_t module) {
             if ((d->ret != 0) && (d->ret->kind == TyDynArray)) {
                 init = str_concat(str_concat(" = { 0, 0, 0, sizeof(", ty_to_c(d->ret->elem)), ") }");
             }
-            (({ __auto_type strata_t570_ = cg; __auto_type strata_t571_ = str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t572_ = head; __auto_type strata_t573_ = ty_to_c(d->ret); str_concat(strata_t572_, strata_t573_); })), " "), d->name), init), ";\n"); cg_out(strata_t570_, strata_t571_); }));
+            (({ __auto_type strata_t609_ = cg; __auto_type strata_t610_ = str_concat(str_concat(str_concat(str_concat((({ __auto_type strata_t611_ = head; __auto_type strata_t612_ = ty_to_c(d->ret); str_concat(strata_t611_, strata_t612_); })), " "), d->name), init), ";\n"); cg_out(strata_t609_, strata_t610_); }));
             any = true;
         }
     }
@@ -6714,14 +7732,15 @@ void gen_main(Codegen* cg, Program prog) {
 }
 
 const char* generate(Codegen* cg, Program prog) {
+    fn_reset();
     cg_out(cg, "// Generated by stratac. Do not edit.\n");
     cg_out(cg, "#define STRATA_PROGRAM 1\n");
     gen_includes(cg, prog);
     gen_types(cg, prog);
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
-        if ((d->kind == DcFunc) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
-            (({ __auto_type strata_t574_ = cg; __auto_type strata_t575_ = str_concat((({ __auto_type strata_t576_ = export_prefix(cg, d); __auto_type strata_t577_ = func_sig(d); str_concat(strata_t576_, strata_t577_); })), ";\n"); cg_out(strata_t574_, strata_t575_); }));
+        if ((d->kind == DcFunc) && (!((d->is_foreign && (!str_eq(d->path, ""))) && str_eq(d->link_name, "")))) {
+            (({ __auto_type strata_t613_ = cg; __auto_type strata_t614_ = str_concat((({ __auto_type strata_t617_ = (({ __auto_type strata_t615_ = export_prefix(cg, d); __auto_type strata_t616_ = func_sig(d); str_concat(strata_t615_, strata_t616_); })); __auto_type strata_t618_ = link_label(d); str_concat(strata_t617_, strata_t618_); })), ";\n"); cg_out(strata_t613_, strata_t614_); }));
         }
     }
     cg_out(cg, "\n");
@@ -6729,10 +7748,11 @@ const char* generate(Codegen* cg, Program prog) {
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcFunc) && (!d->is_foreign)) {
-            (({ __auto_type strata_t578_ = cg; __auto_type strata_t579_ = d; __auto_type strata_t580_ = export_prefix(cg, d); gen_function(strata_t578_, strata_t579_, strata_t580_); }));
+            (({ __auto_type strata_t619_ = cg; __auto_type strata_t620_ = d; __auto_type strata_t621_ = export_prefix(cg, d); gen_function(strata_t619_, strata_t620_, strata_t621_); }));
         }
     }
     gen_main(cg, prog);
+    ((const char**)(cg->parts).data)[cg->fn_slot] = fn_typedefs();
     return join_pieces(cg->parts);
 }
 
@@ -6742,7 +7762,7 @@ const char* unit_name(int64_t m, const char* name) {
     for (int64_t i = 0; i < n; i++) {
         char ch = name[i];
         if ((((ch >= 'a') && (ch <= 'z')) || ((ch >= 'A') && (ch <= 'Z'))) || ((ch >= '0') && (ch <= '9'))) {
-            r = (({ __auto_type strata_t581_ = r; __auto_type strata_t582_ = str_sub(name, i, 1); str_concat(strata_t581_, strata_t582_); }));
+            r = (({ __auto_type strata_t622_ = r; __auto_type strata_t623_ = str_sub(name, i, 1); str_concat(strata_t622_, strata_t623_); }));
         } else {
             r = str_concat(r, "_");
         }
@@ -6751,6 +7771,7 @@ const char* unit_name(int64_t m, const char* name) {
 }
 
 SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, const char* guard) {
+    fn_reset();
     cg->parts = no_parts();
     cg_out(cg, "// Generated by stratac. Do not edit.\n");
     cg_out(cg, str_concat(str_concat(str_concat(str_concat("#ifndef ", guard), "\n#define "), guard), "\n"));
@@ -6760,11 +7781,11 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
     for (int64_t i = 0; i < prog.decls.len; i++) {
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if ((d->kind == DcGlobal) && d->is_exported) {
-            (({ __auto_type strata_t583_ = cg; __auto_type strata_t584_ = str_concat(str_concat(str_concat(str_concat("extern ", ty_to_c(d->ret)), " "), d->name), ";\n"); cg_out(strata_t583_, strata_t584_); }));
+            (({ __auto_type strata_t624_ = cg; __auto_type strata_t625_ = str_concat(str_concat(str_concat(str_concat("extern ", ty_to_c(d->ret)), " "), d->name), ";\n"); cg_out(strata_t624_, strata_t625_); }));
         }
     }
     cg_out(cg, "#endif\n");
-    const char* header = join_pieces(cg->parts);
+    Array hparts = cg->parts;
     Array names = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array units = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t m = 0; m < prog.modules.len; m++) {
@@ -6783,17 +7804,17 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
             cg_out(cg, str_concat(str_concat("#include \"", header_name), "\"\n\n"));
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if ((((d->kind == DcFunc) && d->is_exported) && ((d->module == m) || module_sees(prog, m, d->module))) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
-                    (({ __auto_type strata_t585_ = cg; __auto_type strata_t586_ = str_concat((({ __auto_type strata_t587_ = export_prefix(cg, d); __auto_type strata_t588_ = func_sig(d); str_concat(strata_t587_, strata_t588_); })), ";\n"); cg_out(strata_t585_, strata_t586_); }));
+                if ((((d->kind == DcFunc) && d->is_exported) && ((d->module == m) || module_sees(prog, m, d->module))) && (!((d->is_foreign && (!str_eq(d->path, ""))) && str_eq(d->link_name, "")))) {
+                    (({ __auto_type strata_t626_ = cg; __auto_type strata_t627_ = str_concat((({ __auto_type strata_t630_ = (({ __auto_type strata_t628_ = export_prefix(cg, d); __auto_type strata_t629_ = func_sig(d); str_concat(strata_t628_, strata_t629_); })); __auto_type strata_t631_ = link_label(d); str_concat(strata_t630_, strata_t631_); })), ";\n"); cg_out(strata_t626_, strata_t627_); }));
                 }
             }
             for (int64_t i = 0; i < prog.decls.len; i++) {
                 Decl* d = ((Decl**)(prog.decls).data)[i];
-                if ((((d->module == m) && (d->kind == DcFunc)) && (!d->is_exported)) && (!(d->is_foreign && (!str_eq(d->path, ""))))) {
+                if ((((d->module == m) && (d->kind == DcFunc)) && (!d->is_exported)) && (!((d->is_foreign && (!str_eq(d->path, ""))) && str_eq(d->link_name, "")))) {
                     if (d->is_foreign) {
-                        (({ __auto_type strata_t589_ = cg; __auto_type strata_t590_ = str_concat(func_sig(d), ";\n"); cg_out(strata_t589_, strata_t590_); }));
+                        (({ __auto_type strata_t632_ = cg; __auto_type strata_t633_ = str_concat((({ __auto_type strata_t634_ = func_sig(d); __auto_type strata_t635_ = link_label(d); str_concat(strata_t634_, strata_t635_); })), ";\n"); cg_out(strata_t632_, strata_t633_); }));
                     } else {
-                        (({ __auto_type strata_t591_ = cg; __auto_type strata_t592_ = str_concat(str_concat("static ", func_sig(d)), ";\n"); cg_out(strata_t591_, strata_t592_); }));
+                        (({ __auto_type strata_t636_ = cg; __auto_type strata_t637_ = str_concat(str_concat("static ", func_sig(d)), ";\n"); cg_out(strata_t636_, strata_t637_); }));
                     }
                 }
             }
@@ -6803,7 +7824,7 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
                 Decl* d = ((Decl**)(prog.decls).data)[i];
                 if (((d->module == m) && (d->kind == DcFunc)) && (!d->is_foreign)) {
                     if (d->is_exported) {
-                        (({ __auto_type strata_t593_ = cg; __auto_type strata_t594_ = d; __auto_type strata_t595_ = export_prefix(cg, d); gen_function(strata_t593_, strata_t594_, strata_t595_); }));
+                        (({ __auto_type strata_t638_ = cg; __auto_type strata_t639_ = d; __auto_type strata_t640_ = export_prefix(cg, d); gen_function(strata_t638_, strata_t639_, strata_t640_); }));
                     } else {
                         gen_function(cg, d, "static ");
                     }
@@ -6816,6 +7837,8 @@ SplitOutput generate_split(Codegen* cg, Program prog, const char* header_name, c
             ({ const char* _e = join_pieces(cg->parts); arr_push(&(units), &_e); });
         }
     }
+    ((const char**)(hparts).data)[cg->fn_slot] = fn_typedefs();
+    const char* header = join_pieces(hparts);
     return (SplitOutput){header, names, units};
 }
 
@@ -6855,6 +7878,7 @@ bool header_uses_array(TypeNode* t) {
 }
 
 const char* generate_header(Program prog, const char* guard, const char* source) {
+    fn_reset();
     Array out = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     ({ const char* _e = str_concat(str_concat("/* Generated by stratac from ", source), ". Do not edit. */\n"); arr_push(&(out), &_e); });
     ({ const char* _e = str_concat(str_concat(str_concat(str_concat("#ifndef ", guard), "\n#define "), guard), "\n\n#include <stdint.h>\n#include <stdbool.h>\n"); arr_push(&(out), &_e); });
@@ -6900,6 +7924,13 @@ const char* generate_header(Program prog, const char* guard, const char* source)
         Decl* d = ((Decl**)(prog.decls).data)[i];
         if (((d->module == 0) && d->is_exported) && (d->kind == DcStruct)) {
             ({ const char* _e = str_concat(str_concat(str_concat(str_concat("typedef struct ", d->name), " "), d->name), ";\n"); arr_push(&(out), &_e); });
+        }
+    }
+    int64_t fn_at = out.len;
+    ({ const char* _e = ""; arr_push(&(out), &_e); });
+    for (int64_t i = 0; i < prog.decls.len; i++) {
+        Decl* d = ((Decl**)(prog.decls).data)[i];
+        if (((d->module == 0) && d->is_exported) && (d->kind == DcStruct)) {
             ({ const char* _e = str_concat(str_concat("struct ", d->name), " {\n"); arr_push(&(out), &_e); });
             for (int64_t f = 0; f < d->fields.len; f++) {
                 ({ const char* _e = str_concat(str_concat(str_concat(str_concat("    ", ty_to_c(((FieldDef*)(d->fields).data)[f].type)), " "), ((FieldDef*)(d->fields).data)[f].name), ";\n"); arr_push(&(out), &_e); });
@@ -6915,6 +7946,7 @@ const char* generate_header(Program prog, const char* guard, const char* source)
         }
     }
     ({ const char* _e = str_concat(str_concat("\n#ifdef __cplusplus\n}\n#endif\n\n#endif /* ", guard), " */\n"); arr_push(&(out), &_e); });
+    ((const char**)(out).data)[fn_at] = fn_typedefs();
     return join_pieces(out);
 }
 
@@ -7027,7 +8059,8 @@ const char* ir_ty_name(int64_t t) {
 
 Ins new_ins(int64_t op, int64_t ty, int64_t dst, int64_t a, int64_t b) {
     Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return (Ins){op, ty, 0, dst, a, b, 0, 0, "", args};
+    Array ab = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return (Ins){op, ty, 0, dst, a, b, 0, 0, "", args, ab};
 }
 
 IrFunc new_ir_func(const char* name, bool global) {
@@ -7035,7 +8068,8 @@ IrFunc new_ir_func(const char* name, bool global) {
     Array sl = ({ Array _a = arr_make(sizeof(IrSlot)); _a; });
     Array code = ({ Array _a = arr_make(sizeof(Ins)); _a; });
     Array pt = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return (IrFunc){name, global, vt, sl, code, pt, KVoid, 0};
+    Array pb = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return (IrFunc){name, global, vt, sl, code, pt, pb, KVoid, 0, 0};
 }
 
 IrProgram new_ir_program(void) {
@@ -7280,7 +8314,7 @@ const char* ir_ins_text(Ins i) {
     switch (i.op) {
         case OConst:
         {
-            return (({ __auto_type strata_t596_ = str_concat(str_concat(str_concat(d, "const."), t), " "); __auto_type strata_t597_ = str_from_int(i.imm); str_concat(strata_t596_, strata_t597_); }));
+            return (({ __auto_type strata_t641_ = str_concat(str_concat(str_concat(d, "const."), t), " "); __auto_type strata_t642_ = str_from_int(i.imm); str_concat(strata_t641_, strata_t642_); }));
             break;
         }
         case OFConst:
@@ -7290,39 +8324,39 @@ const char* ir_ins_text(Ins i) {
         }
         case OCopy:
         {
-            return (({ __auto_type strata_t598_ = str_concat(str_concat(str_concat(d, "copy."), t), " "); __auto_type strata_t599_ = v(i.a); str_concat(strata_t598_, strata_t599_); }));
+            return (({ __auto_type strata_t643_ = str_concat(str_concat(str_concat(d, "copy."), t), " "); __auto_type strata_t644_ = v(i.a); str_concat(strata_t643_, strata_t644_); }));
             break;
         }
         case OCmp:
         {
-            return (({ __auto_type strata_t604_ = str_concat((({ __auto_type strata_t602_ = str_concat(str_concat(str_concat((({ __auto_type strata_t600_ = str_concat(d, "cmp."); __auto_type strata_t601_ = ir_cond_name(i.ty2); str_concat(strata_t600_, strata_t601_); })), "."), t), " "); __auto_type strata_t603_ = v(i.a); str_concat(strata_t602_, strata_t603_); })), ", "); __auto_type strata_t605_ = v(i.b); str_concat(strata_t604_, strata_t605_); }));
+            return (({ __auto_type strata_t649_ = str_concat((({ __auto_type strata_t647_ = str_concat(str_concat(str_concat((({ __auto_type strata_t645_ = str_concat(d, "cmp."); __auto_type strata_t646_ = ir_cond_name(i.ty2); str_concat(strata_t645_, strata_t646_); })), "."), t), " "); __auto_type strata_t648_ = v(i.a); str_concat(strata_t647_, strata_t648_); })), ", "); __auto_type strata_t650_ = v(i.b); str_concat(strata_t649_, strata_t650_); }));
             break;
         }
         case OConv:
         {
-            return (({ __auto_type strata_t608_ = str_concat(str_concat(str_concat((({ __auto_type strata_t606_ = str_concat(d, "conv."); __auto_type strata_t607_ = ir_ty_name(i.ty2); str_concat(strata_t606_, strata_t607_); })), "."), t), " "); __auto_type strata_t609_ = v(i.a); str_concat(strata_t608_, strata_t609_); }));
+            return (({ __auto_type strata_t653_ = str_concat(str_concat(str_concat((({ __auto_type strata_t651_ = str_concat(d, "conv."); __auto_type strata_t652_ = ir_ty_name(i.ty2); str_concat(strata_t651_, strata_t652_); })), "."), t), " "); __auto_type strata_t654_ = v(i.a); str_concat(strata_t653_, strata_t654_); }));
             break;
         }
         case ONeg:
         case ONot:
         case OSqrt:
         {
-            return (({ __auto_type strata_t612_ = str_concat(str_concat(str_concat((({ __auto_type strata_t610_ = d; __auto_type strata_t611_ = ir_op_name(i.op); str_concat(strata_t610_, strata_t611_); })), "."), t), " "); __auto_type strata_t613_ = v(i.a); str_concat(strata_t612_, strata_t613_); }));
+            return (({ __auto_type strata_t657_ = str_concat(str_concat(str_concat((({ __auto_type strata_t655_ = d; __auto_type strata_t656_ = ir_op_name(i.op); str_concat(strata_t655_, strata_t656_); })), "."), t), " "); __auto_type strata_t658_ = v(i.a); str_concat(strata_t657_, strata_t658_); }));
             break;
         }
         case OLoad:
         {
-            return str_concat((({ __auto_type strata_t616_ = str_concat((({ __auto_type strata_t614_ = str_concat(str_concat(str_concat(d, "load."), t), " ["); __auto_type strata_t615_ = v(i.a); str_concat(strata_t614_, strata_t615_); })), " + "); __auto_type strata_t617_ = str_from_int(i.imm); str_concat(strata_t616_, strata_t617_); })), "]");
+            return str_concat((({ __auto_type strata_t661_ = str_concat((({ __auto_type strata_t659_ = str_concat(str_concat(str_concat(d, "load."), t), " ["); __auto_type strata_t660_ = v(i.a); str_concat(strata_t659_, strata_t660_); })), " + "); __auto_type strata_t662_ = str_from_int(i.imm); str_concat(strata_t661_, strata_t662_); })), "]");
             break;
         }
         case OStore:
         {
-            return (({ __auto_type strata_t622_ = str_concat((({ __auto_type strata_t620_ = str_concat((({ __auto_type strata_t618_ = str_concat(str_concat("store.", t), " ["); __auto_type strata_t619_ = v(i.a); str_concat(strata_t618_, strata_t619_); })), " + "); __auto_type strata_t621_ = str_from_int(i.imm); str_concat(strata_t620_, strata_t621_); })), "], "); __auto_type strata_t623_ = v(i.b); str_concat(strata_t622_, strata_t623_); }));
+            return (({ __auto_type strata_t667_ = str_concat((({ __auto_type strata_t665_ = str_concat((({ __auto_type strata_t663_ = str_concat(str_concat("store.", t), " ["); __auto_type strata_t664_ = v(i.a); str_concat(strata_t663_, strata_t664_); })), " + "); __auto_type strata_t666_ = str_from_int(i.imm); str_concat(strata_t665_, strata_t666_); })), "], "); __auto_type strata_t668_ = v(i.b); str_concat(strata_t667_, strata_t668_); }));
             break;
         }
         case OSlotAddr:
         {
-            return (({ __auto_type strata_t624_ = str_concat(d, "slotaddr s"); __auto_type strata_t625_ = str_from_int(i.imm); str_concat(strata_t624_, strata_t625_); }));
+            return (({ __auto_type strata_t669_ = str_concat(d, "slotaddr s"); __auto_type strata_t670_ = str_from_int(i.imm); str_concat(strata_t669_, strata_t670_); }));
             break;
         }
         case OSymAddr:
@@ -7332,24 +8366,28 @@ const char* ir_ins_text(Ins i) {
         }
         case OCopyMem:
         {
-            return (({ __auto_type strata_t628_ = str_concat((({ __auto_type strata_t626_ = str_concat(str_concat("copymem ", v(i.a)), ", "); __auto_type strata_t627_ = v(i.b); str_concat(strata_t626_, strata_t627_); })), ", "); __auto_type strata_t629_ = str_from_int(i.imm); str_concat(strata_t628_, strata_t629_); }));
+            return (({ __auto_type strata_t673_ = str_concat((({ __auto_type strata_t671_ = str_concat(str_concat("copymem ", v(i.a)), ", "); __auto_type strata_t672_ = v(i.b); str_concat(strata_t671_, strata_t672_); })), ", "); __auto_type strata_t674_ = str_from_int(i.imm); str_concat(strata_t673_, strata_t674_); }));
             break;
         }
         case OZeroMem:
         {
-            return (({ __auto_type strata_t630_ = str_concat(str_concat("zeromem ", v(i.a)), ", "); __auto_type strata_t631_ = str_from_int(i.imm); str_concat(strata_t630_, strata_t631_); }));
+            return (({ __auto_type strata_t675_ = str_concat(str_concat("zeromem ", v(i.a)), ", "); __auto_type strata_t676_ = str_from_int(i.imm); str_concat(strata_t675_, strata_t676_); }));
             break;
         }
         case OParam:
         {
-            return (({ __auto_type strata_t632_ = str_concat(str_concat(str_concat(d, "param."), t), " "); __auto_type strata_t633_ = str_from_int(i.imm); str_concat(strata_t632_, strata_t633_); }));
+            return (({ __auto_type strata_t677_ = str_concat(str_concat(str_concat(d, "param."), t), " "); __auto_type strata_t678_ = str_from_int(i.imm); str_concat(strata_t677_, strata_t678_); }));
             break;
         }
         case OCall:
         {
             {
                 Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-                ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(d, "call."), t), " "), i.sym), "("); arr_push(&(p), &_e); });
+                if (i.a >= 0) {
+                    ({ const char* _e = str_concat((({ __auto_type strata_t679_ = str_concat(str_concat(str_concat(d, "call."), t), " *"); __auto_type strata_t680_ = v(i.a); str_concat(strata_t679_, strata_t680_); })), "("); arr_push(&(p), &_e); });
+                } else {
+                    ({ const char* _e = str_concat(str_concat(str_concat(str_concat(str_concat(d, "call."), t), " "), i.sym), "("); arr_push(&(p), &_e); });
+                }
                 for (int64_t k = 0; k < i.args.len; k++) {
                     if (k > 0) {
                         ({ const char* _e = ", "; arr_push(&(p), &_e); });
@@ -7381,7 +8419,7 @@ const char* ir_ins_text(Ins i) {
         }
         case OBr:
         {
-            return (({ __auto_type strata_t636_ = str_concat((({ __auto_type strata_t634_ = str_concat(str_concat("br ", v(i.a)), ", L"); __auto_type strata_t635_ = str_from_int(i.imm); str_concat(strata_t634_, strata_t635_); })), ", L"); __auto_type strata_t637_ = str_from_int(i.imm2); str_concat(strata_t636_, strata_t637_); }));
+            return (({ __auto_type strata_t683_ = str_concat((({ __auto_type strata_t681_ = str_concat(str_concat("br ", v(i.a)), ", L"); __auto_type strata_t682_ = str_from_int(i.imm); str_concat(strata_t681_, strata_t682_); })), ", L"); __auto_type strata_t684_ = str_from_int(i.imm2); str_concat(strata_t683_, strata_t684_); }));
             break;
         }
         case ONop:
@@ -7390,7 +8428,7 @@ const char* ir_ins_text(Ins i) {
             break;
         }
     }
-    return (({ __auto_type strata_t642_ = str_concat((({ __auto_type strata_t640_ = str_concat(str_concat(str_concat((({ __auto_type strata_t638_ = d; __auto_type strata_t639_ = ir_op_name(i.op); str_concat(strata_t638_, strata_t639_); })), "."), t), " "); __auto_type strata_t641_ = v(i.a); str_concat(strata_t640_, strata_t641_); })), ", "); __auto_type strata_t643_ = v(i.b); str_concat(strata_t642_, strata_t643_); }));
+    return (({ __auto_type strata_t689_ = str_concat((({ __auto_type strata_t687_ = str_concat(str_concat(str_concat((({ __auto_type strata_t685_ = d; __auto_type strata_t686_ = ir_op_name(i.op); str_concat(strata_t685_, strata_t686_); })), "."), t), " "); __auto_type strata_t688_ = v(i.a); str_concat(strata_t687_, strata_t688_); })), ", "); __auto_type strata_t690_ = v(i.b); str_concat(strata_t689_, strata_t690_); }));
 }
 
 const char* ir_func_text(IrFunc* f) {
@@ -7404,7 +8442,7 @@ const char* ir_func_text(IrFunc* f) {
     }
     ({ const char* _e = str_concat(str_concat(") ", ir_ty_name(f->ret_ty)), "\n"); arr_push(&(p), &_e); });
     for (int64_t k = 0; k < f->slots.len; k++) {
-        ({ const char* _e = str_concat((({ __auto_type strata_t646_ = str_concat((({ __auto_type strata_t644_ = str_concat(str_concat("  s", str_from_int(k)), ": "); __auto_type strata_t645_ = str_from_int(((IrSlot*)(f->slots).data)[k].size); str_concat(strata_t644_, strata_t645_); })), " bytes, align "); __auto_type strata_t647_ = str_from_int(((IrSlot*)(f->slots).data)[k].align); str_concat(strata_t646_, strata_t647_); })), "\n"); arr_push(&(p), &_e); });
+        ({ const char* _e = str_concat((({ __auto_type strata_t693_ = str_concat((({ __auto_type strata_t691_ = str_concat(str_concat("  s", str_from_int(k)), ": "); __auto_type strata_t692_ = str_from_int(((IrSlot*)(f->slots).data)[k].size); str_concat(strata_t691_, strata_t692_); })), " bytes, align "); __auto_type strata_t694_ = str_from_int(((IrSlot*)(f->slots).data)[k].align); str_concat(strata_t693_, strata_t694_); })), "\n"); arr_push(&(p), &_e); });
     }
     for (int64_t k = 0; k < f->code.len; k++) {
         Ins i = ((Ins*)(f->code).data)[k];
@@ -7426,7 +8464,7 @@ const char* ir_program_text(IrProgram* prog) {
     }
     for (int64_t k = 0; k < prog->globals.len; k++) {
         IrGlobal g = ((IrGlobal*)(prog->globals).data)[k];
-        ({ const char* _e = str_concat((({ __auto_type strata_t650_ = str_concat((({ __auto_type strata_t648_ = str_concat(str_concat("global ", g.sym), ": "); __auto_type strata_t649_ = str_from_int(g.size); str_concat(strata_t648_, strata_t649_); })), " bytes, kind "); __auto_type strata_t651_ = str_from_int(g.kind); str_concat(strata_t650_, strata_t651_); })), "\n"); arr_push(&(p), &_e); });
+        ({ const char* _e = str_concat((({ __auto_type strata_t697_ = str_concat((({ __auto_type strata_t695_ = str_concat(str_concat("global ", g.sym), ": "); __auto_type strata_t696_ = str_from_int(g.size); str_concat(strata_t695_, strata_t696_); })), " bytes, kind "); __auto_type strata_t698_ = str_from_int(g.kind); str_concat(strata_t697_, strata_t698_); })), "\n"); arr_push(&(p), &_e); });
     }
     for (int64_t k = 0; k < prog->funcs.len; k++) {
         ({ const char* _e = "\n"; arr_push(&(p), &_e); });
@@ -7501,7 +8539,7 @@ int64_t prim_ty(const char* n) {
 }
 
 TInfo scalar_info(int64_t ty) {
-    return (({ __auto_type strata_t652_ = TK_SCALAR(); __auto_type strata_t653_ = ty; __auto_type strata_t654_ = ir_size(ty); __auto_type strata_t655_ = ir_size(ty); (TInfo){strata_t652_, strata_t653_, strata_t654_, strata_t655_}; }));
+    return (({ __auto_type strata_t699_ = TK_SCALAR(); __auto_type strata_t700_ = ty; __auto_type strata_t701_ = ir_size(ty); __auto_type strata_t702_ = ir_size(ty); (TInfo){strata_t699_, strata_t700_, strata_t701_, strata_t702_}; }));
 }
 
 TInfo agg_info(int64_t size, int64_t align) {
@@ -7525,7 +8563,7 @@ TInfo tinfo(Lower* l, TypeNode* t) {
     if (t == 0) {
         return (TInfo){TK_VOID(), KVoid, 0, 1};
     }
-    if (((t->kind == TyPointer) || (t->kind == TyArray)) || (t->kind == TyFixedArray)) {
+    if ((((t->kind == TyPointer) || (t->kind == TyArray)) || (t->kind == TyFixedArray)) || (t->kind == TyFunc)) {
         return scalar_info(KU64);
     }
     if (t->kind == TyDynArray) {
@@ -7620,7 +8658,7 @@ int64_t abi_int_of(int64_t size) {
 }
 
 int64_t abi_pass_ty(TInfo ti) {
-    if (({ __auto_type strata_t656_ = ti.kind; __auto_type strata_t657_ = TK_SCALAR(); (strata_t656_ == strata_t657_); })) {
+    if (({ __auto_type strata_t703_ = ti.kind; __auto_type strata_t704_ = TK_SCALAR(); (strata_t703_ == strata_t704_); })) {
         return ti.ty;
     }
     if (abi_small(ti.size)) {
@@ -7630,7 +8668,496 @@ int64_t abi_pass_ty(TInfo ti) {
 }
 
 bool abi_sret(TInfo ti) {
-    return ((({ __auto_type strata_t658_ = ti.kind; __auto_type strata_t659_ = TK_AGG(); (strata_t658_ == strata_t659_); })) && (!abi_small(ti.size)));
+    return ((({ __auto_type strata_t705_ = ti.kind; __auto_type strata_t706_ = TK_AGG(); (strata_t705_ == strata_t706_); })) && (!abi_small(ti.size)));
+}
+
+bool sysv(void) {
+    return (!str_eq(target_os(), "windows"));
+}
+
+int64_t sse_class(void) {
+    return 1;
+}
+
+int64_t int_class(void) {
+    return 2;
+}
+
+void mark(Array* c, int64_t off, int64_t cls) {
+    int64_t k = (off / 8);
+    if ((k < 2) && (((int64_t*)(c[0]).data)[k] < cls)) {
+        ((int64_t*)(c[0]).data)[k] = cls;
+    }
+}
+
+void classify(Lower* l, TypeNode* t, int64_t base, Array* c) {
+    if (t == 0) {
+        return;
+    }
+    if (t->kind != TyNamed) {
+        (({ __auto_type strata_t707_ = c; __auto_type strata_t708_ = base; __auto_type strata_t709_ = int_class(); mark(strata_t707_, strata_t708_, strata_t709_); }));
+        return;
+    }
+    const char* n = t->name;
+    int64_t d = vec_dim_of(n);
+    if (d > 0) {
+        for (int64_t i = 0; i < d; i++) {
+            (({ __auto_type strata_t710_ = c; __auto_type strata_t711_ = (base + (4 * i)); __auto_type strata_t712_ = sse_class(); mark(strata_t710_, strata_t711_, strata_t712_); }));
+        }
+        return;
+    }
+    if (str_eq(n, "mat4")) {
+        for (int64_t i = 0; i < 16; i++) {
+            (({ __auto_type strata_t713_ = c; __auto_type strata_t714_ = (base + (4 * i)); __auto_type strata_t715_ = sse_class(); mark(strata_t713_, strata_t714_, strata_t715_); }));
+        }
+        return;
+    }
+    int64_t si = struct_index(l, n);
+    if (si >= 0) {
+        layout(l, si);
+        for (int64_t k = 0; k < ((StructLay*)(l->structs).data)[si].fields.len; k++) {
+            classify(l, ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[k].type, (base + ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[k].off), c);
+        }
+        return;
+    }
+    TInfo ti = tinfo(l, t);
+    if (ir_is_float(ti.ty)) {
+        (({ __auto_type strata_t716_ = c; __auto_type strata_t717_ = base; __auto_type strata_t718_ = sse_class(); mark(strata_t716_, strata_t717_, strata_t718_); }));
+    } else {
+        (({ __auto_type strata_t719_ = c; __auto_type strata_t720_ = base; __auto_type strata_t721_ = int_class(); mark(strata_t719_, strata_t720_, strata_t721_); }));
+    }
+}
+
+int64_t abi_ret_spec(Lower* l, TypeNode* t, TInfo ti) {
+    if ((ti.size > 16) || (ti.size == 0)) {
+        return 0;
+    }
+    Array c = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 0; arr_push(&_a, &_e); } { int64_t _e = 0; arr_push(&_a, &_e); } _a; });
+    classify(l, t, 0, (&c));
+    int64_t n = ((ti.size + 7) / 8);
+    for (int64_t k = 0; k < n; k++) {
+        if (((int64_t*)(c).data)[k] == 0) {
+            ((int64_t*)(c).data)[k] = sse_class();
+        }
+    }
+    int64_t spec = (n + (4 * ((int64_t*)(c).data)[0]));
+    if (n == 2) {
+        spec += (16 * ((int64_t*)(c).data)[1]);
+    }
+    return spec;
+}
+
+int64_t spec_halves(int64_t spec) {
+    return (spec & 3);
+}
+
+int64_t spec_class(int64_t spec, int64_t k) {
+    if (k == 0) {
+        return ((spec >> 2) & 3);
+    }
+    return ((spec >> 4) & 3);
+}
+
+int64_t spec_ints(int64_t spec) {
+    int64_t n = 0;
+    for (int64_t k = 0; k < spec_halves(spec); k++) {
+        if (({ __auto_type strata_t722_ = spec_class(spec, k); __auto_type strata_t723_ = int_class(); (strata_t722_ == strata_t723_); })) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+bool aapcs(void) {
+    return str_eq(target_arch(), "arm64");
+}
+
+int64_t stk_hfa(void) {
+    return 100000;
+}
+
+void hfa_walk(Lower* l, TypeNode* t, Array* st) {
+    if ((t == 0) || (t->kind != TyNamed)) {
+        ((int64_t*)(st[0]).data)[2] = 1;
+        return;
+    }
+    const char* n = t->name;
+    int64_t d = vec_dim_of(n);
+    if ((d > 0) || str_eq(n, "mat4")) {
+        if (d == 0) {
+            d = 16;
+        }
+        if ((((int64_t*)(st[0]).data)[1] != KVoid) && (((int64_t*)(st[0]).data)[1] != KF32)) {
+            ((int64_t*)(st[0]).data)[2] = 1;
+        }
+        ((int64_t*)(st[0]).data)[1] = KF32;
+        ((int64_t*)(st[0]).data)[0] = (((int64_t*)(st[0]).data)[0] + d);
+        return;
+    }
+    int64_t si = struct_index(l, n);
+    if (si >= 0) {
+        layout(l, si);
+        for (int64_t k = 0; k < ((StructLay*)(l->structs).data)[si].fields.len; k++) {
+            hfa_walk(l, ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[k].type, st);
+        }
+        return;
+    }
+    TInfo ti = tinfo(l, t);
+    if ((({ __auto_type strata_t724_ = ti.kind; __auto_type strata_t725_ = TK_SCALAR(); (strata_t724_ != strata_t725_); })) || (!ir_is_float(ti.ty))) {
+        ((int64_t*)(st[0]).data)[2] = 1;
+        return;
+    }
+    if ((((int64_t*)(st[0]).data)[1] != KVoid) && (((int64_t*)(st[0]).data)[1] != ti.ty)) {
+        ((int64_t*)(st[0]).data)[2] = 1;
+    }
+    ((int64_t*)(st[0]).data)[1] = ti.ty;
+    ((int64_t*)(st[0]).data)[0] = (((int64_t*)(st[0]).data)[0] + 1);
+}
+
+int64_t aapcs_spec(Lower* l, TypeNode* t, TInfo ti) {
+    if (ti.size == 0) {
+        return 0;
+    }
+    Array st = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 0; arr_push(&_a, &_e); } { int64_t _e = KVoid; arr_push(&_a, &_e); } { int64_t _e = 0; arr_push(&_a, &_e); } _a; });
+    hfa_walk(l, t, (&st));
+    if (((((int64_t*)(st).data)[2] == 0) && (((int64_t*)(st).data)[0] >= 1)) && (((int64_t*)(st).data)[0] <= 4)) {
+        int64_t spec = (64 + ((int64_t*)(st).data)[0]);
+        if (((int64_t*)(st).data)[1] == KF64) {
+            spec += 8;
+        }
+        return spec;
+    }
+    if (ti.size > 16) {
+        return 0;
+    }
+    return ((ti.size + 7) / 8);
+}
+
+bool spec_hfa(int64_t spec) {
+    return ((spec & 64) != 0);
+}
+
+int64_t spec_count(int64_t spec) {
+    if (spec_hfa(spec)) {
+        return (spec & 7);
+    }
+    return (spec & 3);
+}
+
+int64_t spec_elem(int64_t spec) {
+    if (!spec_hfa(spec)) {
+        return KU64;
+    }
+    if ((spec & 8) != 0) {
+        return KF64;
+    }
+    return KF32;
+}
+
+int64_t spec_step(int64_t spec) {
+    return ir_size(spec_elem(spec));
+}
+
+const char* link_sym(Decl* d) {
+    if (!str_eq(d->link_name, "")) {
+        return d->link_name;
+    }
+    return d->name;
+}
+
+LVal call_aapcs(Lower* l, Decl* d, Expr* e) {
+    int64_t target = l->ind;
+    l->ind = (0 - 1);
+    TInfo ri = tinfo(l, d->ret);
+    Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array bytes = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    int64_t ints = 0;
+    int64_t fls = 0;
+    int64_t out = (0 - 1);
+    int64_t buf = (0 - 1);
+    int64_t spec = 0;
+    if (({ __auto_type strata_t726_ = ri.kind; __auto_type strata_t727_ = TK_AGG(); (strata_t726_ == strata_t727_); })) {
+        spec = aapcs_spec(l, d->ret, ri);
+        if (spec == 0) {
+            out = temp(l, ri.size, ri.align);
+            ({ int64_t _e = out; arr_push(&(args), &_e); });
+            ({ int64_t _e = (0 - 2); arr_push(&(bytes), &_e); });
+        } else {
+            buf = temp(l, 32, 8);
+        }
+    }
+    for (int64_t i = 0; i < e->items.len; i++) {
+        if (i < d->params.len) {
+            TypeNode* pt = ((Param*)(d->params).data)[i].type;
+            TInfo pi = tinfo(l, pt);
+            LVal v = lower_expr(l, ((Expr**)(e->items).data)[i]);
+            if (({ __auto_type strata_t728_ = pi.kind; __auto_type strata_t729_ = TK_SCALAR(); (strata_t728_ == strata_t729_); })) {
+                ({ int64_t _e = as_ty(l, v, pi.ty, e->line); arr_push(&(args), &_e); });
+                ({ int64_t _e = 0; arr_push(&(bytes), &_e); });
+                if (ir_is_float(pi.ty)) {
+                    fls += 1;
+                } else {
+                    ints += 1;
+                }
+            } else 
+            if (!v.agg) {
+                (({ __auto_type strata_t730_ = l; __auto_type strata_t731_ = e->line; __auto_type strata_t732_ = str_concat("expected a ", type_text(pt)); lw_fail(strata_t730_, strata_t731_, strata_t732_); }));
+            } else {
+                int64_t ps = aapcs_spec(l, pt, pi);
+                int64_t c = spec_count(ps);
+                if (ps == 0) {
+                    int64_t copy = temp(l, pi.size, pi.align);
+                    copy_mem(l, copy, v.reg, pi.size);
+                    ({ int64_t _e = copy; arr_push(&(args), &_e); });
+                    ({ int64_t _e = 0; arr_push(&(bytes), &_e); });
+                    ints += 1;
+                } else 
+                if ((spec_hfa(ps) && ((fls + c) <= 8)) || ((!spec_hfa(ps)) && ((ints + c) <= 8))) {
+                    int64_t tmp = temp(l, 32, 8);
+                    copy_mem(l, tmp, v.reg, pi.size);
+                    for (int64_t k = 0; k < c; k++) {
+                        ({ int64_t _e = (({ __auto_type strata_t733_ = l; __auto_type strata_t734_ = spec_elem(ps); __auto_type strata_t735_ = tmp; __auto_type strata_t736_ = (spec_step(ps) * k); load(strata_t733_, strata_t734_, strata_t735_, strata_t736_); })); arr_push(&(args), &_e); });
+                        ({ int64_t _e = 0; arr_push(&(bytes), &_e); });
+                    }
+                    if (spec_hfa(ps)) {
+                        fls += c;
+                    } else {
+                        ints += c;
+                    }
+                } else {
+                    int64_t copy = temp(l, pi.size, pi.align);
+                    copy_mem(l, copy, v.reg, pi.size);
+                    ({ int64_t _e = copy; arr_push(&(args), &_e); });
+                    if (spec_hfa(ps)) {
+                        ({ int64_t _e = (stk_hfa() + pi.size); arr_push(&(bytes), &_e); });
+                        fls = 8;
+                    } else {
+                        ({ int64_t _e = pi.size; arr_push(&(bytes), &_e); });
+                        ints = 8;
+                    }
+                }
+            }
+        }
+    }
+    if (buf >= 0) {
+        ({ int64_t _e = buf; arr_push(&(args), &_e); });
+        ({ int64_t _e = (0 - 1); arr_push(&(bytes), &_e); });
+    }
+    int64_t rty = KVoid;
+    if (({ __auto_type strata_t737_ = ri.kind; __auto_type strata_t738_ = TK_SCALAR(); (strata_t737_ == strata_t738_); })) {
+        rty = ri.ty;
+    }
+    int64_t r = (0 - 1);
+    if (rty != KVoid) {
+        r = vreg(l, rty);
+    }
+    Ins c = new_ins(OCall, rty, r, target, (0 - 1));
+    c.sym = link_sym(d);
+    c.args = args;
+    c.arg_bytes = bytes;
+    c.imm = spec;
+    emit(l, c);
+    if (({ __auto_type strata_t739_ = ri.kind; __auto_type strata_t740_ = TK_SCALAR(); (strata_t739_ == strata_t740_); })) {
+        return scalar(r, rty);
+    }
+    if (out >= 0) {
+        return aggregate(out, d->ret);
+    }
+    if (buf >= 0) {
+        return aggregate(buf, d->ret);
+    }
+    return scalar(iconst(l, KI64, 0), KI64);
+}
+
+void lower_params_aapcs(Lower* l, Decl* d, TInfo ri) {
+    int64_t index = 0;
+    int64_t ints = 0;
+    int64_t fls = 0;
+    if (({ __auto_type strata_t741_ = ri.kind; __auto_type strata_t742_ = TK_AGG(); (strata_t741_ == strata_t742_); })) {
+        int64_t spec = aapcs_spec(l, d->ret, ri);
+        if (spec == 0) {
+            ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+            ({ int64_t _e = (0 - 2); arr_push(&(l->f.param_bytes), &_e); });
+            l->f.ret_ty = KU64;
+            l->sret = param(l, KU64, 0);
+            index = 1;
+        } else {
+            l->f.ret_spec = spec;
+            l->f.ret_ty = KVoid;
+        }
+    } else 
+    if (({ __auto_type strata_t743_ = ri.kind; __auto_type strata_t744_ = TK_SCALAR(); (strata_t743_ == strata_t744_); })) {
+        l->f.ret_ty = ri.ty;
+    }
+    Array first = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array kind = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array specs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array incoming = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < d->params.len; i++) {
+        TypeNode* pt = ((Param*)(d->params).data)[i].type;
+        TInfo pi = tinfo(l, pt);
+        ({ int64_t _e = incoming.len; arr_push(&(first), &_e); });
+        if (({ __auto_type strata_t745_ = pi.kind; __auto_type strata_t746_ = TK_SCALAR(); (strata_t745_ == strata_t746_); })) {
+            ({ int64_t _e = pi.ty; arr_push(&(l->f.param_types), &_e); });
+            ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+            ({ int64_t _e = param(l, pi.ty, index); arr_push(&(incoming), &_e); });
+            index += 1;
+            if (ir_is_float(pi.ty)) {
+                fls += 1;
+            } else {
+                ints += 1;
+            }
+            ({ int64_t _e = 0; arr_push(&(kind), &_e); });
+            ({ int64_t _e = 0; arr_push(&(specs), &_e); });
+        } else {
+            int64_t ps = aapcs_spec(l, pt, pi);
+            int64_t c = spec_count(ps);
+            if ((ps != 0) && ((spec_hfa(ps) && ((fls + c) <= 8)) || ((!spec_hfa(ps)) && ((ints + c) <= 8)))) {
+                for (int64_t k = 0; k < c; k++) {
+                    ({ int64_t _e = spec_elem(ps); arr_push(&(l->f.param_types), &_e); });
+                    ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+                    ({ int64_t _e = (({ __auto_type strata_t747_ = l; __auto_type strata_t748_ = spec_elem(ps); param(strata_t747_, strata_t748_, index); })); arr_push(&(incoming), &_e); });
+                    index += 1;
+                }
+                if (spec_hfa(ps)) {
+                    fls += c;
+                } else {
+                    ints += c;
+                }
+                ({ int64_t _e = 1; arr_push(&(kind), &_e); });
+                ({ int64_t _e = ps; arr_push(&(specs), &_e); });
+            } else {
+                ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+                if (ps == 0) {
+                    ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+                    ints += 1;
+                } else 
+                if (spec_hfa(ps)) {
+                    ({ int64_t _e = (stk_hfa() + pi.size); arr_push(&(l->f.param_bytes), &_e); });
+                    fls = 8;
+                } else {
+                    ({ int64_t _e = pi.size; arr_push(&(l->f.param_bytes), &_e); });
+                    ints = 8;
+                }
+                ({ int64_t _e = param(l, KU64, index); arr_push(&(incoming), &_e); });
+                index += 1;
+                ({ int64_t _e = 2; arr_push(&(kind), &_e); });
+                ({ int64_t _e = 0; arr_push(&(specs), &_e); });
+            }
+        }
+    }
+    push_scope(l);
+    for (int64_t i = 0; i < d->params.len; i++) {
+        TypeNode* pt = ((Param*)(d->params).data)[i].type;
+        TInfo pi = tinfo(l, pt);
+        LVar v = declare(l, ((Param*)(d->params).data)[i].name, pt, d->line);
+        if (((int64_t*)(kind).data)[i] == 0) {
+            (({ __auto_type strata_t749_ = l; __auto_type strata_t750_ = v; __auto_type strata_t751_ = scalar(((int64_t*)(incoming).data)[((int64_t*)(first).data)[i]], pi.ty); assign_var(strata_t749_, strata_t750_, strata_t751_, d->line); }));
+        } else 
+        if (((int64_t*)(kind).data)[i] == 1) {
+            int64_t tmp = temp(l, 32, 8);
+            for (int64_t k = 0; k < spec_count(((int64_t*)(specs).data)[i]); k++) {
+                (({ __auto_type strata_t752_ = l; __auto_type strata_t753_ = spec_elem(((int64_t*)(specs).data)[i]); __auto_type strata_t754_ = tmp; __auto_type strata_t755_ = (spec_step(((int64_t*)(specs).data)[i]) * k); store(strata_t752_, strata_t753_, strata_t754_, strata_t755_, ((int64_t*)(incoming).data)[(((int64_t*)(first).data)[i] + k)]); }));
+            }
+            copy_mem(l, v.reg, tmp, pi.size);
+        } else {
+            copy_mem(l, v.reg, ((int64_t*)(incoming).data)[((int64_t*)(first).data)[i]], pi.size);
+        }
+    }
+}
+
+LVal call_sysv(Lower* l, Decl* d, Expr* e) {
+    int64_t target = l->ind;
+    l->ind = (0 - 1);
+    TInfo ri = tinfo(l, d->ret);
+    Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array bytes = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    int64_t ints = 0;
+    int64_t sses = 0;
+    int64_t out = (0 - 1);
+    int64_t buf = (0 - 1);
+    int64_t spec = 0;
+    if (({ __auto_type strata_t756_ = ri.kind; __auto_type strata_t757_ = TK_AGG(); (strata_t756_ == strata_t757_); })) {
+        spec = abi_ret_spec(l, d->ret, ri);
+        if (spec == 0) {
+            out = temp(l, ri.size, ri.align);
+            ({ int64_t _e = out; arr_push(&(args), &_e); });
+            ({ int64_t _e = 0; arr_push(&(bytes), &_e); });
+            ints = 1;
+        } else {
+            buf = temp(l, 16, 8);
+        }
+    }
+    for (int64_t i = 0; i < e->items.len; i++) {
+        if (i < d->params.len) {
+            TypeNode* pt = ((Param*)(d->params).data)[i].type;
+            TInfo pi = tinfo(l, pt);
+            LVal v = lower_expr(l, ((Expr**)(e->items).data)[i]);
+            if (({ __auto_type strata_t758_ = pi.kind; __auto_type strata_t759_ = TK_SCALAR(); (strata_t758_ == strata_t759_); })) {
+                ({ int64_t _e = as_ty(l, v, pi.ty, e->line); arr_push(&(args), &_e); });
+                ({ int64_t _e = 0; arr_push(&(bytes), &_e); });
+                if (ir_is_float(pi.ty)) {
+                    sses += 1;
+                } else {
+                    ints += 1;
+                }
+            } else 
+            if (!v.agg) {
+                (({ __auto_type strata_t760_ = l; __auto_type strata_t761_ = e->line; __auto_type strata_t762_ = str_concat("expected a ", type_text(pt)); lw_fail(strata_t760_, strata_t761_, strata_t762_); }));
+            } else {
+                int64_t ps = abi_ret_spec(l, pt, pi);
+                int64_t ni = spec_ints(ps);
+                int64_t ns = (spec_halves(ps) - ni);
+                if (((ps != 0) && ((ints + ni) <= 6)) && ((sses + ns) <= 8)) {
+                    int64_t tmp = temp(l, 16, 8);
+                    copy_mem(l, tmp, v.reg, pi.size);
+                    for (int64_t k = 0; k < spec_halves(ps); k++) {
+                        if (({ __auto_type strata_t763_ = spec_class(ps, k); __auto_type strata_t764_ = sse_class(); (strata_t763_ == strata_t764_); })) {
+                            ({ int64_t _e = load(l, KF64, tmp, (8 * k)); arr_push(&(args), &_e); });
+                        } else {
+                            ({ int64_t _e = load(l, KU64, tmp, (8 * k)); arr_push(&(args), &_e); });
+                        }
+                        ({ int64_t _e = 0; arr_push(&(bytes), &_e); });
+                    }
+                    ints += ni;
+                    sses += ns;
+                } else {
+                    int64_t copy = temp(l, pi.size, pi.align);
+                    copy_mem(l, copy, v.reg, pi.size);
+                    ({ int64_t _e = copy; arr_push(&(args), &_e); });
+                    ({ int64_t _e = pi.size; arr_push(&(bytes), &_e); });
+                }
+            }
+        }
+    }
+    if (buf >= 0) {
+        ({ int64_t _e = buf; arr_push(&(args), &_e); });
+        ({ int64_t _e = (0 - 1); arr_push(&(bytes), &_e); });
+    }
+    int64_t rty = KVoid;
+    if (({ __auto_type strata_t765_ = ri.kind; __auto_type strata_t766_ = TK_SCALAR(); (strata_t765_ == strata_t766_); })) {
+        rty = ri.ty;
+    }
+    int64_t r = (0 - 1);
+    if (rty != KVoid) {
+        r = vreg(l, rty);
+    }
+    Ins c = new_ins(OCall, rty, r, target, (0 - 1));
+    c.sym = link_sym(d);
+    c.args = args;
+    c.arg_bytes = bytes;
+    c.imm = spec;
+    emit(l, c);
+    if (({ __auto_type strata_t767_ = ri.kind; __auto_type strata_t768_ = TK_SCALAR(); (strata_t767_ == strata_t768_); })) {
+        return scalar(r, rty);
+    }
+    if (out >= 0) {
+        return aggregate(out, d->ret);
+    }
+    if (buf >= 0) {
+        return aggregate(buf, d->ret);
+    }
+    return scalar(iconst(l, KI64, 0), KI64);
 }
 
 int64_t vreg(Lower* l, int64_t ty) {
@@ -7659,13 +9186,13 @@ int64_t fconst(Lower* l, int64_t ty, const char* text) {
 
 int64_t binop(Lower* l, int64_t op, int64_t ty, int64_t a, int64_t b) {
     int64_t r = vreg(l, ty);
-    (({ __auto_type strata_t660_ = l; __auto_type strata_t661_ = new_ins(op, ty, r, a, b); emit(strata_t660_, strata_t661_); }));
+    (({ __auto_type strata_t769_ = l; __auto_type strata_t770_ = new_ins(op, ty, r, a, b); emit(strata_t769_, strata_t770_); }));
     return r;
 }
 
 int64_t unop(Lower* l, int64_t op, int64_t ty, int64_t a) {
     int64_t r = vreg(l, ty);
-    (({ __auto_type strata_t662_ = l; __auto_type strata_t663_ = new_ins(op, ty, r, a, (0 - 1)); emit(strata_t662_, strata_t663_); }));
+    (({ __auto_type strata_t771_ = l; __auto_type strata_t772_ = new_ins(op, ty, r, a, (0 - 1)); emit(strata_t771_, strata_t772_); }));
     return r;
 }
 
@@ -7678,7 +9205,7 @@ int64_t cmp(Lower* l, int64_t cond, int64_t ty, int64_t a, int64_t b) {
 }
 
 void copy_to(Lower* l, int64_t ty, int64_t dst, int64_t src) {
-    (({ __auto_type strata_t664_ = l; __auto_type strata_t665_ = new_ins(OCopy, ty, dst, src, (0 - 1)); emit(strata_t664_, strata_t665_); }));
+    (({ __auto_type strata_t773_ = l; __auto_type strata_t774_ = new_ins(OCopy, ty, dst, src, (0 - 1)); emit(strata_t773_, strata_t774_); }));
 }
 
 int64_t load(Lower* l, int64_t ty, int64_t addr, int64_t off) {
@@ -7720,10 +9247,10 @@ int64_t addr_plus(Lower* l, int64_t addr, int64_t off) {
     if (off == 0) {
         return addr;
     }
-    return (({ __auto_type strata_t666_ = l; __auto_type strata_t667_ = OAdd; __auto_type strata_t668_ = KU64; __auto_type strata_t669_ = addr; __auto_type strata_t670_ = iconst(l, KU64, off); binop(strata_t666_, strata_t667_, strata_t668_, strata_t669_, strata_t670_); }));
+    return (({ __auto_type strata_t775_ = l; __auto_type strata_t776_ = OAdd; __auto_type strata_t777_ = KU64; __auto_type strata_t778_ = addr; __auto_type strata_t779_ = iconst(l, KU64, off); binop(strata_t775_, strata_t776_, strata_t777_, strata_t778_, strata_t779_); }));
 }
 
-void label(Lower* l, int64_t n) {
+void lower__label(Lower* l, int64_t n) {
     Ins i = new_ins(OLabel, KVoid, (0 - 1), (0 - 1), (0 - 1));
     i.imm = n;
     emit(l, i);
@@ -7747,11 +9274,15 @@ int64_t new_label(Lower* l) {
 }
 
 int64_t call(Lower* l, const char* name, int64_t ret, Array args) {
+    return call_at(l, name, ret, args, (0 - 1));
+}
+
+int64_t call_at(Lower* l, const char* name, int64_t ret, Array args, int64_t target) {
     int64_t r = (0 - 1);
     if (ret != KVoid) {
         r = vreg(l, ret);
     }
-    Ins i = new_ins(OCall, ret, r, (0 - 1), (0 - 1));
+    Ins i = new_ins(OCall, ret, r, target, (0 - 1));
     i.sym = name;
     i.args = args;
     emit(l, i);
@@ -7800,14 +9331,14 @@ int64_t conv(Lower* l, int64_t reg, int64_t from, int64_t to) {
 
 int64_t to_bool(Lower* l, LVal v) {
     if (ir_is_float(v.ty)) {
-        return (({ __auto_type strata_t671_ = l; __auto_type strata_t672_ = CNe; __auto_type strata_t673_ = v.ty; __auto_type strata_t674_ = v.reg; __auto_type strata_t675_ = fconst(l, v.ty, "0.0"); cmp(strata_t671_, strata_t672_, strata_t673_, strata_t674_, strata_t675_); }));
+        return (({ __auto_type strata_t780_ = l; __auto_type strata_t781_ = CNe; __auto_type strata_t782_ = v.ty; __auto_type strata_t783_ = v.reg; __auto_type strata_t784_ = fconst(l, v.ty, "0.0"); cmp(strata_t780_, strata_t781_, strata_t782_, strata_t783_, strata_t784_); }));
     }
-    return (({ __auto_type strata_t676_ = l; __auto_type strata_t677_ = CNe; __auto_type strata_t678_ = v.ty; __auto_type strata_t679_ = v.reg; __auto_type strata_t680_ = iconst(l, v.ty, 0); cmp(strata_t676_, strata_t677_, strata_t678_, strata_t679_, strata_t680_); }));
+    return (({ __auto_type strata_t785_ = l; __auto_type strata_t786_ = CNe; __auto_type strata_t787_ = v.ty; __auto_type strata_t788_ = v.reg; __auto_type strata_t789_ = iconst(l, v.ty, 0); cmp(strata_t785_, strata_t786_, strata_t787_, strata_t788_, strata_t789_); }));
 }
 
 int64_t as_ty(Lower* l, LVal v, int64_t ty, int64_t line) {
     if (v.agg) {
-        (({ __auto_type strata_t681_ = l; __auto_type strata_t682_ = line; __auto_type strata_t683_ = str_concat("expected a value, got a ", type_text(v.t)); lw_fail(strata_t681_, strata_t682_, strata_t683_); }));
+        (({ __auto_type strata_t790_ = l; __auto_type strata_t791_ = line; __auto_type strata_t792_ = str_concat("expected a value, got a ", type_text(v.t)); lw_fail(strata_t790_, strata_t791_, strata_t792_); }));
         return iconst(l, ty, 0);
     }
     return conv(l, v.reg, v.ty, ty);
@@ -7819,6 +9350,9 @@ const char* type_text(TypeNode* t) {
     }
     if (t->kind == TyPointer) {
         return str_concat(type_text(t->elem), "*");
+    }
+    if (t->kind == TyFunc) {
+        return "function address";
     }
     if (t->kind == TyDynArray) {
         return str_concat(type_text(t->elem), "[dynamic]");
@@ -7891,7 +9425,7 @@ int64_t parse_int(const char* s) {
     }
     while (i < n) {
         if (s[i] != '_') {
-            v = (({ __auto_type strata_t684_ = (v * base); __auto_type strata_t685_ = ((uint64_t)(digit_val(s[i]))); (strata_t684_ + strata_t685_); }));
+            v = (({ __auto_type strata_t793_ = (v * base); __auto_type strata_t794_ = ((uint64_t)(digit_val(s[i]))); (strata_t793_ + strata_t794_); }));
         }
         i += 1;
     }
@@ -7937,7 +9471,7 @@ const char* string_data(Lower* l, const char* text) {
     return sym;
 }
 
-int64_t sym_addr(Lower* l, const char* sym) {
+int64_t lower__sym_addr(Lower* l, const char* sym) {
     int64_t r = vreg(l, KU64);
     Ins i = new_ins(OSymAddr, KU64, r, (0 - 1), (0 - 1));
     i.sym = sym;
@@ -7998,11 +9532,11 @@ bool is_addr_taken(Lower* l, const char* name) {
 LVar declare(Lower* l, const char* name, TypeNode* t, int64_t line) {
     TInfo ti = tinfo(l, t);
     LVar v = (LVar){name, false, (0 - 1), ti.ty, t};
-    if ((({ __auto_type strata_t686_ = ti.kind; __auto_type strata_t687_ = TK_AGG(); (strata_t686_ == strata_t687_); })) || ((({ __auto_type strata_t688_ = ti.kind; __auto_type strata_t689_ = TK_SCALAR(); (strata_t688_ == strata_t689_); })) && is_addr_taken(l, name))) {
+    if ((({ __auto_type strata_t795_ = ti.kind; __auto_type strata_t796_ = TK_AGG(); (strata_t795_ == strata_t796_); })) || ((({ __auto_type strata_t797_ = ti.kind; __auto_type strata_t798_ = TK_SCALAR(); (strata_t797_ == strata_t798_); })) && is_addr_taken(l, name))) {
         v.mem = true;
         v.reg = temp(l, ti.size, ti.align);
     } else 
-    if (({ __auto_type strata_t690_ = ti.kind; __auto_type strata_t691_ = TK_SCALAR(); (strata_t690_ == strata_t691_); })) {
+    if (({ __auto_type strata_t799_ = ti.kind; __auto_type strata_t800_ = TK_SCALAR(); (strata_t799_ == strata_t800_); })) {
         v.reg = vreg(l, ti.ty);
     } else {
         lw_fail(l, line, "a variable can't be void");
@@ -8019,7 +9553,7 @@ void copy_agg(Lower* l, TypeNode* t, int64_t dst, int64_t src, int64_t size) {
     }
     if ((d > 0) && (size == (4 * d))) {
         for (int64_t i = 0; i < d; i++) {
-            (({ __auto_type strata_t692_ = l; __auto_type strata_t693_ = KF32; __auto_type strata_t694_ = dst; __auto_type strata_t695_ = (4 * i); __auto_type strata_t696_ = load(l, KF32, src, (4 * i)); store(strata_t692_, strata_t693_, strata_t694_, strata_t695_, strata_t696_); }));
+            (({ __auto_type strata_t801_ = l; __auto_type strata_t802_ = KF32; __auto_type strata_t803_ = dst; __auto_type strata_t804_ = (4 * i); __auto_type strata_t805_ = load(l, KF32, src, (4 * i)); store(strata_t801_, strata_t802_, strata_t803_, strata_t804_, strata_t805_); }));
         }
     } else {
         copy_mem(l, dst, src, size);
@@ -8030,35 +9564,35 @@ void assign_var(Lower* l, LVar v, LVal val, int64_t line) {
     if (v.mem && (v.ty == KVoid)) {
         TInfo ti = tinfo(l, v.type);
         if (!val.agg) {
-            (({ __auto_type strata_t697_ = l; __auto_type strata_t698_ = line; __auto_type strata_t699_ = str_concat("expected a ", type_text(v.type)); lw_fail(strata_t697_, strata_t698_, strata_t699_); }));
+            (({ __auto_type strata_t806_ = l; __auto_type strata_t807_ = line; __auto_type strata_t808_ = str_concat("expected a ", type_text(v.type)); lw_fail(strata_t806_, strata_t807_, strata_t808_); }));
             return;
         }
         copy_agg(l, v.type, v.reg, val.reg, ti.size);
     } else 
     if (v.mem) {
-        (({ __auto_type strata_t700_ = l; __auto_type strata_t701_ = v.ty; __auto_type strata_t702_ = v.reg; __auto_type strata_t703_ = as_ty(l, val, v.ty, line); store(strata_t700_, strata_t701_, strata_t702_, 0, strata_t703_); }));
+        (({ __auto_type strata_t809_ = l; __auto_type strata_t810_ = v.ty; __auto_type strata_t811_ = v.reg; __auto_type strata_t812_ = as_ty(l, val, v.ty, line); store(strata_t809_, strata_t810_, strata_t811_, 0, strata_t812_); }));
     } else {
-        (({ __auto_type strata_t704_ = l; __auto_type strata_t705_ = v.ty; __auto_type strata_t706_ = v.reg; __auto_type strata_t707_ = as_ty(l, val, v.ty, line); copy_to(strata_t704_, strata_t705_, strata_t706_, strata_t707_); }));
+        (({ __auto_type strata_t813_ = l; __auto_type strata_t814_ = v.ty; __auto_type strata_t815_ = v.reg; __auto_type strata_t816_ = as_ty(l, val, v.ty, line); copy_to(strata_t813_, strata_t814_, strata_t815_, strata_t816_); }));
     }
 }
 
 void store_val(Lower* l, TypeNode* t, int64_t addr, int64_t off, LVal val, int64_t line) {
     TInfo ti = tinfo(l, t);
-    if (({ __auto_type strata_t708_ = ti.kind; __auto_type strata_t709_ = TK_AGG(); (strata_t708_ == strata_t709_); })) {
+    if (({ __auto_type strata_t817_ = ti.kind; __auto_type strata_t818_ = TK_AGG(); (strata_t817_ == strata_t818_); })) {
         if (!val.agg) {
-            (({ __auto_type strata_t710_ = l; __auto_type strata_t711_ = line; __auto_type strata_t712_ = str_concat("expected a ", type_text(t)); lw_fail(strata_t710_, strata_t711_, strata_t712_); }));
+            (({ __auto_type strata_t819_ = l; __auto_type strata_t820_ = line; __auto_type strata_t821_ = str_concat("expected a ", type_text(t)); lw_fail(strata_t819_, strata_t820_, strata_t821_); }));
             return;
         }
-        (({ __auto_type strata_t713_ = l; __auto_type strata_t714_ = t; __auto_type strata_t715_ = addr_plus(l, addr, off); copy_agg(strata_t713_, strata_t714_, strata_t715_, val.reg, ti.size); }));
+        (({ __auto_type strata_t822_ = l; __auto_type strata_t823_ = t; __auto_type strata_t824_ = addr_plus(l, addr, off); copy_agg(strata_t822_, strata_t823_, strata_t824_, val.reg, ti.size); }));
     } else 
-    if (({ __auto_type strata_t716_ = ti.kind; __auto_type strata_t717_ = TK_SCALAR(); (strata_t716_ == strata_t717_); })) {
-        (({ __auto_type strata_t718_ = l; __auto_type strata_t719_ = ti.ty; __auto_type strata_t720_ = addr; __auto_type strata_t721_ = off; __auto_type strata_t722_ = as_ty(l, val, ti.ty, line); store(strata_t718_, strata_t719_, strata_t720_, strata_t721_, strata_t722_); }));
+    if (({ __auto_type strata_t825_ = ti.kind; __auto_type strata_t826_ = TK_SCALAR(); (strata_t825_ == strata_t826_); })) {
+        (({ __auto_type strata_t827_ = l; __auto_type strata_t828_ = ti.ty; __auto_type strata_t829_ = addr; __auto_type strata_t830_ = off; __auto_type strata_t831_ = as_ty(l, val, ti.ty, line); store(strata_t827_, strata_t828_, strata_t829_, strata_t830_, strata_t831_); }));
     }
 }
 
 LVal load_val(Lower* l, TypeNode* t, int64_t addr, int64_t off) {
     TInfo ti = tinfo(l, t);
-    if (({ __auto_type strata_t723_ = ti.kind; __auto_type strata_t724_ = TK_AGG(); (strata_t723_ == strata_t724_); })) {
+    if (({ __auto_type strata_t832_ = ti.kind; __auto_type strata_t833_ = TK_AGG(); (strata_t832_ == strata_t833_); })) {
         return aggregate(addr_plus(l, addr, off), t);
     }
     return scalar(load(l, ti.ty, addr, off), ti.ty);
@@ -8138,17 +9672,17 @@ LVal lower_expr(Lower* l, Expr* e) {
     switch (e->kind) {
         case ExIntLit:
         {
-            return scalar((({ __auto_type strata_t725_ = l; __auto_type strata_t726_ = KI64; __auto_type strata_t727_ = parse_int(e->text); iconst(strata_t725_, strata_t726_, strata_t727_); })), KI64);
+            return scalar((({ __auto_type strata_t834_ = l; __auto_type strata_t835_ = KI64; __auto_type strata_t836_ = parse_int(e->text); iconst(strata_t834_, strata_t835_, strata_t836_); })), KI64);
             break;
         }
         case ExFloatLit:
         {
-            return scalar((({ __auto_type strata_t728_ = l; __auto_type strata_t729_ = KF64; __auto_type strata_t730_ = strip_us(e->text); fconst(strata_t728_, strata_t729_, strata_t730_); })), KF64);
+            return scalar((({ __auto_type strata_t837_ = l; __auto_type strata_t838_ = KF64; __auto_type strata_t839_ = strip_us(e->text); fconst(strata_t837_, strata_t838_, strata_t839_); })), KF64);
             break;
         }
         case ExCharLit:
         {
-            return scalar((({ __auto_type strata_t731_ = l; __auto_type strata_t732_ = KI8; __auto_type strata_t733_ = char_val(e->text); iconst(strata_t731_, strata_t732_, strata_t733_); })), KI8);
+            return scalar((({ __auto_type strata_t840_ = l; __auto_type strata_t841_ = KI8; __auto_type strata_t842_ = char_val(e->text); iconst(strata_t840_, strata_t841_, strata_t842_); })), KI8);
             break;
         }
         case ExBoolLit:
@@ -8214,7 +9748,7 @@ LVal lower_expr(Lower* l, Expr* e) {
         }
         case ExSizeof:
         {
-            return scalar((({ __auto_type strata_t734_ = l; __auto_type strata_t735_ = KI64; __auto_type strata_t736_ = tinfo(l, e->type).size; iconst(strata_t734_, strata_t735_, strata_t736_); })), KI64);
+            return scalar((({ __auto_type strata_t843_ = l; __auto_type strata_t844_ = KI64; __auto_type strata_t845_ = tinfo(l, e->type).size; iconst(strata_t843_, strata_t844_, strata_t845_); })), KI64);
             break;
         }
     }
@@ -8239,7 +9773,7 @@ LVal lower_name(Lower* l, Expr* e) {
     }
     int64_t g = lower__find_global(l, e->text);
     if (g >= 0) {
-        return (({ __auto_type strata_t737_ = l; __auto_type strata_t738_ = ((LGlobal*)(l->globals).data)[g].type; __auto_type strata_t739_ = sym_addr(l, e->text); load_val(strata_t737_, strata_t738_, strata_t739_, 0); }));
+        return (({ __auto_type strata_t846_ = l; __auto_type strata_t847_ = ((LGlobal*)(l->globals).data)[g].type; __auto_type strata_t848_ = lower__sym_addr(l, e->text); load_val(strata_t846_, strata_t847_, strata_t848_, 0); }));
     }
     for (int64_t i = 0; i < l->members.len; i++) {
         if (str_eq(((const char**)(l->members).data)[i], e->text)) {
@@ -8251,6 +9785,10 @@ LVal lower_name(Lower* l, Expr* e) {
     }
     if (str_eq(e->text, "null")) {
         return scalar(iconst(l, KU64, 0), KU64);
+    }
+    Decl* fd = find_func(l, e->text);
+    if (fd != 0) {
+        return scalar((({ __auto_type strata_t849_ = l; __auto_type strata_t850_ = link_sym(fd); lower__sym_addr(strata_t849_, strata_t850_); })), KU64);
     }
     lw_fail(l, e->line, str_concat(str_concat("'", e->text), "' is not a Strata name (C names need the C backend for now)"));
     return scalar(iconst(l, KI64, 0), KI64);
@@ -8266,12 +9804,12 @@ LVal lower_unary(Lower* l, Expr* e) {
         return scalar(a, KU64);
     }
     if (str_eq(e->text, "*")) {
-        int64_t p = (({ __auto_type strata_t740_ = l; __auto_type strata_t741_ = lower_expr(l, e->a); as_ty(strata_t740_, strata_t741_, KU64, e->line); }));
+        int64_t p = (({ __auto_type strata_t851_ = l; __auto_type strata_t852_ = lower_expr(l, e->a); as_ty(strata_t851_, strata_t852_, KU64, e->line); }));
         return load_val(l, e->rtype, p, 0);
     }
     LVal v = lower_expr(l, e->a);
     if (str_eq(e->text, "!")) {
-        return scalar((({ __auto_type strata_t742_ = l; __auto_type strata_t743_ = CEq; __auto_type strata_t744_ = KU8; __auto_type strata_t745_ = to_bool(l, v); __auto_type strata_t746_ = iconst(l, KU8, 0); cmp(strata_t742_, strata_t743_, strata_t744_, strata_t745_, strata_t746_); })), KU8);
+        return scalar((({ __auto_type strata_t853_ = l; __auto_type strata_t854_ = CEq; __auto_type strata_t855_ = KU8; __auto_type strata_t856_ = to_bool(l, v); __auto_type strata_t857_ = iconst(l, KU8, 0); cmp(strata_t853_, strata_t854_, strata_t855_, strata_t856_, strata_t857_); })), KU8);
     }
     int64_t t = promote(v.ty);
     int64_t x = as_ty(l, v, t, e->line);
@@ -8358,7 +9896,7 @@ LVal combine(Lower* l, Expr* e, LVal left) {
     const char* op = e->text;
     if (str_eq(op, "&&") || str_eq(op, "||")) {
         int64_t r = vreg(l, KU8);
-        (({ __auto_type strata_t747_ = l; __auto_type strata_t748_ = KU8; __auto_type strata_t749_ = r; __auto_type strata_t750_ = to_bool(l, left); copy_to(strata_t747_, strata_t748_, strata_t749_, strata_t750_); }));
+        (({ __auto_type strata_t858_ = l; __auto_type strata_t859_ = KU8; __auto_type strata_t860_ = r; __auto_type strata_t861_ = to_bool(l, left); copy_to(strata_t858_, strata_t859_, strata_t860_, strata_t861_); }));
         int64_t rhs = new_label(l);
         int64_t done = new_label(l);
         if (str_eq(op, "&&")) {
@@ -8366,10 +9904,10 @@ LVal combine(Lower* l, Expr* e, LVal left) {
         } else {
             branch(l, r, done, rhs);
         }
-        label(l, rhs);
-        (({ __auto_type strata_t751_ = l; __auto_type strata_t752_ = KU8; __auto_type strata_t753_ = r; __auto_type strata_t754_ = (({ __auto_type strata_t755_ = l; __auto_type strata_t756_ = lower_expr(l, e->b); to_bool(strata_t755_, strata_t756_); })); copy_to(strata_t751_, strata_t752_, strata_t753_, strata_t754_); }));
+        lower__label(l, rhs);
+        (({ __auto_type strata_t862_ = l; __auto_type strata_t863_ = KU8; __auto_type strata_t864_ = r; __auto_type strata_t865_ = (({ __auto_type strata_t866_ = l; __auto_type strata_t867_ = lower_expr(l, e->b); to_bool(strata_t866_, strata_t867_); })); copy_to(strata_t862_, strata_t863_, strata_t864_, strata_t865_); }));
         jump(l, done);
-        label(l, done);
+        lower__label(l, done);
         return scalar(r, KU8);
     }
     LVal right = lower_expr(l, e->b);
@@ -8377,7 +9915,7 @@ LVal combine(Lower* l, Expr* e, LVal left) {
     TypeNode* rt = e->b->rtype;
     if (is_mat(lt) || is_quat(lt)) {
         TypeNode* res = e->rtype;
-        int64_t out = (({ __auto_type strata_t757_ = l; __auto_type strata_t758_ = tinfo(l, res).size; temp(strata_t757_, strata_t758_, 4); }));
+        int64_t out = (({ __auto_type strata_t868_ = l; __auto_type strata_t869_ = tinfo(l, res).size; temp(strata_t868_, strata_t869_, 4); }));
         if (is_mat(lt) && is_mat(rt)) {
             call3(l, "srt_mat4_mul", KVoid, out, left.reg, right.reg);
         } else 
@@ -8400,23 +9938,23 @@ LVal combine(Lower* l, Expr* e, LVal left) {
         if (str_eq(op, "!=")) {
             c = CEq;
         }
-        return scalar((({ __auto_type strata_t759_ = l; __auto_type strata_t760_ = c; __auto_type strata_t761_ = KI32; __auto_type strata_t762_ = eq; __auto_type strata_t763_ = iconst(l, KI32, 0); cmp(strata_t759_, strata_t760_, strata_t761_, strata_t762_, strata_t763_); })), KU8);
+        return scalar((({ __auto_type strata_t870_ = l; __auto_type strata_t871_ = c; __auto_type strata_t872_ = KI32; __auto_type strata_t873_ = eq; __auto_type strata_t874_ = iconst(l, KI32, 0); cmp(strata_t870_, strata_t871_, strata_t872_, strata_t873_, strata_t874_); })), KU8);
     }
     if (((((str_eq(op, "==") || str_eq(op, "!=")) || str_eq(op, "<")) || str_eq(op, "<=")) || str_eq(op, ">")) || str_eq(op, ">=")) {
-        int64_t t = (({ __auto_type strata_t764_ = promote(left.ty); __auto_type strata_t765_ = promote(right.ty); arith_ty(strata_t764_, strata_t765_); }));
-        return scalar((({ __auto_type strata_t766_ = l; __auto_type strata_t767_ = cond_of(op); __auto_type strata_t768_ = t; __auto_type strata_t769_ = as_ty(l, left, t, e->line); __auto_type strata_t770_ = as_ty(l, right, t, e->line); cmp(strata_t766_, strata_t767_, strata_t768_, strata_t769_, strata_t770_); })), KU8);
+        int64_t t = (({ __auto_type strata_t875_ = promote(left.ty); __auto_type strata_t876_ = promote(right.ty); arith_ty(strata_t875_, strata_t876_); }));
+        return scalar((({ __auto_type strata_t877_ = l; __auto_type strata_t878_ = cond_of(op); __auto_type strata_t879_ = t; __auto_type strata_t880_ = as_ty(l, left, t, e->line); __auto_type strata_t881_ = as_ty(l, right, t, e->line); cmp(strata_t877_, strata_t878_, strata_t879_, strata_t880_, strata_t881_); })), KU8);
     }
     int64_t aop = arith_op(op);
     if (aop < 0) {
         lw_fail(l, e->line, str_concat("unsupported operator ", op));
         return left;
     }
-    int64_t t = (({ __auto_type strata_t771_ = promote(left.ty); __auto_type strata_t772_ = promote(right.ty); arith_ty(strata_t771_, strata_t772_); }));
+    int64_t t = (({ __auto_type strata_t882_ = promote(left.ty); __auto_type strata_t883_ = promote(right.ty); arith_ty(strata_t882_, strata_t883_); }));
     if ((aop == OShl) || (aop == OShr)) {
         t = promote(left.ty);
-        return scalar((({ __auto_type strata_t773_ = l; __auto_type strata_t774_ = aop; __auto_type strata_t775_ = t; __auto_type strata_t776_ = as_ty(l, left, t, e->line); __auto_type strata_t777_ = as_ty(l, right, t, e->line); binop(strata_t773_, strata_t774_, strata_t775_, strata_t776_, strata_t777_); })), t);
+        return scalar((({ __auto_type strata_t884_ = l; __auto_type strata_t885_ = aop; __auto_type strata_t886_ = t; __auto_type strata_t887_ = as_ty(l, left, t, e->line); __auto_type strata_t888_ = as_ty(l, right, t, e->line); binop(strata_t884_, strata_t885_, strata_t886_, strata_t887_, strata_t888_); })), t);
     }
-    return scalar((({ __auto_type strata_t778_ = l; __auto_type strata_t779_ = aop; __auto_type strata_t780_ = t; __auto_type strata_t781_ = as_ty(l, left, t, e->line); __auto_type strata_t782_ = as_ty(l, right, t, e->line); binop(strata_t778_, strata_t779_, strata_t780_, strata_t781_, strata_t782_); })), t);
+    return scalar((({ __auto_type strata_t889_ = l; __auto_type strata_t890_ = aop; __auto_type strata_t891_ = t; __auto_type strata_t892_ = as_ty(l, left, t, e->line); __auto_type strata_t893_ = as_ty(l, right, t, e->line); binop(strata_t889_, strata_t890_, strata_t891_, strata_t892_, strata_t893_); })), t);
 }
 
 LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
@@ -8428,7 +9966,7 @@ LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
         for (int64_t i = 0; i < n; i++) {
             int64_t x = load(l, KF32, a.reg, (4 * i));
             int64_t y = load(l, KF32, b.reg, (4 * i));
-            (({ __auto_type strata_t783_ = l; __auto_type strata_t784_ = KF32; __auto_type strata_t785_ = out; __auto_type strata_t786_ = (4 * i); __auto_type strata_t787_ = binop(l, op, KF32, x, y); store(strata_t783_, strata_t784_, strata_t785_, strata_t786_, strata_t787_); }));
+            (({ __auto_type strata_t894_ = l; __auto_type strata_t895_ = KF32; __auto_type strata_t896_ = out; __auto_type strata_t897_ = (4 * i); __auto_type strata_t898_ = binop(l, op, KF32, x, y); store(strata_t894_, strata_t895_, strata_t896_, strata_t897_, strata_t898_); }));
         }
     } else {
         LVal vv = a;
@@ -8439,7 +9977,7 @@ LVal vec_binary(Lower* l, Expr* e, LVal a, LVal b) {
         }
         int64_t s = as_ty(l, sv, KF32, e->line);
         for (int64_t i = 0; i < n; i++) {
-            (({ __auto_type strata_t788_ = l; __auto_type strata_t789_ = KF32; __auto_type strata_t790_ = out; __auto_type strata_t791_ = (4 * i); __auto_type strata_t792_ = (({ __auto_type strata_t793_ = l; __auto_type strata_t794_ = OMul; __auto_type strata_t795_ = KF32; __auto_type strata_t796_ = load(l, KF32, vv.reg, (4 * i)); binop(strata_t793_, strata_t794_, strata_t795_, strata_t796_, s); })); store(strata_t788_, strata_t789_, strata_t790_, strata_t791_, strata_t792_); }));
+            (({ __auto_type strata_t899_ = l; __auto_type strata_t900_ = KF32; __auto_type strata_t901_ = out; __auto_type strata_t902_ = (4 * i); __auto_type strata_t903_ = (({ __auto_type strata_t904_ = l; __auto_type strata_t905_ = OMul; __auto_type strata_t906_ = KF32; __auto_type strata_t907_ = load(l, KF32, vv.reg, (4 * i)); binop(strata_t904_, strata_t905_, strata_t906_, strata_t907_, s); })); store(strata_t899_, strata_t900_, strata_t901_, strata_t902_, strata_t903_); }));
         }
     }
     return aggregate(out, res);
@@ -8468,7 +10006,7 @@ FieldRef field_of(Lower* l, TypeNode* t, const char* name) {
                 k = 3;
             }
             if (k >= 0) {
-                return (({ __auto_type strata_t797_ = (4 * k); __auto_type strata_t798_ = named("float"); (FieldRef){true, strata_t797_, strata_t798_}; }));
+                return (({ __auto_type strata_t908_ = (4 * k); __auto_type strata_t909_ = named("float"); (FieldRef){true, strata_t908_, strata_t909_}; }));
             }
         }
         int64_t si = struct_index(l, t->name);
@@ -8486,7 +10024,7 @@ FieldRef field_of(Lower* l, TypeNode* t, const char* name) {
 
 Base field_base(Lower* l, Expr* obj) {
     if (is_ptr(obj->rtype)) {
-        int64_t p = (({ __auto_type strata_t799_ = l; __auto_type strata_t800_ = lower_expr(l, obj); as_ty(strata_t799_, strata_t800_, KU64, obj->line); }));
+        int64_t p = (({ __auto_type strata_t910_ = l; __auto_type strata_t911_ = lower_expr(l, obj); as_ty(strata_t910_, strata_t911_, KU64, obj->line); }));
         return (Base){p, obj->rtype->elem};
     }
     int64_t a = lvalue_addr(l, obj);
@@ -8504,15 +10042,15 @@ Base field_base(Lower* l, Expr* obj) {
 LVal lower_field(Lower* l, Expr* e) {
     TypeNode* ot = e->a->rtype;
     if (is_str(ot) && str_eq(e->field, "len")) {
-        return scalar((({ __auto_type strata_t801_ = l; __auto_type strata_t802_ = KI64; __auto_type strata_t803_ = (({ __auto_type strata_t804_ = l; __auto_type strata_t805_ = lower_expr(l, e->a); as_ty(strata_t804_, strata_t805_, KU64, e->line); })); call1(strata_t801_, "srt_str_len", strata_t802_, strata_t803_); })), KI64);
+        return scalar((({ __auto_type strata_t912_ = l; __auto_type strata_t913_ = KI64; __auto_type strata_t914_ = (({ __auto_type strata_t915_ = l; __auto_type strata_t916_ = lower_expr(l, e->a); as_ty(strata_t915_, strata_t916_, KU64, e->line); })); call1(strata_t912_, "srt_str_len", strata_t913_, strata_t914_); })), KI64);
     }
     if (is_vec(ot) && (str_len(e->field) > 1)) {
         Base b = field_base(l, e->a);
         int64_t n = str_len(e->field);
         int64_t out = temp(l, (4 * n), 4);
         for (int64_t i = 0; i < n; i++) {
-            FieldRef fr = (({ __auto_type strata_t806_ = l; __auto_type strata_t807_ = ot; __auto_type strata_t808_ = str_sub(e->field, i, 1); field_of(strata_t806_, strata_t807_, strata_t808_); }));
-            (({ __auto_type strata_t809_ = l; __auto_type strata_t810_ = KF32; __auto_type strata_t811_ = out; __auto_type strata_t812_ = (4 * i); __auto_type strata_t813_ = load(l, KF32, b.addr, fr.off); store(strata_t809_, strata_t810_, strata_t811_, strata_t812_, strata_t813_); }));
+            FieldRef fr = (({ __auto_type strata_t917_ = l; __auto_type strata_t918_ = ot; __auto_type strata_t919_ = str_sub(e->field, i, 1); field_of(strata_t917_, strata_t918_, strata_t919_); }));
+            (({ __auto_type strata_t920_ = l; __auto_type strata_t921_ = KF32; __auto_type strata_t922_ = out; __auto_type strata_t923_ = (4 * i); __auto_type strata_t924_ = load(l, KF32, b.addr, fr.off); store(strata_t920_, strata_t921_, strata_t922_, strata_t923_, strata_t924_); }));
         }
         return aggregate(out, e->rtype);
     }
@@ -8532,7 +10070,7 @@ int64_t field_addr(Lower* l, Expr* e) {
 
 int64_t index_addr(Lower* l, Expr* e) {
     TypeNode* ot = e->a->rtype;
-    int64_t idx = (({ __auto_type strata_t814_ = l; __auto_type strata_t815_ = lower_expr(l, e->b); as_ty(strata_t814_, strata_t815_, KI64, e->line); }));
+    int64_t idx = (({ __auto_type strata_t925_ = l; __auto_type strata_t926_ = lower_expr(l, e->b); as_ty(strata_t925_, strata_t926_, KI64, e->line); }));
     int64_t base = (0 - 1);
     int64_t size = 1;
     if (is_dynarr(ot)) {
@@ -8541,10 +10079,10 @@ int64_t index_addr(Lower* l, Expr* e) {
         size = tinfo(l, ot->elem).size;
     } else 
     if (is_str(ot)) {
-        base = (({ __auto_type strata_t816_ = l; __auto_type strata_t817_ = lower_expr(l, e->a); as_ty(strata_t816_, strata_t817_, KU64, e->line); }));
+        base = (({ __auto_type strata_t927_ = l; __auto_type strata_t928_ = lower_expr(l, e->a); as_ty(strata_t927_, strata_t928_, KU64, e->line); }));
     } else 
     if (is_ptr(ot) || ((ot != 0) && ((ot->kind == TyArray) || (ot->kind == TyFixedArray)))) {
-        base = (({ __auto_type strata_t818_ = l; __auto_type strata_t819_ = lower_expr(l, e->a); as_ty(strata_t818_, strata_t819_, KU64, e->line); }));
+        base = (({ __auto_type strata_t929_ = l; __auto_type strata_t930_ = lower_expr(l, e->a); as_ty(strata_t929_, strata_t930_, KU64, e->line); }));
         size = tinfo(l, ot->elem).size;
     } else {
         lw_fail(l, e->line, "can't index this");
@@ -8552,7 +10090,7 @@ int64_t index_addr(Lower* l, Expr* e) {
     }
     int64_t off = idx;
     if (size != 1) {
-        off = (({ __auto_type strata_t820_ = l; __auto_type strata_t821_ = OMul; __auto_type strata_t822_ = KI64; __auto_type strata_t823_ = idx; __auto_type strata_t824_ = iconst(l, KI64, size); binop(strata_t820_, strata_t821_, strata_t822_, strata_t823_, strata_t824_); }));
+        off = (({ __auto_type strata_t931_ = l; __auto_type strata_t932_ = OMul; __auto_type strata_t933_ = KI64; __auto_type strata_t934_ = idx; __auto_type strata_t935_ = iconst(l, KI64, size); binop(strata_t931_, strata_t932_, strata_t933_, strata_t934_, strata_t935_); }));
     }
     return binop(l, OAdd, KU64, base, off);
 }
@@ -8564,7 +10102,7 @@ int64_t lvalue_addr(Lower* l, Expr* e) {
             return ((LVar*)(l->vars).data)[k].reg;
         }
         if ((k < 0) && (lower__find_global(l, e->text) >= 0)) {
-            return sym_addr(l, e->text);
+            return lower__sym_addr(l, e->text);
         }
         return (0 - 1);
     }
@@ -8581,7 +10119,7 @@ int64_t lvalue_addr(Lower* l, Expr* e) {
         return index_addr(l, e);
     }
     if ((e->kind == ExUnary) && str_eq(e->text, "*")) {
-        return (({ __auto_type strata_t825_ = l; __auto_type strata_t826_ = lower_expr(l, e->a); as_ty(strata_t825_, strata_t826_, KU64, e->line); }));
+        return (({ __auto_type strata_t936_ = l; __auto_type strata_t937_ = lower_expr(l, e->a); as_ty(strata_t936_, strata_t937_, KU64, e->line); }));
     }
     return (0 - 1);
 }
@@ -8595,7 +10133,7 @@ LVal lower_struct_lit(Lower* l, Expr* e) {
     for (int64_t i = 0; i < e->items.len; i++) {
         if ((si >= 0) && (i < ((StructLay*)(l->structs).data)[si].fields.len)) {
             FieldLay fl = ((FieldLay*)(((StructLay*)(l->structs).data)[si].fields).data)[i];
-            (({ __auto_type strata_t827_ = l; __auto_type strata_t828_ = fl.type; __auto_type strata_t829_ = out; __auto_type strata_t830_ = fl.off; __auto_type strata_t831_ = lower_expr(l, ((Expr**)(e->items).data)[i]); store_val(strata_t827_, strata_t828_, strata_t829_, strata_t830_, strata_t831_, e->line); }));
+            (({ __auto_type strata_t938_ = l; __auto_type strata_t939_ = fl.type; __auto_type strata_t940_ = out; __auto_type strata_t941_ = fl.off; __auto_type strata_t942_ = lower_expr(l, ((Expr**)(e->items).data)[i]); store_val(strata_t938_, strata_t939_, strata_t940_, strata_t941_, strata_t942_, e->line); }));
         }
     }
     return aggregate(out, t);
@@ -8610,7 +10148,7 @@ TypeNode* elem_of(TypeNode* t) {
 
 void init_array(Lower* l, int64_t addr, TypeNode* elem) {
     zero_mem(l, addr, 32);
-    (({ __auto_type strata_t832_ = l; __auto_type strata_t833_ = KI64; __auto_type strata_t834_ = addr; __auto_type strata_t835_ = (({ __auto_type strata_t836_ = l; __auto_type strata_t837_ = KI64; __auto_type strata_t838_ = tinfo(l, elem).size; iconst(strata_t836_, strata_t837_, strata_t838_); })); store(strata_t832_, strata_t833_, strata_t834_, 24, strata_t835_); }));
+    (({ __auto_type strata_t943_ = l; __auto_type strata_t944_ = KI64; __auto_type strata_t945_ = addr; __auto_type strata_t946_ = (({ __auto_type strata_t947_ = l; __auto_type strata_t948_ = KI64; __auto_type strata_t949_ = tinfo(l, elem).size; iconst(strata_t947_, strata_t948_, strata_t949_); })); store(strata_t943_, strata_t944_, strata_t945_, 24, strata_t946_); }));
 }
 
 LVal lower_array_lit(Lower* l, Expr* e) {
@@ -8621,7 +10159,7 @@ LVal lower_array_lit(Lower* l, Expr* e) {
     if (e->items.len > 0) {
         int64_t tmp = temp(l, ei.size, ei.align);
         for (int64_t i = 0; i < e->items.len; i++) {
-            (({ __auto_type strata_t839_ = l; __auto_type strata_t840_ = elem; __auto_type strata_t841_ = tmp; __auto_type strata_t842_ = lower_expr(l, ((Expr**)(e->items).data)[i]); store_val(strata_t839_, strata_t840_, strata_t841_, 0, strata_t842_, e->line); }));
+            (({ __auto_type strata_t950_ = l; __auto_type strata_t951_ = elem; __auto_type strata_t952_ = tmp; __auto_type strata_t953_ = lower_expr(l, ((Expr**)(e->items).data)[i]); store_val(strata_t950_, strata_t951_, strata_t952_, 0, strata_t953_, e->line); }));
             call2(l, "srt_arr_push", KVoid, out, tmp);
         }
     }
@@ -8633,7 +10171,7 @@ LVal lower_array_lit(Lower* l, Expr* e) {
 LVal lower_cast(Lower* l, Expr* e) {
     LVal v = lower_expr(l, e->a);
     TInfo ti = tinfo(l, e->type);
-    if ((({ __auto_type strata_t843_ = ti.kind; __auto_type strata_t844_ = TK_SCALAR(); (strata_t843_ != strata_t844_); })) || v.agg) {
+    if ((({ __auto_type strata_t954_ = ti.kind; __auto_type strata_t955_ = TK_SCALAR(); (strata_t954_ != strata_t955_); })) || v.agg) {
         lw_fail(l, e->line, "unsupported cast");
         return v;
     }
@@ -8654,7 +10192,7 @@ Decl* find_func(Lower* l, const char* name) {
 }
 
 LVal lower_args_f32(Lower* l, Expr* e, int64_t i) {
-    return scalar((({ __auto_type strata_t845_ = l; __auto_type strata_t846_ = lower_expr(l, ((Expr**)(e->items).data)[i]); as_ty(strata_t845_, strata_t846_, KF32, e->line); })), KF32);
+    return scalar((({ __auto_type strata_t956_ = l; __auto_type strata_t957_ = lower_expr(l, ((Expr**)(e->items).data)[i]); as_ty(strata_t956_, strata_t957_, KF32, e->line); })), KF32);
 }
 
 int64_t vec_addr(Lower* l, Expr* e, int64_t line) {
@@ -8667,14 +10205,30 @@ int64_t vec_addr(Lower* l, Expr* e, int64_t line) {
 }
 
 int64_t vec_dot(Lower* l, int64_t a, int64_t b, int64_t n) {
-    int64_t s = (({ __auto_type strata_t847_ = l; __auto_type strata_t848_ = OMul; __auto_type strata_t849_ = KF32; __auto_type strata_t850_ = load(l, KF32, a, 0); __auto_type strata_t851_ = load(l, KF32, b, 0); binop(strata_t847_, strata_t848_, strata_t849_, strata_t850_, strata_t851_); }));
+    int64_t s = (({ __auto_type strata_t958_ = l; __auto_type strata_t959_ = OMul; __auto_type strata_t960_ = KF32; __auto_type strata_t961_ = load(l, KF32, a, 0); __auto_type strata_t962_ = load(l, KF32, b, 0); binop(strata_t958_, strata_t959_, strata_t960_, strata_t961_, strata_t962_); }));
     for (int64_t i = 1; i < n; i++) {
-        s = (({ __auto_type strata_t852_ = l; __auto_type strata_t853_ = OAdd; __auto_type strata_t854_ = KF32; __auto_type strata_t855_ = s; __auto_type strata_t856_ = (({ __auto_type strata_t857_ = l; __auto_type strata_t858_ = OMul; __auto_type strata_t859_ = KF32; __auto_type strata_t860_ = load(l, KF32, a, (4 * i)); __auto_type strata_t861_ = load(l, KF32, b, (4 * i)); binop(strata_t857_, strata_t858_, strata_t859_, strata_t860_, strata_t861_); })); binop(strata_t852_, strata_t853_, strata_t854_, strata_t855_, strata_t856_); }));
+        s = (({ __auto_type strata_t963_ = l; __auto_type strata_t964_ = OAdd; __auto_type strata_t965_ = KF32; __auto_type strata_t966_ = s; __auto_type strata_t967_ = (({ __auto_type strata_t968_ = l; __auto_type strata_t969_ = OMul; __auto_type strata_t970_ = KF32; __auto_type strata_t971_ = load(l, KF32, a, (4 * i)); __auto_type strata_t972_ = load(l, KF32, b, (4 * i)); binop(strata_t968_, strata_t969_, strata_t970_, strata_t971_, strata_t972_); })); binop(strata_t963_, strata_t964_, strata_t965_, strata_t966_, strata_t967_); }));
     }
     return s;
 }
 
+LVal call_indirect(Lower* l, Expr* e) {
+    LVal f = lower_expr(l, e->a);
+    Decl* d = new_decl(DcFunc, e->line, e->col);
+    d->ret = e->type->elem;
+    TypeNode* a = e->type->args;
+    while (a != 0) {
+        ({ Param _e = (Param){"", a}; arr_push(&(d->params), &_e); });
+        a = a->next;
+    }
+    l->ind = f.reg;
+    return call_strata(l, d, e);
+}
+
 LVal lower_call(Lower* l, Expr* e) {
+    if (e->type != 0) {
+        return call_indirect(l, e);
+    }
     Expr* callee = e->a;
     if (callee->kind == ExField) {
         if (str_eq(callee->field, "new") && (e->items.len == 1)) {
@@ -8687,7 +10241,7 @@ LVal lower_call(Lower* l, Expr* e) {
                 t = named(((Expr**)(e->items).data)[0]->text);
             }
             int64_t size = tinfo(l, t).size;
-            return scalar((({ __auto_type strata_t862_ = l; __auto_type strata_t863_ = KU64; __auto_type strata_t864_ = arena; __auto_type strata_t865_ = iconst(l, KI64, size); call2(strata_t862_, "srt_arena_alloc", strata_t863_, strata_t864_, strata_t865_); })), KU64);
+            return scalar((({ __auto_type strata_t973_ = l; __auto_type strata_t974_ = KU64; __auto_type strata_t975_ = arena; __auto_type strata_t976_ = iconst(l, KI64, size); call2(strata_t973_, "srt_arena_alloc", strata_t974_, strata_t975_, strata_t976_); })), KU64);
         }
         if ((str_eq(callee->field, "push") && (e->items.len == 1)) && is_dynarr(callee->a->rtype)) {
             int64_t hdr = lvalue_addr(l, callee->a);
@@ -8697,7 +10251,7 @@ LVal lower_call(Lower* l, Expr* e) {
             TypeNode* elem = elem_of(callee->a->rtype);
             TInfo ei = tinfo(l, elem);
             int64_t tmp = temp(l, ei.size, ei.align);
-            (({ __auto_type strata_t866_ = l; __auto_type strata_t867_ = elem; __auto_type strata_t868_ = tmp; __auto_type strata_t869_ = lower_expr(l, ((Expr**)(e->items).data)[0]); store_val(strata_t866_, strata_t867_, strata_t868_, 0, strata_t869_, e->line); }));
+            (({ __auto_type strata_t977_ = l; __auto_type strata_t978_ = elem; __auto_type strata_t979_ = tmp; __auto_type strata_t980_ = lower_expr(l, ((Expr**)(e->items).data)[0]); store_val(strata_t977_, strata_t978_, strata_t979_, 0, strata_t980_, e->line); }));
             call2(l, "srt_arr_push", KVoid, hdr, tmp);
             return scalar(iconst(l, KI64, 0), KI64);
         }
@@ -8717,19 +10271,19 @@ LVal lower_call(Lower* l, Expr* e) {
             call1(l, "srt_print_str", KVoid, v.reg);
         } else 
         if (v.agg) {
-            (({ __auto_type strata_t870_ = l; __auto_type strata_t871_ = e->line; __auto_type strata_t872_ = str_concat("can't print a ", type_text(v.t)); lw_fail(strata_t870_, strata_t871_, strata_t872_); }));
+            (({ __auto_type strata_t981_ = l; __auto_type strata_t982_ = e->line; __auto_type strata_t983_ = str_concat("can't print a ", type_text(v.t)); lw_fail(strata_t981_, strata_t982_, strata_t983_); }));
         } else 
         if (ir_is_float(v.ty)) {
-            (({ __auto_type strata_t873_ = l; __auto_type strata_t874_ = KVoid; __auto_type strata_t875_ = conv(l, v.reg, v.ty, KF64); call1(strata_t873_, "srt_print_f64", strata_t874_, strata_t875_); }));
+            (({ __auto_type strata_t984_ = l; __auto_type strata_t985_ = KVoid; __auto_type strata_t986_ = conv(l, v.reg, v.ty, KF64); call1(strata_t984_, "srt_print_f64", strata_t985_, strata_t986_); }));
         } else {
-            (({ __auto_type strata_t876_ = l; __auto_type strata_t877_ = KVoid; __auto_type strata_t878_ = conv(l, v.reg, v.ty, KI64); call1(strata_t876_, "srt_print_i64", strata_t877_, strata_t878_); }));
+            (({ __auto_type strata_t987_ = l; __auto_type strata_t988_ = KVoid; __auto_type strata_t989_ = conv(l, v.reg, v.ty, KI64); call1(strata_t987_, "srt_print_i64", strata_t988_, strata_t989_); }));
         }
         return scalar(iconst(l, KI64, 0), KI64);
     }
     if (str_eq(nm, "arena") && (n == 0)) {
         int64_t out = temp(l, 8, 8);
         zero_mem(l, out, 8);
-        return (({ __auto_type strata_t879_ = out; __auto_type strata_t880_ = named("Arena"); aggregate(strata_t879_, strata_t880_); }));
+        return (({ __auto_type strata_t990_ = out; __auto_type strata_t991_ = named("Arena"); aggregate(strata_t990_, strata_t991_); }));
     }
     int64_t dim = vec_dim_of(nm);
     if ((dim > 0) && (!str_eq(nm, "quat"))) {
@@ -8741,10 +10295,10 @@ LVal lower_call(Lower* l, Expr* e) {
             }
         } else {
             for (int64_t i = 0; i < n; i++) {
-                (({ __auto_type strata_t881_ = l; __auto_type strata_t882_ = KF32; __auto_type strata_t883_ = out; __auto_type strata_t884_ = (4 * i); __auto_type strata_t885_ = lower_args_f32(l, e, i).reg; store(strata_t881_, strata_t882_, strata_t883_, strata_t884_, strata_t885_); }));
+                (({ __auto_type strata_t992_ = l; __auto_type strata_t993_ = KF32; __auto_type strata_t994_ = out; __auto_type strata_t995_ = (4 * i); __auto_type strata_t996_ = lower_args_f32(l, e, i).reg; store(strata_t992_, strata_t993_, strata_t994_, strata_t995_, strata_t996_); }));
             }
         }
-        return (({ __auto_type strata_t886_ = out; __auto_type strata_t887_ = named(nm); aggregate(strata_t886_, strata_t887_); }));
+        return (({ __auto_type strata_t997_ = out; __auto_type strata_t998_ = named(nm); aggregate(strata_t997_, strata_t998_); }));
     }
     if (str_eq(nm, "dot") && (n == 2)) {
         int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
@@ -8755,24 +10309,24 @@ LVal lower_call(Lower* l, Expr* e) {
     if (str_eq(nm, "length") && (n == 1)) {
         int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
         int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
-        return scalar((({ __auto_type strata_t888_ = l; __auto_type strata_t889_ = OSqrt; __auto_type strata_t890_ = KF32; __auto_type strata_t891_ = vec_dot(l, a, a, d); unop(strata_t888_, strata_t889_, strata_t890_, strata_t891_); })), KF32);
+        return scalar((({ __auto_type strata_t999_ = l; __auto_type strata_t1000_ = OSqrt; __auto_type strata_t1001_ = KF32; __auto_type strata_t1002_ = vec_dot(l, a, a, d); unop(strata_t999_, strata_t1000_, strata_t1001_, strata_t1002_); })), KF32);
     }
     if (str_eq(nm, "normalize") && (n == 1)) {
         int64_t d = vec_dim_of(((Expr**)(e->items).data)[0]->rtype->name);
         int64_t a = vec_addr(l, ((Expr**)(e->items).data)[0], e->line);
         int64_t out = temp(l, (4 * d), 4);
         copy_agg(l, ((Expr**)(e->items).data)[0]->rtype, out, a, (4 * d));
-        int64_t len = (({ __auto_type strata_t892_ = l; __auto_type strata_t893_ = OSqrt; __auto_type strata_t894_ = KF32; __auto_type strata_t895_ = vec_dot(l, a, a, d); unop(strata_t892_, strata_t893_, strata_t894_, strata_t895_); }));
+        int64_t len = (({ __auto_type strata_t1003_ = l; __auto_type strata_t1004_ = OSqrt; __auto_type strata_t1005_ = KF32; __auto_type strata_t1006_ = vec_dot(l, a, a, d); unop(strata_t1003_, strata_t1004_, strata_t1005_, strata_t1006_); }));
         int64_t scale = new_label(l);
         int64_t done = new_label(l);
-        (({ __auto_type strata_t896_ = l; __auto_type strata_t897_ = (({ __auto_type strata_t898_ = l; __auto_type strata_t899_ = CEq; __auto_type strata_t900_ = KF32; __auto_type strata_t901_ = len; __auto_type strata_t902_ = fconst(l, KF32, "0.0"); cmp(strata_t898_, strata_t899_, strata_t900_, strata_t901_, strata_t902_); })); branch(strata_t896_, strata_t897_, done, scale); }));
-        label(l, scale);
-        int64_t inv = (({ __auto_type strata_t903_ = l; __auto_type strata_t904_ = ODiv; __auto_type strata_t905_ = KF32; __auto_type strata_t906_ = fconst(l, KF32, "1.0"); binop(strata_t903_, strata_t904_, strata_t905_, strata_t906_, len); }));
+        (({ __auto_type strata_t1007_ = l; __auto_type strata_t1008_ = (({ __auto_type strata_t1009_ = l; __auto_type strata_t1010_ = CEq; __auto_type strata_t1011_ = KF32; __auto_type strata_t1012_ = len; __auto_type strata_t1013_ = fconst(l, KF32, "0.0"); cmp(strata_t1009_, strata_t1010_, strata_t1011_, strata_t1012_, strata_t1013_); })); branch(strata_t1007_, strata_t1008_, done, scale); }));
+        lower__label(l, scale);
+        int64_t inv = (({ __auto_type strata_t1014_ = l; __auto_type strata_t1015_ = ODiv; __auto_type strata_t1016_ = KF32; __auto_type strata_t1017_ = fconst(l, KF32, "1.0"); binop(strata_t1014_, strata_t1015_, strata_t1016_, strata_t1017_, len); }));
         for (int64_t i = 0; i < d; i++) {
-            (({ __auto_type strata_t907_ = l; __auto_type strata_t908_ = KF32; __auto_type strata_t909_ = out; __auto_type strata_t910_ = (4 * i); __auto_type strata_t911_ = (({ __auto_type strata_t912_ = l; __auto_type strata_t913_ = OMul; __auto_type strata_t914_ = KF32; __auto_type strata_t915_ = load(l, KF32, out, (4 * i)); binop(strata_t912_, strata_t913_, strata_t914_, strata_t915_, inv); })); store(strata_t907_, strata_t908_, strata_t909_, strata_t910_, strata_t911_); }));
+            (({ __auto_type strata_t1018_ = l; __auto_type strata_t1019_ = KF32; __auto_type strata_t1020_ = out; __auto_type strata_t1021_ = (4 * i); __auto_type strata_t1022_ = (({ __auto_type strata_t1023_ = l; __auto_type strata_t1024_ = OMul; __auto_type strata_t1025_ = KF32; __auto_type strata_t1026_ = load(l, KF32, out, (4 * i)); binop(strata_t1023_, strata_t1024_, strata_t1025_, strata_t1026_, inv); })); store(strata_t1018_, strata_t1019_, strata_t1020_, strata_t1021_, strata_t1022_); }));
         }
         jump(l, done);
-        label(l, done);
+        lower__label(l, done);
         return aggregate(out, e->rtype);
     }
     if (str_eq(nm, "cross") && (n == 2)) {
@@ -8782,11 +10336,11 @@ LVal lower_call(Lower* l, Expr* e) {
         for (int64_t i = 0; i < 3; i++) {
             int64_t j = ((i + 1) % 3);
             int64_t k = ((i + 2) % 3);
-            int64_t p = (({ __auto_type strata_t916_ = l; __auto_type strata_t917_ = OMul; __auto_type strata_t918_ = KF32; __auto_type strata_t919_ = load(l, KF32, a, (4 * j)); __auto_type strata_t920_ = load(l, KF32, b, (4 * k)); binop(strata_t916_, strata_t917_, strata_t918_, strata_t919_, strata_t920_); }));
-            int64_t q = (({ __auto_type strata_t921_ = l; __auto_type strata_t922_ = OMul; __auto_type strata_t923_ = KF32; __auto_type strata_t924_ = load(l, KF32, a, (4 * k)); __auto_type strata_t925_ = load(l, KF32, b, (4 * j)); binop(strata_t921_, strata_t922_, strata_t923_, strata_t924_, strata_t925_); }));
-            (({ __auto_type strata_t926_ = l; __auto_type strata_t927_ = KF32; __auto_type strata_t928_ = out; __auto_type strata_t929_ = (4 * i); __auto_type strata_t930_ = binop(l, OSub, KF32, p, q); store(strata_t926_, strata_t927_, strata_t928_, strata_t929_, strata_t930_); }));
+            int64_t p = (({ __auto_type strata_t1027_ = l; __auto_type strata_t1028_ = OMul; __auto_type strata_t1029_ = KF32; __auto_type strata_t1030_ = load(l, KF32, a, (4 * j)); __auto_type strata_t1031_ = load(l, KF32, b, (4 * k)); binop(strata_t1027_, strata_t1028_, strata_t1029_, strata_t1030_, strata_t1031_); }));
+            int64_t q = (({ __auto_type strata_t1032_ = l; __auto_type strata_t1033_ = OMul; __auto_type strata_t1034_ = KF32; __auto_type strata_t1035_ = load(l, KF32, a, (4 * k)); __auto_type strata_t1036_ = load(l, KF32, b, (4 * j)); binop(strata_t1032_, strata_t1033_, strata_t1034_, strata_t1035_, strata_t1036_); }));
+            (({ __auto_type strata_t1037_ = l; __auto_type strata_t1038_ = KF32; __auto_type strata_t1039_ = out; __auto_type strata_t1040_ = (4 * i); __auto_type strata_t1041_ = binop(l, OSub, KF32, p, q); store(strata_t1037_, strata_t1038_, strata_t1039_, strata_t1040_, strata_t1041_); }));
         }
-        return (({ __auto_type strata_t931_ = out; __auto_type strata_t932_ = named("vec3"); aggregate(strata_t931_, strata_t932_); }));
+        return (({ __auto_type strata_t1042_ = out; __auto_type strata_t1043_ = named("vec3"); aggregate(strata_t1042_, strata_t1043_); }));
     }
     if ((str_eq(nm, "min") || str_eq(nm, "max")) && (n == 2)) {
         int64_t a = lower_args_f32(l, e, 0).reg;
@@ -8799,11 +10353,11 @@ LVal lower_call(Lower* l, Expr* e) {
         if (str_eq(nm, "max")) {
             c = CGt;
         }
-        (({ __auto_type strata_t933_ = l; __auto_type strata_t934_ = cmp(l, c, KF32, a, b); branch(strata_t933_, strata_t934_, take, done); }));
-        label(l, take);
+        (({ __auto_type strata_t1044_ = l; __auto_type strata_t1045_ = cmp(l, c, KF32, a, b); branch(strata_t1044_, strata_t1045_, take, done); }));
+        lower__label(l, take);
         copy_to(l, KF32, r, a);
         jump(l, done);
-        label(l, done);
+        lower__label(l, done);
         return scalar(r, KF32);
     }
     if (str_eq(nm, "clamp") && (n == 3)) {
@@ -8816,47 +10370,47 @@ LVal lower_call(Lower* l, Expr* e) {
         int64_t high = new_label(l);
         int64_t done = new_label(l);
         copy_to(l, KF32, r, x);
-        (({ __auto_type strata_t935_ = l; __auto_type strata_t936_ = cmp(l, CLt, KF32, x, lo); branch(strata_t935_, strata_t936_, low, notlow); }));
-        label(l, low);
+        (({ __auto_type strata_t1046_ = l; __auto_type strata_t1047_ = cmp(l, CLt, KF32, x, lo); branch(strata_t1046_, strata_t1047_, low, notlow); }));
+        lower__label(l, low);
         copy_to(l, KF32, r, lo);
         jump(l, done);
-        label(l, notlow);
-        (({ __auto_type strata_t937_ = l; __auto_type strata_t938_ = cmp(l, CGt, KF32, x, hi); branch(strata_t937_, strata_t938_, high, done); }));
-        label(l, high);
+        lower__label(l, notlow);
+        (({ __auto_type strata_t1048_ = l; __auto_type strata_t1049_ = cmp(l, CGt, KF32, x, hi); branch(strata_t1048_, strata_t1049_, high, done); }));
+        lower__label(l, high);
         copy_to(l, KF32, r, hi);
         jump(l, done);
-        label(l, done);
+        lower__label(l, done);
         return scalar(r, KF32);
     }
     if (str_eq(nm, "lerp") && (n == 3)) {
         int64_t a = lower_args_f32(l, e, 0).reg;
         int64_t b = lower_args_f32(l, e, 1).reg;
         int64_t t = lower_args_f32(l, e, 2).reg;
-        return scalar((({ __auto_type strata_t939_ = l; __auto_type strata_t940_ = OAdd; __auto_type strata_t941_ = KF32; __auto_type strata_t942_ = a; __auto_type strata_t943_ = (({ __auto_type strata_t944_ = l; __auto_type strata_t945_ = OMul; __auto_type strata_t946_ = KF32; __auto_type strata_t947_ = binop(l, OSub, KF32, b, a); binop(strata_t944_, strata_t945_, strata_t946_, strata_t947_, t); })); binop(strata_t939_, strata_t940_, strata_t941_, strata_t942_, strata_t943_); })), KF32);
+        return scalar((({ __auto_type strata_t1050_ = l; __auto_type strata_t1051_ = OAdd; __auto_type strata_t1052_ = KF32; __auto_type strata_t1053_ = a; __auto_type strata_t1054_ = (({ __auto_type strata_t1055_ = l; __auto_type strata_t1056_ = OMul; __auto_type strata_t1057_ = KF32; __auto_type strata_t1058_ = binop(l, OSub, KF32, b, a); binop(strata_t1055_, strata_t1056_, strata_t1057_, strata_t1058_, t); })); binop(strata_t1050_, strata_t1051_, strata_t1052_, strata_t1053_, strata_t1054_); })), KF32);
     }
     if (str_eq(nm, "alloc") && (n == 1)) {
         LVal v = lower_expr(l, ((Expr**)(e->items).data)[0]);
         TypeNode* t = ((Expr**)(e->items).data)[0]->rtype;
         TInfo ti = tinfo(l, t);
-        int64_t p = (({ __auto_type strata_t948_ = l; __auto_type strata_t949_ = KU64; __auto_type strata_t950_ = iconst(l, KI64, ti.size); call1(strata_t948_, "srt_heap_alloc", strata_t949_, strata_t950_); }));
+        int64_t p = (({ __auto_type strata_t1059_ = l; __auto_type strata_t1060_ = KU64; __auto_type strata_t1061_ = iconst(l, KI64, ti.size); call1(strata_t1059_, "srt_heap_alloc", strata_t1060_, strata_t1061_); }));
         store_val(l, t, p, 0, v, e->line);
         return scalar(p, KU64);
     }
     if (str_eq(nm, "substr") && (n == 3)) {
-        int64_t s = (({ __auto_type strata_t951_ = l; __auto_type strata_t952_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t951_, strata_t952_, KU64, e->line); }));
-        int64_t a = (({ __auto_type strata_t953_ = l; __auto_type strata_t954_ = lower_expr(l, ((Expr**)(e->items).data)[1]); as_ty(strata_t953_, strata_t954_, KI64, e->line); }));
-        int64_t c = (({ __auto_type strata_t955_ = l; __auto_type strata_t956_ = lower_expr(l, ((Expr**)(e->items).data)[2]); as_ty(strata_t955_, strata_t956_, KI64, e->line); }));
+        int64_t s = (({ __auto_type strata_t1062_ = l; __auto_type strata_t1063_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t1062_, strata_t1063_, KU64, e->line); }));
+        int64_t a = (({ __auto_type strata_t1064_ = l; __auto_type strata_t1065_ = lower_expr(l, ((Expr**)(e->items).data)[1]); as_ty(strata_t1064_, strata_t1065_, KI64, e->line); }));
+        int64_t c = (({ __auto_type strata_t1066_ = l; __auto_type strata_t1067_ = lower_expr(l, ((Expr**)(e->items).data)[2]); as_ty(strata_t1066_, strata_t1067_, KI64, e->line); }));
         return scalar(call3(l, "srt_str_sub", KU64, s, a, c), KU64);
     }
     if (str_eq(nm, "int_to_str") && (n == 1)) {
-        return scalar((({ __auto_type strata_t957_ = l; __auto_type strata_t958_ = KU64; __auto_type strata_t959_ = (({ __auto_type strata_t960_ = l; __auto_type strata_t961_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t960_, strata_t961_, KI64, e->line); })); call1(strata_t957_, "srt_str_from_int", strata_t958_, strata_t959_); })), KU64);
+        return scalar((({ __auto_type strata_t1068_ = l; __auto_type strata_t1069_ = KU64; __auto_type strata_t1070_ = (({ __auto_type strata_t1071_ = l; __auto_type strata_t1072_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t1071_, strata_t1072_, KI64, e->line); })); call1(strata_t1068_, "srt_str_from_int", strata_t1069_, strata_t1070_); })), KU64);
     }
     if (str_eq(nm, "read_file") && (n == 1)) {
-        return scalar((({ __auto_type strata_t962_ = l; __auto_type strata_t963_ = KU64; __auto_type strata_t964_ = (({ __auto_type strata_t965_ = l; __auto_type strata_t966_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t965_, strata_t966_, KU64, e->line); })); call1(strata_t962_, "srt_read_file", strata_t963_, strata_t964_); })), KU64);
+        return scalar((({ __auto_type strata_t1073_ = l; __auto_type strata_t1074_ = KU64; __auto_type strata_t1075_ = (({ __auto_type strata_t1076_ = l; __auto_type strata_t1077_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t1076_, strata_t1077_, KU64, e->line); })); call1(strata_t1073_, "srt_read_file", strata_t1074_, strata_t1075_); })), KU64);
     }
     if (str_eq(nm, "write_file") && (n == 2)) {
-        int64_t p = (({ __auto_type strata_t967_ = l; __auto_type strata_t968_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t967_, strata_t968_, KU64, e->line); }));
-        int64_t d = (({ __auto_type strata_t969_ = l; __auto_type strata_t970_ = lower_expr(l, ((Expr**)(e->items).data)[1]); as_ty(strata_t969_, strata_t970_, KU64, e->line); }));
+        int64_t p = (({ __auto_type strata_t1078_ = l; __auto_type strata_t1079_ = lower_expr(l, ((Expr**)(e->items).data)[0]); as_ty(strata_t1078_, strata_t1079_, KU64, e->line); }));
+        int64_t d = (({ __auto_type strata_t1080_ = l; __auto_type strata_t1081_ = lower_expr(l, ((Expr**)(e->items).data)[1]); as_ty(strata_t1080_, strata_t1081_, KU64, e->line); }));
         return scalar(call2(l, "srt_write_file", KU8, p, d), KU8);
     }
     if (str_eq(nm, "cstr") && (n == 1)) {
@@ -8886,7 +10440,7 @@ bool is_math_builtin(const char* nm) {
 
 LVal lower_math_builtin(Lower* l, Expr* e, const char* nm) {
     TypeNode* res = e->rtype;
-    int64_t out = (({ __auto_type strata_t971_ = l; __auto_type strata_t972_ = tinfo(l, res).size; temp(strata_t971_, strata_t972_, 4); }));
+    int64_t out = (({ __auto_type strata_t1082_ = l; __auto_type strata_t1083_ = tinfo(l, res).size; temp(strata_t1082_, strata_t1083_, 4); }));
     Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     ({ int64_t _e = out; arr_push(&(args), &_e); });
     for (int64_t i = 0; i < e->items.len; i++) {
@@ -8894,7 +10448,7 @@ LVal lower_math_builtin(Lower* l, Expr* e, const char* nm) {
         if ((is_vec(a->rtype) || is_quat(a->rtype)) || is_mat(a->rtype)) {
             ({ int64_t _e = vec_addr(l, a, e->line); arr_push(&(args), &_e); });
         } else {
-            ({ int64_t _e = (({ __auto_type strata_t973_ = l; __auto_type strata_t974_ = lower_expr(l, a); as_ty(strata_t973_, strata_t974_, KF32, e->line); })); arr_push(&(args), &_e); });
+            ({ int64_t _e = (({ __auto_type strata_t1084_ = l; __auto_type strata_t1085_ = lower_expr(l, a); as_ty(strata_t1084_, strata_t1085_, KF32, e->line); })); arr_push(&(args), &_e); });
         }
     }
     call(l, str_concat("srt_", nm), KVoid, args);
@@ -8902,6 +10456,14 @@ LVal lower_math_builtin(Lower* l, Expr* e, const char* nm) {
 }
 
 LVal call_strata(Lower* l, Decl* d, Expr* e) {
+    if (aapcs()) {
+        return call_aapcs(l, d, e);
+    }
+    if (sysv()) {
+        return call_sysv(l, d, e);
+    }
+    int64_t target = l->ind;
+    l->ind = (0 - 1);
     TInfo ri = tinfo(l, d->ret);
     Array args = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     int64_t out = (0 - 1);
@@ -8914,14 +10476,14 @@ LVal call_strata(Lower* l, Decl* d, Expr* e) {
             TypeNode* pt = ((Param*)(d->params).data)[i].type;
             TInfo pi = tinfo(l, pt);
             LVal v = lower_expr(l, ((Expr**)(e->items).data)[i]);
-            if (({ __auto_type strata_t975_ = pi.kind; __auto_type strata_t976_ = TK_SCALAR(); (strata_t975_ == strata_t976_); })) {
+            if (({ __auto_type strata_t1086_ = pi.kind; __auto_type strata_t1087_ = TK_SCALAR(); (strata_t1086_ == strata_t1087_); })) {
                 ({ int64_t _e = as_ty(l, v, pi.ty, e->line); arr_push(&(args), &_e); });
             } else 
             if (!v.agg) {
-                (({ __auto_type strata_t977_ = l; __auto_type strata_t978_ = e->line; __auto_type strata_t979_ = str_concat("expected a ", type_text(pt)); lw_fail(strata_t977_, strata_t978_, strata_t979_); }));
+                (({ __auto_type strata_t1088_ = l; __auto_type strata_t1089_ = e->line; __auto_type strata_t1090_ = str_concat("expected a ", type_text(pt)); lw_fail(strata_t1088_, strata_t1089_, strata_t1090_); }));
             } else 
             if (abi_small(pi.size)) {
-                ({ int64_t _e = (({ __auto_type strata_t980_ = l; __auto_type strata_t981_ = abi_int_of(pi.size); load(strata_t980_, strata_t981_, v.reg, 0); })); arr_push(&(args), &_e); });
+                ({ int64_t _e = (({ __auto_type strata_t1091_ = l; __auto_type strata_t1092_ = abi_int_of(pi.size); load(strata_t1091_, strata_t1092_, v.reg, 0); })); arr_push(&(args), &_e); });
             } else {
                 int64_t copy = temp(l, pi.size, pi.align);
                 copy_mem(l, copy, v.reg, pi.size);
@@ -8929,20 +10491,20 @@ LVal call_strata(Lower* l, Decl* d, Expr* e) {
             }
         }
     }
-    if (({ __auto_type strata_t982_ = ri.kind; __auto_type strata_t983_ = TK_VOID(); (strata_t982_ == strata_t983_); })) {
-        call(l, d->name, KVoid, args);
+    if (({ __auto_type strata_t1093_ = ri.kind; __auto_type strata_t1094_ = TK_VOID(); (strata_t1093_ == strata_t1094_); })) {
+        (({ __auto_type strata_t1095_ = l; __auto_type strata_t1096_ = link_sym(d); call_at(strata_t1095_, strata_t1096_, KVoid, args, target); }));
         return scalar(iconst(l, KI64, 0), KI64);
     }
-    if (({ __auto_type strata_t984_ = ri.kind; __auto_type strata_t985_ = TK_SCALAR(); (strata_t984_ == strata_t985_); })) {
-        return scalar(call(l, d->name, ri.ty, args), ri.ty);
+    if (({ __auto_type strata_t1097_ = ri.kind; __auto_type strata_t1098_ = TK_SCALAR(); (strata_t1097_ == strata_t1098_); })) {
+        return scalar((({ __auto_type strata_t1099_ = l; __auto_type strata_t1100_ = link_sym(d); call_at(strata_t1099_, strata_t1100_, ri.ty, args, target); })), ri.ty);
     }
     if (out >= 0) {
-        call(l, d->name, KVoid, args);
+        (({ __auto_type strata_t1101_ = l; __auto_type strata_t1102_ = link_sym(d); call_at(strata_t1101_, strata_t1102_, KVoid, args, target); }));
         return aggregate(out, d->ret);
     }
-    int64_t bits = (({ __auto_type strata_t986_ = l; __auto_type strata_t987_ = d->name; __auto_type strata_t988_ = abi_int_of(ri.size); call(strata_t986_, strata_t987_, strata_t988_, args); }));
+    int64_t bits = (({ __auto_type strata_t1103_ = l; __auto_type strata_t1104_ = link_sym(d); __auto_type strata_t1105_ = abi_int_of(ri.size); call_at(strata_t1103_, strata_t1104_, strata_t1105_, args, target); }));
     int64_t box = temp(l, ri.size, ri.align);
-    (({ __auto_type strata_t989_ = l; __auto_type strata_t990_ = abi_int_of(ri.size); store(strata_t989_, strata_t990_, box, 0, bits); }));
+    (({ __auto_type strata_t1106_ = l; __auto_type strata_t1107_ = abi_int_of(ri.size); store(strata_t1106_, strata_t1107_, box, 0, bits); }));
     return aggregate(box, d->ret);
 }
 
@@ -8998,9 +10560,9 @@ void lower_stmt(Lower* l, Stmt* s) {
                         zero_mem(l, lv.reg, ti.size);
                     } else 
                     if (ir_is_float(lv.ty)) {
-                        (({ __auto_type strata_t991_ = l; __auto_type strata_t992_ = lv.ty; __auto_type strata_t993_ = lv.reg; __auto_type strata_t994_ = fconst(l, lv.ty, "0.0"); copy_to(strata_t991_, strata_t992_, strata_t993_, strata_t994_); }));
+                        (({ __auto_type strata_t1108_ = l; __auto_type strata_t1109_ = lv.ty; __auto_type strata_t1110_ = lv.reg; __auto_type strata_t1111_ = fconst(l, lv.ty, "0.0"); copy_to(strata_t1108_, strata_t1109_, strata_t1110_, strata_t1111_); }));
                     } else {
-                        (({ __auto_type strata_t995_ = l; __auto_type strata_t996_ = lv.ty; __auto_type strata_t997_ = lv.reg; __auto_type strata_t998_ = iconst(l, lv.ty, 0); copy_to(strata_t995_, strata_t996_, strata_t997_, strata_t998_); }));
+                        (({ __auto_type strata_t1112_ = l; __auto_type strata_t1113_ = lv.ty; __auto_type strata_t1114_ = lv.reg; __auto_type strata_t1115_ = iconst(l, lv.ty, 0); copy_to(strata_t1112_, strata_t1113_, strata_t1114_, strata_t1115_); }));
                     }
                 }
             }
@@ -9019,20 +10581,20 @@ void lower_stmt(Lower* l, Stmt* s) {
         case StIf:
         {
             {
-                int64_t c = (({ __auto_type strata_t999_ = l; __auto_type strata_t1000_ = lower_expr(l, s->cond); to_bool(strata_t999_, strata_t1000_); }));
+                int64_t c = (({ __auto_type strata_t1116_ = l; __auto_type strata_t1117_ = lower_expr(l, s->cond); to_bool(strata_t1116_, strata_t1117_); }));
                 int64_t then_l = new_label(l);
                 int64_t else_l = new_label(l);
                 int64_t done = new_label(l);
                 branch(l, c, then_l, else_l);
-                label(l, then_l);
+                lower__label(l, then_l);
                 lower_block(l, s->then_block);
                 jump(l, done);
-                label(l, else_l);
+                lower__label(l, else_l);
                 if (s->else_branch != 0) {
                     lower_block(l, s->else_branch);
                 }
                 jump(l, done);
-                label(l, done);
+                lower__label(l, done);
             }
             break;
         }
@@ -9042,12 +10604,12 @@ void lower_stmt(Lower* l, Stmt* s) {
                 int64_t head = new_label(l);
                 int64_t body = new_label(l);
                 int64_t done = new_label(l);
-                label(l, head);
-                (({ __auto_type strata_t1001_ = l; __auto_type strata_t1002_ = (({ __auto_type strata_t1003_ = l; __auto_type strata_t1004_ = lower_expr(l, s->cond); to_bool(strata_t1003_, strata_t1004_); })); branch(strata_t1001_, strata_t1002_, body, done); }));
-                label(l, body);
+                lower__label(l, head);
+                (({ __auto_type strata_t1118_ = l; __auto_type strata_t1119_ = (({ __auto_type strata_t1120_ = l; __auto_type strata_t1121_ = lower_expr(l, s->cond); to_bool(strata_t1120_, strata_t1121_); })); branch(strata_t1118_, strata_t1119_, body, done); }));
+                lower__label(l, body);
                 loop_body(l, s->body, done, head);
                 jump(l, head);
-                label(l, done);
+                lower__label(l, done);
             }
             break;
         }
@@ -9068,7 +10630,7 @@ void lower_stmt(Lower* l, Stmt* s) {
                 int64_t arena = temp(l, 8, 8);
                 zero_mem(l, arena, 8);
                 if (str_len(s->name) > 0) {
-                    ({ LVar _e = (({ __auto_type strata_t1005_ = s->name; __auto_type strata_t1006_ = arena; __auto_type strata_t1007_ = KVoid; __auto_type strata_t1008_ = named("Arena"); (LVar){strata_t1005_, true, strata_t1006_, strata_t1007_, strata_t1008_}; })); arr_push(&(l->vars), &_e); });
+                    ({ LVar _e = (({ __auto_type strata_t1122_ = s->name; __auto_type strata_t1123_ = arena; __auto_type strata_t1124_ = KVoid; __auto_type strata_t1125_ = named("Arena"); (LVar){strata_t1122_, true, strata_t1123_, strata_t1124_, strata_t1125_}; })); arr_push(&(l->vars), &_e); });
                 }
                 ({ int64_t _e = arena; arr_push(&(l->regions), &_e); });
                 if (s->body != 0) {
@@ -9096,7 +10658,7 @@ void lower_stmt(Lower* l, Stmt* s) {
                     } else {
                         jump(l, ((int64_t*)(l->cont_labels).data)[top]);
                     }
-                    (({ __auto_type strata_t1009_ = l; __auto_type strata_t1010_ = new_label(l); label(strata_t1009_, strata_t1010_); }));
+                    (({ __auto_type strata_t1126_ = l; __auto_type strata_t1127_ = new_label(l); lower__label(strata_t1126_, strata_t1127_); }));
                 }
             }
             break;
@@ -9124,22 +10686,22 @@ void lower_for(Lower* l, Stmt* s) {
     Expr* it = s->iter;
     push_scope(l);
     if (((it != 0) && (it->kind == ExBinary)) && str_eq(it->text, "..")) {
-        LVar i = (({ __auto_type strata_t1011_ = l; __auto_type strata_t1012_ = s->name; __auto_type strata_t1013_ = named("int"); declare(strata_t1011_, strata_t1012_, strata_t1013_, s->line); }));
-        (({ __auto_type strata_t1014_ = l; __auto_type strata_t1015_ = i; __auto_type strata_t1016_ = lower_expr(l, it->a); assign_var(strata_t1014_, strata_t1015_, strata_t1016_, s->line); }));
+        LVar i = (({ __auto_type strata_t1128_ = l; __auto_type strata_t1129_ = s->name; __auto_type strata_t1130_ = named("int"); declare(strata_t1128_, strata_t1129_, strata_t1130_, s->line); }));
+        (({ __auto_type strata_t1131_ = l; __auto_type strata_t1132_ = i; __auto_type strata_t1133_ = lower_expr(l, it->a); assign_var(strata_t1131_, strata_t1132_, strata_t1133_, s->line); }));
         int64_t head = new_label(l);
         int64_t body = new_label(l);
         int64_t step = new_label(l);
         int64_t done = new_label(l);
-        label(l, head);
+        lower__label(l, head);
         int64_t cur = var_value(l, i);
-        int64_t hi = (({ __auto_type strata_t1017_ = l; __auto_type strata_t1018_ = lower_expr(l, it->b); as_ty(strata_t1017_, strata_t1018_, KI64, s->line); }));
-        (({ __auto_type strata_t1019_ = l; __auto_type strata_t1020_ = cmp(l, CLt, KI64, cur, hi); branch(strata_t1019_, strata_t1020_, body, done); }));
-        label(l, body);
+        int64_t hi = (({ __auto_type strata_t1134_ = l; __auto_type strata_t1135_ = lower_expr(l, it->b); as_ty(strata_t1134_, strata_t1135_, KI64, s->line); }));
+        (({ __auto_type strata_t1136_ = l; __auto_type strata_t1137_ = cmp(l, CLt, KI64, cur, hi); branch(strata_t1136_, strata_t1137_, body, done); }));
+        lower__label(l, body);
         loop_body(l, s->body, done, step);
-        label(l, step);
-        (({ __auto_type strata_t1021_ = l; __auto_type strata_t1022_ = i; __auto_type strata_t1023_ = scalar((({ __auto_type strata_t1024_ = l; __auto_type strata_t1025_ = OAdd; __auto_type strata_t1026_ = KI64; __auto_type strata_t1027_ = var_value(l, i); __auto_type strata_t1028_ = iconst(l, KI64, 1); binop(strata_t1024_, strata_t1025_, strata_t1026_, strata_t1027_, strata_t1028_); })), KI64); assign_var(strata_t1021_, strata_t1022_, strata_t1023_, s->line); }));
+        lower__label(l, step);
+        (({ __auto_type strata_t1138_ = l; __auto_type strata_t1139_ = i; __auto_type strata_t1140_ = scalar((({ __auto_type strata_t1141_ = l; __auto_type strata_t1142_ = OAdd; __auto_type strata_t1143_ = KI64; __auto_type strata_t1144_ = var_value(l, i); __auto_type strata_t1145_ = iconst(l, KI64, 1); binop(strata_t1141_, strata_t1142_, strata_t1143_, strata_t1144_, strata_t1145_); })), KI64); assign_var(strata_t1138_, strata_t1139_, strata_t1140_, s->line); }));
         jump(l, head);
-        label(l, done);
+        lower__label(l, done);
     } else 
     if ((it != 0) && is_dynarr(it->rtype)) {
         LVal arr = lower_expr(l, it);
@@ -9148,22 +10710,22 @@ void lower_for(Lower* l, Stmt* s) {
         TypeNode* elem = elem_of(it->rtype);
         int64_t size = tinfo(l, elem).size;
         int64_t idx = vreg(l, KI64);
-        (({ __auto_type strata_t1029_ = l; __auto_type strata_t1030_ = KI64; __auto_type strata_t1031_ = idx; __auto_type strata_t1032_ = iconst(l, KI64, 0); copy_to(strata_t1029_, strata_t1030_, strata_t1031_, strata_t1032_); }));
+        (({ __auto_type strata_t1146_ = l; __auto_type strata_t1147_ = KI64; __auto_type strata_t1148_ = idx; __auto_type strata_t1149_ = iconst(l, KI64, 0); copy_to(strata_t1146_, strata_t1147_, strata_t1148_, strata_t1149_); }));
         LVar x = declare(l, s->name, elem, s->line);
         int64_t head = new_label(l);
         int64_t body = new_label(l);
         int64_t step = new_label(l);
         int64_t done = new_label(l);
-        label(l, head);
-        (({ __auto_type strata_t1033_ = l; __auto_type strata_t1034_ = (({ __auto_type strata_t1035_ = l; __auto_type strata_t1036_ = CLt; __auto_type strata_t1037_ = KI64; __auto_type strata_t1038_ = idx; __auto_type strata_t1039_ = load(l, KI64, hdr, 8); cmp(strata_t1035_, strata_t1036_, strata_t1037_, strata_t1038_, strata_t1039_); })); branch(strata_t1033_, strata_t1034_, body, done); }));
-        label(l, body);
-        int64_t addr = (({ __auto_type strata_t1040_ = l; __auto_type strata_t1041_ = OAdd; __auto_type strata_t1042_ = KU64; __auto_type strata_t1043_ = load(l, KU64, hdr, 0); __auto_type strata_t1044_ = (({ __auto_type strata_t1045_ = l; __auto_type strata_t1046_ = OMul; __auto_type strata_t1047_ = KI64; __auto_type strata_t1048_ = idx; __auto_type strata_t1049_ = iconst(l, KI64, size); binop(strata_t1045_, strata_t1046_, strata_t1047_, strata_t1048_, strata_t1049_); })); binop(strata_t1040_, strata_t1041_, strata_t1042_, strata_t1043_, strata_t1044_); }));
-        (({ __auto_type strata_t1050_ = l; __auto_type strata_t1051_ = x; __auto_type strata_t1052_ = load_val(l, elem, addr, 0); assign_var(strata_t1050_, strata_t1051_, strata_t1052_, s->line); }));
+        lower__label(l, head);
+        (({ __auto_type strata_t1150_ = l; __auto_type strata_t1151_ = (({ __auto_type strata_t1152_ = l; __auto_type strata_t1153_ = CLt; __auto_type strata_t1154_ = KI64; __auto_type strata_t1155_ = idx; __auto_type strata_t1156_ = load(l, KI64, hdr, 8); cmp(strata_t1152_, strata_t1153_, strata_t1154_, strata_t1155_, strata_t1156_); })); branch(strata_t1150_, strata_t1151_, body, done); }));
+        lower__label(l, body);
+        int64_t addr = (({ __auto_type strata_t1157_ = l; __auto_type strata_t1158_ = OAdd; __auto_type strata_t1159_ = KU64; __auto_type strata_t1160_ = load(l, KU64, hdr, 0); __auto_type strata_t1161_ = (({ __auto_type strata_t1162_ = l; __auto_type strata_t1163_ = OMul; __auto_type strata_t1164_ = KI64; __auto_type strata_t1165_ = idx; __auto_type strata_t1166_ = iconst(l, KI64, size); binop(strata_t1162_, strata_t1163_, strata_t1164_, strata_t1165_, strata_t1166_); })); binop(strata_t1157_, strata_t1158_, strata_t1159_, strata_t1160_, strata_t1161_); }));
+        (({ __auto_type strata_t1167_ = l; __auto_type strata_t1168_ = x; __auto_type strata_t1169_ = load_val(l, elem, addr, 0); assign_var(strata_t1167_, strata_t1168_, strata_t1169_, s->line); }));
         loop_body(l, s->body, done, step);
-        label(l, step);
-        (({ __auto_type strata_t1053_ = l; __auto_type strata_t1054_ = KI64; __auto_type strata_t1055_ = idx; __auto_type strata_t1056_ = (({ __auto_type strata_t1057_ = l; __auto_type strata_t1058_ = OAdd; __auto_type strata_t1059_ = KI64; __auto_type strata_t1060_ = idx; __auto_type strata_t1061_ = iconst(l, KI64, 1); binop(strata_t1057_, strata_t1058_, strata_t1059_, strata_t1060_, strata_t1061_); })); copy_to(strata_t1053_, strata_t1054_, strata_t1055_, strata_t1056_); }));
+        lower__label(l, step);
+        (({ __auto_type strata_t1170_ = l; __auto_type strata_t1171_ = KI64; __auto_type strata_t1172_ = idx; __auto_type strata_t1173_ = (({ __auto_type strata_t1174_ = l; __auto_type strata_t1175_ = OAdd; __auto_type strata_t1176_ = KI64; __auto_type strata_t1177_ = idx; __auto_type strata_t1178_ = iconst(l, KI64, 1); binop(strata_t1174_, strata_t1175_, strata_t1176_, strata_t1177_, strata_t1178_); })); copy_to(strata_t1170_, strata_t1171_, strata_t1172_, strata_t1173_); }));
         jump(l, head);
-        label(l, done);
+        lower__label(l, done);
     } else {
         lw_fail(l, s->line, "unsupported for-in");
     }
@@ -9195,18 +10757,18 @@ void lower_switch(Lower* l, Stmt* s) {
         SwitchCase sc = ((SwitchCase*)(s->cases).data)[i];
         for (int64_t j = 0; j < sc.values.len; j++) {
             int64_t next = new_label(l);
-            int64_t v = (({ __auto_type strata_t1062_ = l; __auto_type strata_t1063_ = lower_expr(l, ((Expr**)(sc.values).data)[j]); as_ty(strata_t1062_, strata_t1063_, t, s->line); }));
-            (({ __auto_type strata_t1064_ = l; __auto_type strata_t1065_ = cmp(l, CEq, t, x, v); branch(strata_t1064_, strata_t1065_, ((int64_t*)(bodies).data)[i], next); }));
-            label(l, next);
+            int64_t v = (({ __auto_type strata_t1179_ = l; __auto_type strata_t1180_ = lower_expr(l, ((Expr**)(sc.values).data)[j]); as_ty(strata_t1179_, strata_t1180_, t, s->line); }));
+            (({ __auto_type strata_t1181_ = l; __auto_type strata_t1182_ = cmp(l, CEq, t, x, v); branch(strata_t1181_, strata_t1182_, ((int64_t*)(bodies).data)[i], next); }));
+            lower__label(l, next);
         }
     }
     jump(l, dflt);
     for (int64_t i = 0; i < s->cases.len; i++) {
-        label(l, ((int64_t*)(bodies).data)[i]);
+        lower__label(l, ((int64_t*)(bodies).data)[i]);
         lower_block(l, ((SwitchCase*)(s->cases).data)[i].body);
         jump(l, done);
     }
-    label(l, done);
+    lower__label(l, done);
 }
 
 void lower_assign(Lower* l, Stmt* s) {
@@ -9230,7 +10792,7 @@ void lower_assign(Lower* l, Stmt* s) {
     LVal val = lower_expr(l, s->value);
     if (!str_eq(op, "=")) {
         LVal cur = scalar((0 - 1), ti.ty);
-        if (({ __auto_type strata_t1066_ = ti.kind; __auto_type strata_t1067_ = TK_AGG(); (strata_t1066_ == strata_t1067_); })) {
+        if (({ __auto_type strata_t1183_ = ti.kind; __auto_type strata_t1184_ = TK_AGG(); (strata_t1183_ == strata_t1184_); })) {
             cur = aggregate(addr, tt);
         } else 
         if (in_reg) {
@@ -9263,44 +10825,48 @@ LVal combine_values(Lower* l, Expr* e, LVal left, LVal right) {
         lw_fail(l, e->line, str_concat(str_concat("unsupported operator ", e->text), "="));
         return left;
     }
-    int64_t t = (({ __auto_type strata_t1068_ = promote(left.ty); __auto_type strata_t1069_ = promote(right.ty); arith_ty(strata_t1068_, strata_t1069_); }));
+    int64_t t = (({ __auto_type strata_t1185_ = promote(left.ty); __auto_type strata_t1186_ = promote(right.ty); arith_ty(strata_t1185_, strata_t1186_); }));
     if ((aop == OShl) || (aop == OShr)) {
         t = promote(left.ty);
     }
-    return scalar((({ __auto_type strata_t1070_ = l; __auto_type strata_t1071_ = aop; __auto_type strata_t1072_ = t; __auto_type strata_t1073_ = as_ty(l, left, t, e->line); __auto_type strata_t1074_ = as_ty(l, right, t, e->line); binop(strata_t1070_, strata_t1071_, strata_t1072_, strata_t1073_, strata_t1074_); })), t);
+    return scalar((({ __auto_type strata_t1187_ = l; __auto_type strata_t1188_ = aop; __auto_type strata_t1189_ = t; __auto_type strata_t1190_ = as_ty(l, left, t, e->line); __auto_type strata_t1191_ = as_ty(l, right, t, e->line); binop(strata_t1187_, strata_t1188_, strata_t1189_, strata_t1190_, strata_t1191_); })), t);
 }
 
 void lower_return(Lower* l, Stmt* s) {
     TInfo ri = tinfo(l, l->ret_type);
-    if ((s->expr == 0) || (({ __auto_type strata_t1075_ = ri.kind; __auto_type strata_t1076_ = TK_VOID(); (strata_t1075_ == strata_t1076_); }))) {
+    if ((s->expr == 0) || (({ __auto_type strata_t1192_ = ri.kind; __auto_type strata_t1193_ = TK_VOID(); (strata_t1192_ == strata_t1193_); }))) {
         if (s->expr != 0) {
             lower_expr(l, s->expr);
         }
         free_regions(l, 0);
         int64_t r = (0 - 1);
-        if (({ __auto_type strata_t1077_ = ri.kind; __auto_type strata_t1078_ = TK_SCALAR(); (strata_t1077_ == strata_t1078_); })) {
+        if (({ __auto_type strata_t1194_ = ri.kind; __auto_type strata_t1195_ = TK_SCALAR(); (strata_t1194_ == strata_t1195_); })) {
             r = iconst(l, ri.ty, 0);
         }
-        (({ __auto_type strata_t1079_ = l; __auto_type strata_t1080_ = new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)); emit(strata_t1079_, strata_t1080_); }));
+        (({ __auto_type strata_t1196_ = l; __auto_type strata_t1197_ = new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)); emit(strata_t1196_, strata_t1197_); }));
     } else {
         LVal v = lower_expr(l, s->expr);
         int64_t r = (0 - 1);
-        if (({ __auto_type strata_t1081_ = ri.kind; __auto_type strata_t1082_ = TK_SCALAR(); (strata_t1081_ == strata_t1082_); })) {
+        if (({ __auto_type strata_t1198_ = ri.kind; __auto_type strata_t1199_ = TK_SCALAR(); (strata_t1198_ == strata_t1199_); })) {
             r = as_ty(l, v, ri.ty, s->line);
         } else 
         if (!v.agg) {
-            (({ __auto_type strata_t1083_ = l; __auto_type strata_t1084_ = s->line; __auto_type strata_t1085_ = str_concat("expected a ", type_text(l->ret_type)); lw_fail(strata_t1083_, strata_t1084_, strata_t1085_); }));
+            (({ __auto_type strata_t1200_ = l; __auto_type strata_t1201_ = s->line; __auto_type strata_t1202_ = str_concat("expected a ", type_text(l->ret_type)); lw_fail(strata_t1200_, strata_t1201_, strata_t1202_); }));
         } else 
         if (l->sret >= 0) {
             copy_mem(l, l->sret, v.reg, ri.size);
             r = l->sret;
+        } else 
+        if (l->f.ret_spec != 0) {
+            r = temp(l, 32, 8);
+            copy_mem(l, r, v.reg, ri.size);
         } else {
-            r = (({ __auto_type strata_t1086_ = l; __auto_type strata_t1087_ = abi_int_of(ri.size); load(strata_t1086_, strata_t1087_, v.reg, 0); }));
+            r = (({ __auto_type strata_t1203_ = l; __auto_type strata_t1204_ = abi_int_of(ri.size); load(strata_t1203_, strata_t1204_, v.reg, 0); }));
         }
         free_regions(l, 0);
-        (({ __auto_type strata_t1088_ = l; __auto_type strata_t1089_ = new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)); emit(strata_t1088_, strata_t1089_); }));
+        (({ __auto_type strata_t1205_ = l; __auto_type strata_t1206_ = new_ins(ORet, KVoid, (0 - 1), r, (0 - 1)); emit(strata_t1205_, strata_t1206_); }));
     }
-    (({ __auto_type strata_t1090_ = l; __auto_type strata_t1091_ = new_label(l); label(strata_t1090_, strata_t1091_); }));
+    (({ __auto_type strata_t1207_ = l; __auto_type strata_t1208_ = new_label(l); lower__label(strata_t1207_, strata_t1208_); }));
 }
 
 void begin_function(Lower* l, const char* name, bool global) {
@@ -9329,50 +10895,162 @@ void lower_function(Lower* l, Decl* d) {
     scan_stmt(l, d->body);
     l->ret_type = d->ret;
     TInfo ri = tinfo(l, d->ret);
-    int64_t np = 0;
-    if (abi_sret(ri)) {
-        ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
-        l->f.ret_ty = KU64;
-        l->sret = param(l, KU64, 0);
-        np = 1;
+    if (aapcs()) {
+        lower_params_aapcs(l, d, ri);
     } else 
-    if (({ __auto_type strata_t1092_ = ri.kind; __auto_type strata_t1093_ = TK_AGG(); (strata_t1092_ == strata_t1093_); })) {
-        l->f.ret_ty = abi_int_of(ri.size);
+    if (sysv()) {
+        lower_params_sysv(l, d, ri);
+    } else {
+        int64_t np = 0;
+        if (abi_sret(ri)) {
+            ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+            ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+            l->f.ret_ty = KU64;
+            l->sret = param(l, KU64, 0);
+            np = 1;
+        } else 
+        if (({ __auto_type strata_t1209_ = ri.kind; __auto_type strata_t1210_ = TK_AGG(); (strata_t1209_ == strata_t1210_); })) {
+            l->f.ret_ty = abi_int_of(ri.size);
+        } else 
+        if (({ __auto_type strata_t1211_ = ri.kind; __auto_type strata_t1212_ = TK_SCALAR(); (strata_t1211_ == strata_t1212_); })) {
+            l->f.ret_ty = ri.ty;
+        }
+        Array incoming = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+        for (int64_t i = 0; i < d->params.len; i++) {
+            int64_t pty = abi_pass_ty(tinfo(l, ((Param*)(d->params).data)[i].type));
+            ({ int64_t _e = pty; arr_push(&(l->f.param_types), &_e); });
+            ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+            ({ int64_t _e = param(l, pty, (np + i)); arr_push(&(incoming), &_e); });
+        }
+        push_scope(l);
+        for (int64_t i = 0; i < d->params.len; i++) {
+            TypeNode* pt = ((Param*)(d->params).data)[i].type;
+            TInfo pi = tinfo(l, pt);
+            LVar v = declare(l, ((Param*)(d->params).data)[i].name, pt, d->line);
+            if (({ __auto_type strata_t1213_ = pi.kind; __auto_type strata_t1214_ = TK_SCALAR(); (strata_t1213_ == strata_t1214_); })) {
+                (({ __auto_type strata_t1215_ = l; __auto_type strata_t1216_ = v; __auto_type strata_t1217_ = scalar(((int64_t*)(incoming).data)[i], pi.ty); assign_var(strata_t1215_, strata_t1216_, strata_t1217_, d->line); }));
+            } else 
+            if (abi_small(pi.size)) {
+                (({ __auto_type strata_t1218_ = l; __auto_type strata_t1219_ = abi_int_of(pi.size); store(strata_t1218_, strata_t1219_, v.reg, 0, ((int64_t*)(incoming).data)[i]); }));
+            } else {
+                copy_mem(l, v.reg, ((int64_t*)(incoming).data)[i], pi.size);
+            }
+        }
+    }
+    lower_block(l, d->body);
+    pop_scope(l);
+    if (({ __auto_type strata_t1220_ = ri.kind; __auto_type strata_t1221_ = TK_VOID(); (strata_t1220_ == strata_t1221_); })) {
+        (({ __auto_type strata_t1222_ = l; __auto_type strata_t1223_ = new_ins(ORet, KVoid, (0 - 1), (0 - 1), (0 - 1)); emit(strata_t1222_, strata_t1223_); }));
     } else 
-    if (({ __auto_type strata_t1094_ = ri.kind; __auto_type strata_t1095_ = TK_SCALAR(); (strata_t1094_ == strata_t1095_); })) {
+    if (l->sret >= 0) {
+        (({ __auto_type strata_t1224_ = l; __auto_type strata_t1225_ = new_ins(ORet, KVoid, (0 - 1), l->sret, (0 - 1)); emit(strata_t1224_, strata_t1225_); }));
+    } else 
+    if (l->f.ret_spec != 0) {
+        int64_t z = temp(l, 32, 8);
+        zero_mem(l, z, 32);
+        (({ __auto_type strata_t1226_ = l; __auto_type strata_t1227_ = new_ins(ORet, KVoid, (0 - 1), z, (0 - 1)); emit(strata_t1226_, strata_t1227_); }));
+    } else {
+        (({ __auto_type strata_t1228_ = l; __auto_type strata_t1229_ = (({ __auto_type strata_t1230_ = ORet; __auto_type strata_t1231_ = KVoid; __auto_type strata_t1232_ = (0 - 1); __auto_type strata_t1233_ = iconst(l, l->f.ret_ty, 0); new_ins(strata_t1230_, strata_t1231_, strata_t1232_, strata_t1233_, (0 - 1)); })); emit(strata_t1228_, strata_t1229_); }));
+    }
+    ({ IrFunc _e = l->f; arr_push(&(l->prog.funcs), &_e); });
+}
+
+void lower_params_sysv(Lower* l, Decl* d, TInfo ri) {
+    int64_t index = 0;
+    int64_t ints = 0;
+    int64_t sses = 0;
+    if (({ __auto_type strata_t1234_ = ri.kind; __auto_type strata_t1235_ = TK_AGG(); (strata_t1234_ == strata_t1235_); })) {
+        int64_t spec = abi_ret_spec(l, d->ret, ri);
+        if (spec == 0) {
+            ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+            ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+            l->f.ret_ty = KU64;
+            l->sret = param(l, KU64, 0);
+            index = 1;
+            ints = 1;
+        } else {
+            l->f.ret_spec = spec;
+            l->f.ret_ty = KVoid;
+        }
+    } else 
+    if (({ __auto_type strata_t1236_ = ri.kind; __auto_type strata_t1237_ = TK_SCALAR(); (strata_t1236_ == strata_t1237_); })) {
         l->f.ret_ty = ri.ty;
     }
+    Array first = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array count = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array kind = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array specs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array incoming = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     for (int64_t i = 0; i < d->params.len; i++) {
-        int64_t pty = abi_pass_ty(tinfo(l, ((Param*)(d->params).data)[i].type));
-        ({ int64_t _e = pty; arr_push(&(l->f.param_types), &_e); });
-        ({ int64_t _e = param(l, pty, (np + i)); arr_push(&(incoming), &_e); });
+        TypeNode* pt = ((Param*)(d->params).data)[i].type;
+        TInfo pi = tinfo(l, pt);
+        ({ int64_t _e = incoming.len; arr_push(&(first), &_e); });
+        if (({ __auto_type strata_t1238_ = pi.kind; __auto_type strata_t1239_ = TK_SCALAR(); (strata_t1238_ == strata_t1239_); })) {
+            ({ int64_t _e = pi.ty; arr_push(&(l->f.param_types), &_e); });
+            ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+            ({ int64_t _e = param(l, pi.ty, index); arr_push(&(incoming), &_e); });
+            index += 1;
+            if (ir_is_float(pi.ty)) {
+                sses += 1;
+            } else {
+                ints += 1;
+            }
+            ({ int64_t _e = 1; arr_push(&(count), &_e); });
+            ({ int64_t _e = 0; arr_push(&(kind), &_e); });
+            ({ int64_t _e = 0; arr_push(&(specs), &_e); });
+        } else {
+            int64_t ps = abi_ret_spec(l, pt, pi);
+            int64_t ni = spec_ints(ps);
+            int64_t ns = (spec_halves(ps) - ni);
+            if (((ps != 0) && ((ints + ni) <= 6)) && ((sses + ns) <= 8)) {
+                for (int64_t k = 0; k < spec_halves(ps); k++) {
+                    int64_t ty = KU64;
+                    if (({ __auto_type strata_t1240_ = spec_class(ps, k); __auto_type strata_t1241_ = sse_class(); (strata_t1240_ == strata_t1241_); })) {
+                        ty = KF64;
+                    }
+                    ({ int64_t _e = ty; arr_push(&(l->f.param_types), &_e); });
+                    ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+                    ({ int64_t _e = param(l, ty, index); arr_push(&(incoming), &_e); });
+                    index += 1;
+                }
+                ints += ni;
+                sses += ns;
+                ({ int64_t _e = spec_halves(ps); arr_push(&(count), &_e); });
+                ({ int64_t _e = 1; arr_push(&(kind), &_e); });
+                ({ int64_t _e = ps; arr_push(&(specs), &_e); });
+            } else {
+                ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+                ({ int64_t _e = pi.size; arr_push(&(l->f.param_bytes), &_e); });
+                ({ int64_t _e = param(l, KU64, index); arr_push(&(incoming), &_e); });
+                index += 1;
+                ({ int64_t _e = 1; arr_push(&(count), &_e); });
+                ({ int64_t _e = 2; arr_push(&(kind), &_e); });
+                ({ int64_t _e = 0; arr_push(&(specs), &_e); });
+            }
+        }
     }
     push_scope(l);
     for (int64_t i = 0; i < d->params.len; i++) {
         TypeNode* pt = ((Param*)(d->params).data)[i].type;
         TInfo pi = tinfo(l, pt);
         LVar v = declare(l, ((Param*)(d->params).data)[i].name, pt, d->line);
-        if (({ __auto_type strata_t1096_ = pi.kind; __auto_type strata_t1097_ = TK_SCALAR(); (strata_t1096_ == strata_t1097_); })) {
-            (({ __auto_type strata_t1098_ = l; __auto_type strata_t1099_ = v; __auto_type strata_t1100_ = scalar(((int64_t*)(incoming).data)[i], pi.ty); assign_var(strata_t1098_, strata_t1099_, strata_t1100_, d->line); }));
+        if (((int64_t*)(kind).data)[i] == 0) {
+            (({ __auto_type strata_t1242_ = l; __auto_type strata_t1243_ = v; __auto_type strata_t1244_ = scalar(((int64_t*)(incoming).data)[((int64_t*)(first).data)[i]], pi.ty); assign_var(strata_t1242_, strata_t1243_, strata_t1244_, d->line); }));
         } else 
-        if (abi_small(pi.size)) {
-            (({ __auto_type strata_t1101_ = l; __auto_type strata_t1102_ = abi_int_of(pi.size); store(strata_t1101_, strata_t1102_, v.reg, 0, ((int64_t*)(incoming).data)[i]); }));
+        if (((int64_t*)(kind).data)[i] == 1) {
+            int64_t tmp = temp(l, 16, 8);
+            for (int64_t k = 0; k < ((int64_t*)(count).data)[i]; k++) {
+                int64_t ty = KU64;
+                if (({ __auto_type strata_t1245_ = spec_class(((int64_t*)(specs).data)[i], k); __auto_type strata_t1246_ = sse_class(); (strata_t1245_ == strata_t1246_); })) {
+                    ty = KF64;
+                }
+                store(l, ty, tmp, (8 * k), ((int64_t*)(incoming).data)[(((int64_t*)(first).data)[i] + k)]);
+            }
+            copy_mem(l, v.reg, tmp, pi.size);
         } else {
-            copy_mem(l, v.reg, ((int64_t*)(incoming).data)[i], pi.size);
+            copy_mem(l, v.reg, ((int64_t*)(incoming).data)[((int64_t*)(first).data)[i]], pi.size);
         }
     }
-    lower_block(l, d->body);
-    pop_scope(l);
-    if (({ __auto_type strata_t1103_ = ri.kind; __auto_type strata_t1104_ = TK_VOID(); (strata_t1103_ == strata_t1104_); })) {
-        (({ __auto_type strata_t1105_ = l; __auto_type strata_t1106_ = new_ins(ORet, KVoid, (0 - 1), (0 - 1), (0 - 1)); emit(strata_t1105_, strata_t1106_); }));
-    } else 
-    if (l->sret >= 0) {
-        (({ __auto_type strata_t1107_ = l; __auto_type strata_t1108_ = new_ins(ORet, KVoid, (0 - 1), l->sret, (0 - 1)); emit(strata_t1107_, strata_t1108_); }));
-    } else {
-        (({ __auto_type strata_t1109_ = l; __auto_type strata_t1110_ = (({ __auto_type strata_t1111_ = ORet; __auto_type strata_t1112_ = KVoid; __auto_type strata_t1113_ = (0 - 1); __auto_type strata_t1114_ = iconst(l, l->f.ret_ty, 0); new_ins(strata_t1111_, strata_t1112_, strata_t1113_, strata_t1114_, (0 - 1)); })); emit(strata_t1109_, strata_t1110_); }));
-    }
-    ({ IrFunc _e = l->f; arr_push(&(l->prog.funcs), &_e); });
 }
 
 void lower_main(Lower* l, Program prog) {
@@ -9384,6 +11062,8 @@ void lower_main(Lower* l, Program prog) {
     l->f.ret_ty = KI32;
     ({ int64_t _e = KI32; arr_push(&(l->f.param_types), &_e); });
     ({ int64_t _e = KU64; arr_push(&(l->f.param_types), &_e); });
+    ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
+    ({ int64_t _e = 0; arr_push(&(l->f.param_bytes), &_e); });
     int64_t argc = param(l, KI32, 0);
     int64_t argv = param(l, KU64, 1);
     call2(l, "srt_set_args", KVoid, argc, argv);
@@ -9392,7 +11072,7 @@ void lower_main(Lower* l, Program prog) {
         lower_stmt(l, ((Stmt**)(prog.main).data)[i]);
     }
     pop_scope(l);
-    (({ __auto_type strata_t1115_ = l; __auto_type strata_t1116_ = (({ __auto_type strata_t1117_ = ORet; __auto_type strata_t1118_ = KVoid; __auto_type strata_t1119_ = (0 - 1); __auto_type strata_t1120_ = iconst(l, KI32, 0); new_ins(strata_t1117_, strata_t1118_, strata_t1119_, strata_t1120_, (0 - 1)); })); emit(strata_t1115_, strata_t1116_); }));
+    (({ __auto_type strata_t1247_ = l; __auto_type strata_t1248_ = (({ __auto_type strata_t1249_ = ORet; __auto_type strata_t1250_ = KVoid; __auto_type strata_t1251_ = (0 - 1); __auto_type strata_t1252_ = iconst(l, KI32, 0); new_ins(strata_t1249_, strata_t1250_, strata_t1251_, strata_t1252_, (0 - 1)); })); emit(strata_t1247_, strata_t1248_); }));
     ({ IrFunc _e = l->f; arr_push(&(l->prog.funcs), &_e); });
 }
 
@@ -9410,7 +11090,7 @@ Lower* new_lower(void) {
     Array cl = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array lr = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array rg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return ({ Lower _v = (({ __auto_type strata_t1121_ = new_ir_program(); __auto_type strata_t1122_ = fs; __auto_type strata_t1123_ = ss; __auto_type strata_t1124_ = es; __auto_type strata_t1125_ = ms; __auto_type strata_t1126_ = mv; __auto_type strata_t1127_ = gl; __auto_type strata_t1128_ = new_ir_func("", false); (Lower){true, "", strata_t1121_, strata_t1122_, strata_t1123_, strata_t1124_, strata_t1125_, strata_t1126_, strata_t1127_, strata_t1128_, vs, sc, at, bl, cl, lr, rg, 0, (0 - 1), 0}; })); Lower* _p = (Lower*)arena_alloc(strata_heap(), sizeof(Lower)); *_p = _v; _p; });
+    return ({ Lower _v = (({ __auto_type strata_t1253_ = new_ir_program(); __auto_type strata_t1254_ = fs; __auto_type strata_t1255_ = ss; __auto_type strata_t1256_ = es; __auto_type strata_t1257_ = ms; __auto_type strata_t1258_ = mv; __auto_type strata_t1259_ = gl; __auto_type strata_t1260_ = new_ir_func("", false); (Lower){true, "", strata_t1253_, strata_t1254_, strata_t1255_, strata_t1256_, strata_t1257_, strata_t1258_, strata_t1259_, strata_t1260_, vs, sc, at, bl, cl, lr, rg, 0, (0 - 1), 0, (0 - 1)}; })); Lower* _p = (Lower*)arena_alloc(strata_heap(), sizeof(Lower)); *_p = _v; _p; });
 }
 
 bool lower_program(Lower* l, Program prog, bool with_main) {
@@ -9464,7 +11144,7 @@ void lower_global(Lower* l, Decl* d) {
     IrGlobal g = (IrGlobal){d->name, d->is_exported, ti.size, ti.align, 0, 0, "", ti.ty};
     if ((d->ret != 0) && (d->ret->kind == TyDynArray)) {
         g.kind = 4;
-        g.ival = (({ __auto_type strata_t1129_ = l; __auto_type strata_t1130_ = elem_of(d->ret); tinfo(strata_t1129_, strata_t1130_); })).size;
+        g.ival = (({ __auto_type strata_t1261_ = l; __auto_type strata_t1262_ = elem_of(d->ret); tinfo(strata_t1261_, strata_t1262_); })).size;
     }
     Expr* e = d->init;
     bool neg = false;
@@ -9472,7 +11152,7 @@ void lower_global(Lower* l, Decl* d) {
         neg = true;
         e = e->a;
     }
-    if ((e != 0) && (({ __auto_type strata_t1131_ = ti.kind; __auto_type strata_t1132_ = TK_SCALAR(); (strata_t1131_ == strata_t1132_); }))) {
+    if ((e != 0) && (({ __auto_type strata_t1263_ = ti.kind; __auto_type strata_t1264_ = TK_SCALAR(); (strata_t1263_ == strata_t1264_); }))) {
         if (e->kind == ExStringLit) {
             g.kind = 3;
             g.text = string_data(l, e->text);
@@ -9646,7 +11326,7 @@ bool fold(IrFunc* f, Facts* fa, int64_t k) {
                     r = (a << b);
                 } else 
                 if (ir_is_unsigned(t)) {
-                    r = ((int64_t)((({ __auto_type strata_t1133_ = uval(a); __auto_type strata_t1134_ = uval(b); (strata_t1133_ >> strata_t1134_); }))));
+                    r = ((int64_t)((({ __auto_type strata_t1265_ = uval(a); __auto_type strata_t1266_ = uval(b); (strata_t1265_ >> strata_t1266_); }))));
                 } else {
                     r = (a >> b);
                 }
@@ -9681,7 +11361,7 @@ bool fold(IrFunc* f, Facts* fa, int64_t k) {
     }
     if ((op == OCmp) && (!ir_is_float(t))) {
         if (ca && cb) {
-            bool h = (({ __auto_type strata_t1135_ = i.ty2; __auto_type strata_t1136_ = const_of(f, fa, i.a); __auto_type strata_t1137_ = const_of(f, fa, i.b); __auto_type strata_t1138_ = ir_is_unsigned(t); cmp_holds(strata_t1135_, strata_t1136_, strata_t1137_, strata_t1138_); }));
+            bool h = (({ __auto_type strata_t1267_ = i.ty2; __auto_type strata_t1268_ = const_of(f, fa, i.a); __auto_type strata_t1269_ = const_of(f, fa, i.b); __auto_type strata_t1270_ = ir_is_unsigned(t); cmp_holds(strata_t1267_, strata_t1268_, strata_t1269_, strata_t1270_); }));
             if (h) {
                 make_const(f, k, KU8, 1);
             } else {
@@ -9705,7 +11385,7 @@ bool fold(IrFunc* f, Facts* fa, int64_t k) {
         return true;
     }
     if ((((op == OConv) && ca) && (!ir_is_float(t))) && (!ir_is_float(i.ty2))) {
-        (({ __auto_type strata_t1139_ = f; __auto_type strata_t1140_ = k; __auto_type strata_t1141_ = t; __auto_type strata_t1142_ = const_of(f, fa, i.a); make_const(strata_t1139_, strata_t1140_, strata_t1141_, strata_t1142_); }));
+        (({ __auto_type strata_t1271_ = f; __auto_type strata_t1272_ = k; __auto_type strata_t1273_ = t; __auto_type strata_t1274_ = const_of(f, fa, i.a); make_const(strata_t1271_, strata_t1272_, strata_t1273_, strata_t1274_); }));
         return true;
     }
     if ((((op == OConv) && ca) && ir_is_float(t)) && (!ir_is_float(i.ty2))) {
@@ -9849,7 +11529,7 @@ bool forward_slots(IrFunc* f, Facts* fa) {
             } else {
                 Array ks = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
                 for (int64_t e = 0; e < es.len; e++) {
-                    if (!(((((int64_t*)(es).data)[e] == s) && (((int64_t*)(eo).data)[e] < (off + size))) && (({ __auto_type strata_t1143_ = off; __auto_type strata_t1144_ = (({ __auto_type strata_t1145_ = ((int64_t*)(eo).data)[e]; __auto_type strata_t1146_ = ir_size(((int64_t*)(et).data)[e]); (strata_t1145_ + strata_t1146_); })); (strata_t1143_ < strata_t1144_); })))) {
+                    if (!(((((int64_t*)(es).data)[e] == s) && (((int64_t*)(eo).data)[e] < (off + size))) && (({ __auto_type strata_t1275_ = off; __auto_type strata_t1276_ = (({ __auto_type strata_t1277_ = ((int64_t*)(eo).data)[e]; __auto_type strata_t1278_ = ir_size(((int64_t*)(et).data)[e]); (strata_t1277_ + strata_t1278_); })); (strata_t1275_ < strata_t1276_); })))) {
                         ({ int64_t _e = e; arr_push(&(ks), &_e); });
                     }
                 }
@@ -10253,7 +11933,7 @@ void optimize(IrFunc* f) {
 
 int64_t bit(int64_t k) {
     uint64_t one = 1;
-    return ((int64_t)((({ __auto_type strata_t1147_ = one; __auto_type strata_t1148_ = uval(k); (strata_t1147_ << strata_t1148_); }))));
+    return ((int64_t)((({ __auto_type strata_t1279_ = one; __auto_type strata_t1280_ = uval(k); (strata_t1279_ << strata_t1280_); }))));
 }
 
 bool has(Array* set, int64_t base, int64_t v) {
@@ -10261,7 +11941,7 @@ bool has(Array* set, int64_t base, int64_t v) {
 }
 
 void add(Array* set, int64_t base, int64_t v) {
-    ((int64_t*)(set[0]).data)[(base + (v / 64))] = (({ __auto_type strata_t1149_ = ((int64_t*)(set[0]).data)[(base + (v / 64))]; __auto_type strata_t1150_ = bit((v % 64)); (strata_t1149_ | strata_t1150_); }));
+    ((int64_t*)(set[0]).data)[(base + (v / 64))] = (({ __auto_type strata_t1281_ = ((int64_t*)(set[0]).data)[(base + (v / 64))]; __auto_type strata_t1282_ = bit((v % 64)); (strata_t1281_ | strata_t1282_); }));
 }
 
 Array reads(Ins i) {
@@ -10562,7 +12242,7 @@ Array alloc_regs(IrFunc* f, RegSet rs, Array skip) {
     return result;
 }
 
-X64 new_x64(void) {
+A64 new_a64(void) {
     Array o = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array d = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
@@ -10573,248 +12253,332 @@ X64 new_x64(void) {
     Array nu = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array b = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array c = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return (X64){o, d, 0, 0, 0, a, r, lz, lv, ls, nu, b, c, 0};
+    Array so = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return (A64){o, d, 0, 0, 0, false, a, r, lz, lv, ls, nu, b, c, so};
 }
 
-void out(X64* x, const char* s) {
-    ({ const char* _e = str_concat(str_concat("\t", s), "\n"); arr_push(&(x->out), &_e); });
-}
-
-void out_label(X64* x, const char* s) {
-    ({ const char* _e = str_concat(s, ":\n"); arr_push(&(x->out), &_e); });
-}
-
-int64_t x64__align_to(int64_t n, int64_t a) {
+int64_t arch_arm64__align_to(int64_t n, int64_t a) {
     return ((((n + a) - 1) / a) * a);
 }
 
-RegSet x64_regs(void) {
-    return (RegSet){7, 10, 1, 2};
+void ins(A64* x, const char* s) {
+    ({ const char* _e = str_concat(str_concat("\t", s), "\n"); arr_push(&(x->out), &_e); });
 }
 
-int64_t x64_int_regs(void) {
-    return 7;
+void arch_arm64__label(A64* x, const char* name) {
+    ({ const char* _e = str_concat(name, ":\n"); arr_push(&(x->out), &_e); });
 }
 
-int64_t x64_saved_regs(void) {
-    return 17;
+const char* xr(int64_t n) {
+    if (n == 31) {
+        return "sp";
+    }
+    return str_concat("x", str_from_int(n));
 }
 
-const char* reg_name(int64_t k) {
-    if (k == 17) {
-        return "%r10";
-    }
-    if (k == 18) {
-        return "%xmm4";
-    }
-    if (k == 19) {
-        return "%xmm5";
-    }
-    if (k == 0) {
-        return "%rbx";
-    }
-    if (k == 1) {
-        return "%rsi";
-    }
-    if (k == 2) {
-        return "%rdi";
-    }
-    if (k == 3) {
-        return "%r12";
-    }
-    if (k == 4) {
-        return "%r13";
-    }
-    if (k == 5) {
-        return "%r14";
-    }
-    if (k == 6) {
-        return "%r15";
-    }
-    return str_concat("%xmm", str_from_int(((k - 7) + 6)));
+const char* wr(int64_t n) {
+    return str_concat("w", str_from_int(n));
 }
 
-bool in_reg(X64* x, int64_t v) {
+const char* dr(int64_t n) {
+    return str_concat("d", str_from_int(n));
+}
+
+const char* sr(int64_t n) {
+    return str_concat("s", str_from_int(n));
+}
+
+const char* fr(int64_t ty, int64_t n) {
+    if (ty == KF64) {
+        return dr(n);
+    }
+    return sr(n);
+}
+
+const char* imm_text(int64_t v) {
+    return str_concat("#", str_from_int(v));
+}
+
+RegSet arm64_regs(void) {
+    return (RegSet){10, 8, 3, 6};
+}
+
+int64_t hw_of(int64_t k) {
+    if (k < 10) {
+        return (19 + k);
+    }
+    if (k < 18) {
+        return (8 + (k - 10));
+    }
+    if (k < 21) {
+        return (13 + (k - 18));
+    }
+    return (18 + (k - 21));
+}
+
+bool is_freg(int64_t k) {
+    return (((k >= 10) && (k < 18)) || (k >= 21));
+}
+
+bool arch_arm64__in_reg(A64* x, int64_t v) {
     return (((int64_t*)(x->isreg).data)[v] == 1);
 }
 
-int64_t reg_of(X64* x, int64_t v) {
-    return ((int64_t*)(x->loc).data)[v];
+int64_t arch_arm64__reg_of(A64* x, int64_t v) {
+    return hw_of(((int64_t*)(x->loc).data)[v]);
 }
 
-const char* opnd(X64* x, int64_t v) {
-    if (in_reg(x, v)) {
-        return reg_name(reg_of(x, v));
+void add_off(A64* x, int64_t rd, int64_t base, int64_t off) {
+    if ((off >= 0) && (off < 4096)) {
+        (({ __auto_type strata_t1283_ = x; __auto_type strata_t1284_ = (({ __auto_type strata_t1287_ = str_concat((({ __auto_type strata_t1285_ = str_concat(str_concat("add ", xr(rd)), ", "); __auto_type strata_t1286_ = xr(base); str_concat(strata_t1285_, strata_t1286_); })), ", "); __auto_type strata_t1288_ = imm_text(off); str_concat(strata_t1287_, strata_t1288_); })); ins(strata_t1283_, strata_t1284_); }));
+    } else 
+    if ((off < 0) && (off > (0 - 4096))) {
+        (({ __auto_type strata_t1289_ = x; __auto_type strata_t1290_ = (({ __auto_type strata_t1293_ = str_concat((({ __auto_type strata_t1291_ = str_concat(str_concat("sub ", xr(rd)), ", "); __auto_type strata_t1292_ = xr(base); str_concat(strata_t1291_, strata_t1292_); })), ", "); __auto_type strata_t1294_ = imm_text((0 - off)); str_concat(strata_t1293_, strata_t1294_); })); ins(strata_t1289_, strata_t1290_); }));
+    } else {
+        mov_imm(x, rd, off);
+        (({ __auto_type strata_t1295_ = x; __auto_type strata_t1296_ = (({ __auto_type strata_t1299_ = str_concat((({ __auto_type strata_t1297_ = str_concat(str_concat("add ", xr(rd)), ", "); __auto_type strata_t1298_ = xr(base); str_concat(strata_t1297_, strata_t1298_); })), ", "); __auto_type strata_t1300_ = xr(rd); str_concat(strata_t1299_, strata_t1300_); })); ins(strata_t1295_, strata_t1296_); }));
     }
-    return str_concat(str_from_int(((int64_t*)(x->loc).data)[v]), "(%rbp)");
 }
 
-const char* sub_reg(const char* r, int64_t size) {
-    if (size == 8) {
-        return r;
-    }
-    if (((str_eq(r, "%rax") || str_eq(r, "%rbx")) || str_eq(r, "%rcx")) || str_eq(r, "%rdx")) {
-        const char* c = str_sub(r, 2, 1);
-        if (size == 4) {
-            return str_concat(str_concat("%e", c), "x");
-        }
-        if (size == 2) {
-            return str_concat(str_concat("%", c), "x");
-        }
-        return str_concat(str_concat("%", c), "l");
-    }
-    if (str_eq(r, "%rsi") || str_eq(r, "%rdi")) {
-        const char* c = str_sub(r, 2, 2);
-        if (size == 4) {
-            return str_concat("%e", c);
-        }
-        if (size == 2) {
-            return str_concat("%", c);
-        }
-        return str_concat(str_concat("%", c), "l");
-    }
-    if (size == 4) {
-        return str_concat(r, "d");
-    }
-    if (size == 2) {
-        return str_concat(r, "w");
-    }
-    return str_concat(r, "b");
-}
-
-const char* fsuf(int64_t ty) {
-    if (ty == KF64) {
-        return "sd";
-    }
-    return "ss";
-}
-
-const char* slot_mem(X64* x, int64_t slot, int64_t off) {
-    return str_concat(str_from_int((((int64_t*)(x->slot_off).data)[slot] + off)), "(%rbp)");
-}
-
-const char* src(X64* x, int64_t v) {
-    int64_t lz = ((int64_t*)(x->lazy).data)[v];
-    if (lz == 1) {
-        return str_concat("$", str_from_int(((int64_t*)(x->lval).data)[v]));
-    }
-    if (lz == 2) {
-        (({ __auto_type strata_t1151_ = x; __auto_type strata_t1152_ = str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", %r11"); out(strata_t1151_, strata_t1152_); }));
-        return "%r11";
-    }
-    if (lz == 3) {
-        out(x, str_concat(str_concat("leaq ", ((const char**)(x->lsym).data)[v]), "(%rip), %r11"));
-        return "%r11";
-    }
-    return opnd(x, v);
-}
-
-void get(X64* x, int64_t v, const char* r) {
-    int64_t lz = ((int64_t*)(x->lazy).data)[v];
-    if (lz == 1) {
-        if (((int64_t*)(x->lval).data)[v] == 0) {
-            (({ __auto_type strata_t1153_ = x; __auto_type strata_t1154_ = (({ __auto_type strata_t1155_ = str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "); __auto_type strata_t1156_ = sub_reg(r, 4); str_concat(strata_t1155_, strata_t1156_); })); out(strata_t1153_, strata_t1154_); }));
+void ldst(A64* x, const char* mn, const char* mnu, const char* reg, int64_t base, int64_t off, int64_t size) {
+    if (((off >= 0) && ((off % size) == 0)) && ((off / size) < 4096)) {
+        if (off == 0) {
+            (({ __auto_type strata_t1301_ = x; __auto_type strata_t1302_ = str_concat((({ __auto_type strata_t1303_ = str_concat(str_concat(str_concat(mn, " "), reg), ", ["); __auto_type strata_t1304_ = xr(base); str_concat(strata_t1303_, strata_t1304_); })), "]"); ins(strata_t1301_, strata_t1302_); }));
         } else {
-            (({ __auto_type strata_t1157_ = x; __auto_type strata_t1158_ = str_concat(str_concat(str_concat("movq $", str_from_int(((int64_t*)(x->lval).data)[v])), ", "), r); out(strata_t1157_, strata_t1158_); }));
+            (({ __auto_type strata_t1305_ = x; __auto_type strata_t1306_ = str_concat((({ __auto_type strata_t1309_ = str_concat((({ __auto_type strata_t1307_ = str_concat(str_concat(str_concat(mn, " "), reg), ", ["); __auto_type strata_t1308_ = xr(base); str_concat(strata_t1307_, strata_t1308_); })), ", "); __auto_type strata_t1310_ = imm_text(off); str_concat(strata_t1309_, strata_t1310_); })), "]"); ins(strata_t1305_, strata_t1306_); }));
         }
+    } else 
+    if ((off >= (0 - 256)) && (off < 256)) {
+        (({ __auto_type strata_t1311_ = x; __auto_type strata_t1312_ = str_concat((({ __auto_type strata_t1315_ = str_concat((({ __auto_type strata_t1313_ = str_concat(str_concat(str_concat(mnu, " "), reg), ", ["); __auto_type strata_t1314_ = xr(base); str_concat(strata_t1313_, strata_t1314_); })), ", "); __auto_type strata_t1316_ = imm_text(off); str_concat(strata_t1315_, strata_t1316_); })), "]"); ins(strata_t1311_, strata_t1312_); }));
+    } else {
+        add_off(x, 17, base, off);
+        ins(x, str_concat(str_concat(str_concat(mn, " "), reg), ", [x17]"));
+    }
+}
+
+void ldr_x(A64* x, int64_t r, int64_t base, int64_t off) {
+    (({ __auto_type strata_t1317_ = x; __auto_type strata_t1318_ = xr(r); ldst(strata_t1317_, "ldr", "ldur", strata_t1318_, base, off, 8); }));
+}
+
+void str_x(A64* x, int64_t r, int64_t base, int64_t off) {
+    (({ __auto_type strata_t1319_ = x; __auto_type strata_t1320_ = xr(r); ldst(strata_t1319_, "str", "stur", strata_t1320_, base, off, 8); }));
+}
+
+void ldr_f(A64* x, int64_t ty, int64_t r, int64_t base, int64_t off) {
+    (({ __auto_type strata_t1321_ = x; __auto_type strata_t1322_ = fr(ty, r); __auto_type strata_t1323_ = base; __auto_type strata_t1324_ = off; __auto_type strata_t1325_ = ir_size(ty); ldst(strata_t1321_, "ldr", "ldur", strata_t1322_, strata_t1323_, strata_t1324_, strata_t1325_); }));
+}
+
+void str_f(A64* x, int64_t ty, int64_t r, int64_t base, int64_t off) {
+    (({ __auto_type strata_t1326_ = x; __auto_type strata_t1327_ = fr(ty, r); __auto_type strata_t1328_ = base; __auto_type strata_t1329_ = off; __auto_type strata_t1330_ = ir_size(ty); ldst(strata_t1326_, "str", "stur", strata_t1327_, strata_t1328_, strata_t1329_, strata_t1330_); }));
+}
+
+void mov_imm(A64* x, int64_t rd, int64_t v) {
+    if (v == 0) {
+        (({ __auto_type strata_t1331_ = x; __auto_type strata_t1332_ = str_concat(str_concat("mov ", xr(rd)), ", xzr"); ins(strata_t1331_, strata_t1332_); }));
+        return;
+    }
+    int64_t zeros = 0;
+    int64_t ones = 0;
+    for (int64_t k = 0; k < 4; k++) {
+        int64_t c = ((v >> (16 * k)) & 65535);
+        if (c == 0) {
+            zeros += 1;
+        } else 
+        if (c == 65535) {
+            ones += 1;
+        }
+    }
+    bool neg = (ones > zeros);
+    bool first = true;
+    for (int64_t k = 0; k < 4; k++) {
+        int64_t c = ((v >> (16 * k)) & 65535);
+        const char* sh = "";
+        if (k > 0) {
+            sh = str_concat(", lsl ", imm_text((16 * k)));
+        }
+        if (neg) {
+            if ((c != 65535) || (first && (k == 3))) {
+                if (first) {
+                    (({ __auto_type strata_t1333_ = x; __auto_type strata_t1334_ = str_concat((({ __auto_type strata_t1335_ = str_concat(str_concat("movn ", xr(rd)), ", "); __auto_type strata_t1336_ = imm_text((c ^ 65535)); str_concat(strata_t1335_, strata_t1336_); })), sh); ins(strata_t1333_, strata_t1334_); }));
+                    first = false;
+                } else {
+                    (({ __auto_type strata_t1337_ = x; __auto_type strata_t1338_ = str_concat((({ __auto_type strata_t1339_ = str_concat(str_concat("movk ", xr(rd)), ", "); __auto_type strata_t1340_ = imm_text(c); str_concat(strata_t1339_, strata_t1340_); })), sh); ins(strata_t1337_, strata_t1338_); }));
+                }
+            }
+        } else 
+        if (c != 0) {
+            if (first) {
+                (({ __auto_type strata_t1341_ = x; __auto_type strata_t1342_ = str_concat((({ __auto_type strata_t1343_ = str_concat(str_concat("movz ", xr(rd)), ", "); __auto_type strata_t1344_ = imm_text(c); str_concat(strata_t1343_, strata_t1344_); })), sh); ins(strata_t1341_, strata_t1342_); }));
+                first = false;
+            } else {
+                (({ __auto_type strata_t1345_ = x; __auto_type strata_t1346_ = str_concat((({ __auto_type strata_t1347_ = str_concat(str_concat("movk ", xr(rd)), ", "); __auto_type strata_t1348_ = imm_text(c); str_concat(strata_t1347_, strata_t1348_); })), sh); ins(strata_t1345_, strata_t1346_); }));
+            }
+        }
+    }
+    if (first) {
+        (({ __auto_type strata_t1349_ = x; __auto_type strata_t1350_ = str_concat(str_concat("movn ", xr(rd)), ", #0"); ins(strata_t1349_, strata_t1350_); }));
+    }
+}
+
+int64_t imm_moves(int64_t v) {
+    if (v == 0) {
+        return 1;
+    }
+    int64_t zeros = 0;
+    int64_t ones = 0;
+    for (int64_t k = 0; k < 4; k++) {
+        int64_t c = ((v >> (16 * k)) & 65535);
+        if (c == 0) {
+            zeros += 1;
+        } else 
+        if (c == 65535) {
+            ones += 1;
+        }
+    }
+    if (ones > zeros) {
+        return (4 - ones);
+    }
+    return (4 - zeros);
+}
+
+void arch_arm64__sym_addr(A64* x, int64_t rd, const char* sym) {
+    (({ __auto_type strata_t1351_ = x; __auto_type strata_t1352_ = str_concat(str_concat(str_concat(str_concat("adrp ", xr(rd)), ", "), sym), "@PAGE"); ins(strata_t1351_, strata_t1352_); }));
+    (({ __auto_type strata_t1353_ = x; __auto_type strata_t1354_ = str_concat(str_concat(str_concat((({ __auto_type strata_t1355_ = str_concat(str_concat("add ", xr(rd)), ", "); __auto_type strata_t1356_ = xr(rd); str_concat(strata_t1355_, strata_t1356_); })), ", "), sym), "@PAGEOFF"); ins(strata_t1353_, strata_t1354_); }));
+}
+
+void iget(A64* x, int64_t v, int64_t r) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[v];
+    if (lz == 1) {
+        mov_imm(x, r, ((int64_t*)(x->lval).data)[v]);
     } else 
     if (lz == 2) {
-        (({ __auto_type strata_t1159_ = x; __auto_type strata_t1160_ = str_concat(str_concat(str_concat("leaq ", slot_mem(x, ((int64_t*)(x->lval).data)[v], 0)), ", "), r); out(strata_t1159_, strata_t1160_); }));
+        add_off(x, r, 31, ((int64_t*)(x->slot_off).data)[((int64_t*)(x->lval).data)[v]]);
     } else 
     if (lz == 3) {
-        out(x, str_concat(str_concat(str_concat("leaq ", ((const char**)(x->lsym).data)[v]), "(%rip), "), r));
+        arch_arm64__sym_addr(x, r, ((const char**)(x->lsym).data)[v]);
     } else 
-    if (!str_eq(opnd(x, v), r)) {
-        (({ __auto_type strata_t1161_ = x; __auto_type strata_t1162_ = str_concat(str_concat(str_concat("movq ", opnd(x, v)), ", "), r); out(strata_t1161_, strata_t1162_); }));
-    }
-}
-
-void put(X64* x, const char* r, int64_t v) {
-    const char* o = opnd(x, v);
-    if (!str_eq(o, r)) {
-        out(x, str_concat(str_concat(str_concat("movq ", r), ", "), o));
-    }
-}
-
-void fget(X64* x, int64_t ty, int64_t v, const char* r) {
-    if (in_reg(x, v)) {
-        if (!str_eq(opnd(x, v), r)) {
-            (({ __auto_type strata_t1163_ = x; __auto_type strata_t1164_ = str_concat(str_concat(str_concat("movaps ", opnd(x, v)), ", "), r); out(strata_t1163_, strata_t1164_); }));
+    if (arch_arm64__in_reg(x, v)) {
+        if (arch_arm64__reg_of(x, v) != r) {
+            (({ __auto_type strata_t1357_ = x; __auto_type strata_t1358_ = (({ __auto_type strata_t1359_ = str_concat(str_concat("mov ", xr(r)), ", "); __auto_type strata_t1360_ = xr(arch_arm64__reg_of(x, v)); str_concat(strata_t1359_, strata_t1360_); })); ins(strata_t1357_, strata_t1358_); }));
         }
     } else {
-        (({ __auto_type strata_t1165_ = x; __auto_type strata_t1166_ = str_concat(str_concat((({ __auto_type strata_t1167_ = str_concat(str_concat("mov", fsuf(ty)), " "); __auto_type strata_t1168_ = opnd(x, v); str_concat(strata_t1167_, strata_t1168_); })), ", "), r); out(strata_t1165_, strata_t1166_); }));
+        ldr_x(x, r, 31, ((int64_t*)(x->loc).data)[v]);
     }
 }
 
-void fput(X64* x, int64_t ty, const char* r, int64_t v) {
-    if (in_reg(x, v)) {
-        if (!str_eq(opnd(x, v), r)) {
-            (({ __auto_type strata_t1169_ = x; __auto_type strata_t1170_ = (({ __auto_type strata_t1171_ = str_concat(str_concat("movaps ", r), ", "); __auto_type strata_t1172_ = opnd(x, v); str_concat(strata_t1171_, strata_t1172_); })); out(strata_t1169_, strata_t1170_); }));
+int64_t isrc(A64* x, int64_t v, int64_t scratch) {
+    if (arch_arm64__in_reg(x, v) && (((int64_t*)(x->lazy).data)[v] == 0)) {
+        return arch_arm64__reg_of(x, v);
+    }
+    iget(x, v, scratch);
+    return scratch;
+}
+
+void iput(A64* x, int64_t r, int64_t v) {
+    if (arch_arm64__in_reg(x, v)) {
+        if (arch_arm64__reg_of(x, v) != r) {
+            (({ __auto_type strata_t1361_ = x; __auto_type strata_t1362_ = (({ __auto_type strata_t1363_ = str_concat(str_concat("mov ", xr(arch_arm64__reg_of(x, v))), ", "); __auto_type strata_t1364_ = xr(r); str_concat(strata_t1363_, strata_t1364_); })); ins(strata_t1361_, strata_t1362_); }));
         }
     } else {
-        (({ __auto_type strata_t1173_ = x; __auto_type strata_t1174_ = (({ __auto_type strata_t1175_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(ty)), " "), r), ", "); __auto_type strata_t1176_ = opnd(x, v); str_concat(strata_t1175_, strata_t1176_); })); out(strata_t1173_, strata_t1174_); }));
+        str_x(x, r, 31, ((int64_t*)(x->loc).data)[v]);
     }
 }
 
-const char* mem_at(X64* x, int64_t a, int64_t off) {
-    int64_t lz = ((int64_t*)(x->lazy).data)[a];
-    if (lz == 2) {
-        return slot_mem(x, ((int64_t*)(x->lval).data)[a], off);
+int64_t idst(A64* x, int64_t v, int64_t scratch) {
+    if (arch_arm64__in_reg(x, v)) {
+        return arch_arm64__reg_of(x, v);
     }
-    if (lz == 3) {
-        return str_concat((({ __auto_type strata_t1177_ = str_concat(((const char**)(x->lsym).data)[a], "+"); __auto_type strata_t1178_ = str_from_int(off); str_concat(strata_t1177_, strata_t1178_); })), "(%rip)");
-    }
-    if (in_reg(x, a)) {
-        return str_concat((({ __auto_type strata_t1179_ = str_concat(str_from_int(off), "("); __auto_type strata_t1180_ = reg_name(reg_of(x, a)); str_concat(strata_t1179_, strata_t1180_); })), ")");
-    }
-    get(x, a, "%rax");
-    return str_concat(str_from_int(off), "(%rax)");
+    return scratch;
 }
 
-const char* work(X64* x, Ins i) {
-    if (in_reg(x, i.dst) && (!(((i.b >= 0) && in_reg(x, i.b)) && (({ __auto_type strata_t1181_ = reg_of(x, i.b); __auto_type strata_t1182_ = reg_of(x, i.dst); (strata_t1181_ == strata_t1182_); }))))) {
-        return reg_name(reg_of(x, i.dst));
+void arch_arm64__fget(A64* x, int64_t ty, int64_t v, int64_t r) {
+    if (arch_arm64__in_reg(x, v)) {
+        if (arch_arm64__reg_of(x, v) != r) {
+            (({ __auto_type strata_t1365_ = x; __auto_type strata_t1366_ = (({ __auto_type strata_t1367_ = str_concat(str_concat("fmov ", fr(ty, r)), ", "); __auto_type strata_t1368_ = (({ __auto_type strata_t1369_ = ty; __auto_type strata_t1370_ = arch_arm64__reg_of(x, v); fr(strata_t1369_, strata_t1370_); })); str_concat(strata_t1367_, strata_t1368_); })); ins(strata_t1365_, strata_t1366_); }));
+        }
+    } else {
+        ldr_f(x, ty, r, 31, ((int64_t*)(x->loc).data)[v]);
     }
-    return "%rax";
 }
 
-void norm(X64* x, int64_t ty, const char* r) {
+int64_t fsrc(A64* x, int64_t ty, int64_t v, int64_t scratch) {
+    if (arch_arm64__in_reg(x, v)) {
+        return arch_arm64__reg_of(x, v);
+    }
+    arch_arm64__fget(x, ty, v, scratch);
+    return scratch;
+}
+
+void arch_arm64__fput(A64* x, int64_t ty, int64_t r, int64_t v) {
+    if (arch_arm64__in_reg(x, v)) {
+        if (arch_arm64__reg_of(x, v) != r) {
+            (({ __auto_type strata_t1371_ = x; __auto_type strata_t1372_ = (({ __auto_type strata_t1375_ = str_concat(str_concat("fmov ", (({ __auto_type strata_t1373_ = ty; __auto_type strata_t1374_ = arch_arm64__reg_of(x, v); fr(strata_t1373_, strata_t1374_); }))), ", "); __auto_type strata_t1376_ = fr(ty, r); str_concat(strata_t1375_, strata_t1376_); })); ins(strata_t1371_, strata_t1372_); }));
+        }
+    } else {
+        str_f(x, ty, r, 31, ((int64_t*)(x->loc).data)[v]);
+    }
+}
+
+int64_t fdst(A64* x, int64_t v, int64_t scratch) {
+    if (arch_arm64__in_reg(x, v)) {
+        return arch_arm64__reg_of(x, v);
+    }
+    return scratch;
+}
+
+void arch_arm64__norm(A64* x, int64_t ty, int64_t r) {
     if (ty == KI8) {
-        (({ __auto_type strata_t1183_ = x; __auto_type strata_t1184_ = str_concat(str_concat(str_concat("movsbq ", sub_reg(r, 1)), ", "), r); out(strata_t1183_, strata_t1184_); }));
+        (({ __auto_type strata_t1377_ = x; __auto_type strata_t1378_ = (({ __auto_type strata_t1379_ = str_concat(str_concat("sxtb ", xr(r)), ", "); __auto_type strata_t1380_ = wr(r); str_concat(strata_t1379_, strata_t1380_); })); ins(strata_t1377_, strata_t1378_); }));
     } else 
     if (ty == KU8) {
-        (({ __auto_type strata_t1185_ = x; __auto_type strata_t1186_ = (({ __auto_type strata_t1187_ = str_concat(str_concat("movzbl ", sub_reg(r, 1)), ", "); __auto_type strata_t1188_ = sub_reg(r, 4); str_concat(strata_t1187_, strata_t1188_); })); out(strata_t1185_, strata_t1186_); }));
+        (({ __auto_type strata_t1381_ = x; __auto_type strata_t1382_ = (({ __auto_type strata_t1383_ = str_concat(str_concat("uxtb ", wr(r)), ", "); __auto_type strata_t1384_ = wr(r); str_concat(strata_t1383_, strata_t1384_); })); ins(strata_t1381_, strata_t1382_); }));
     } else 
     if (ty == KI16) {
-        (({ __auto_type strata_t1189_ = x; __auto_type strata_t1190_ = str_concat(str_concat(str_concat("movswq ", sub_reg(r, 2)), ", "), r); out(strata_t1189_, strata_t1190_); }));
+        (({ __auto_type strata_t1385_ = x; __auto_type strata_t1386_ = (({ __auto_type strata_t1387_ = str_concat(str_concat("sxth ", xr(r)), ", "); __auto_type strata_t1388_ = wr(r); str_concat(strata_t1387_, strata_t1388_); })); ins(strata_t1385_, strata_t1386_); }));
     } else 
     if (ty == KU16) {
-        (({ __auto_type strata_t1191_ = x; __auto_type strata_t1192_ = (({ __auto_type strata_t1193_ = str_concat(str_concat("movzwl ", sub_reg(r, 2)), ", "); __auto_type strata_t1194_ = sub_reg(r, 4); str_concat(strata_t1193_, strata_t1194_); })); out(strata_t1191_, strata_t1192_); }));
+        (({ __auto_type strata_t1389_ = x; __auto_type strata_t1390_ = (({ __auto_type strata_t1391_ = str_concat(str_concat("uxth ", wr(r)), ", "); __auto_type strata_t1392_ = wr(r); str_concat(strata_t1391_, strata_t1392_); })); ins(strata_t1389_, strata_t1390_); }));
     } else 
     if (ty == KI32) {
-        (({ __auto_type strata_t1195_ = x; __auto_type strata_t1196_ = str_concat(str_concat(str_concat("movslq ", sub_reg(r, 4)), ", "), r); out(strata_t1195_, strata_t1196_); }));
+        (({ __auto_type strata_t1393_ = x; __auto_type strata_t1394_ = (({ __auto_type strata_t1395_ = str_concat(str_concat("sxtw ", xr(r)), ", "); __auto_type strata_t1396_ = wr(r); str_concat(strata_t1395_, strata_t1396_); })); ins(strata_t1393_, strata_t1394_); }));
     } else 
     if (ty == KU32) {
-        (({ __auto_type strata_t1197_ = x; __auto_type strata_t1198_ = (({ __auto_type strata_t1199_ = str_concat(str_concat("movl ", sub_reg(r, 4)), ", "); __auto_type strata_t1200_ = sub_reg(r, 4); str_concat(strata_t1199_, strata_t1200_); })); out(strata_t1197_, strata_t1198_); }));
+        (({ __auto_type strata_t1397_ = x; __auto_type strata_t1398_ = (({ __auto_type strata_t1399_ = str_concat(str_concat("mov ", wr(r)), ", "); __auto_type strata_t1400_ = wr(r); str_concat(strata_t1399_, strata_t1400_); })); ins(strata_t1397_, strata_t1398_); }));
     }
 }
 
-bool fits32(int64_t v) {
-    return ((v >= (0 - 2147483648)) && (v <= 2147483647));
+MemRef arch_arm64__mem_at(A64* x, int64_t a, int64_t off) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[a];
+    if (lz == 2) {
+        return (MemRef){31, (((int64_t*)(x->slot_off).data)[((int64_t*)(x->lval).data)[a]] + off)};
+    }
+    if (lz == 3) {
+        arch_arm64__sym_addr(x, 16, ((const char**)(x->lsym).data)[a]);
+        return (MemRef){16, off};
+    }
+    if (arch_arm64__in_reg(x, a)) {
+        return (MemRef){arch_arm64__reg_of(x, a), off};
+    }
+    iget(x, a, 16);
+    return (MemRef){16, off};
 }
 
-const char* float_const(X64* x, int64_t ty, const char* text) {
+const char* arch_arm64__float_const(A64* x, int64_t ty, const char* text) {
     const char* name = str_concat(".LCf", str_from_int(x->floats));
     x->floats += 1;
     if (ty == KF64) {
-        ({ const char* _e = str_concat(str_concat(str_concat(str_concat("\t.p2align 3\n", name), ":\n\t.double "), text), "\n"); arr_push(&(x->data), &_e); });
+        ({ const char* _e = ".p2align 3"; arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(name, ":"); arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(".double ", text); arr_push(&(x->data), &_e); });
     } else {
-        ({ const char* _e = str_concat(str_concat(str_concat(str_concat("\t.p2align 2\n", name), ":\n\t.float "), text), "\n"); arr_push(&(x->data), &_e); });
+        ({ const char* _e = ".p2align 2"; arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(name, ":"); arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(".float ", text); arr_push(&(x->data), &_e); });
     }
     return name;
 }
 
-const char* as_text(const char* s) {
+const char* arch_arm64__as_text(const char* s) {
     Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     int64_t i = 0;
     int64_t n = str_len(s);
@@ -10837,24 +12601,2957 @@ const char* as_text(const char* s) {
     return strata_join((&p));
 }
 
-const char* lbl(X64* x, int64_t n) {
-    return (({ __auto_type strata_t1201_ = str_concat(str_concat(".L", str_from_int(x->fnum)), "_"); __auto_type strata_t1202_ = str_from_int(n); str_concat(strata_t1201_, strata_t1202_); }));
+const char* arch_arm64__lbl(A64* x, int64_t n) {
+    return (({ __auto_type strata_t1401_ = str_concat(str_concat(".L", str_from_int(x->fnum)), "_"); __auto_type strata_t1402_ = str_from_int(n); str_concat(strata_t1401_, strata_t1402_); }));
 }
 
-const char* int_reg_arg(int64_t i) {
+const char* new_local(A64* x) {
+    const char* l = (({ __auto_type strata_t1403_ = str_concat(str_concat(".Lb", str_from_int(x->fnum)), "_"); __auto_type strata_t1404_ = str_from_int(x->loops); str_concat(strata_t1403_, strata_t1404_); }));
+    x->loops += 1;
+    return l;
+}
+
+const char* arch_arm64__cc_of(int64_t cond, bool is_unsigned) {
+    if (cond == CEq) {
+        return "eq";
+    }
+    if (cond == CNe) {
+        return "ne";
+    }
+    if (is_unsigned) {
+        if (cond == CLt) {
+            return "lo";
+        }
+        if (cond == CLe) {
+            return "ls";
+        }
+        if (cond == CGt) {
+            return "hi";
+        }
+        return "hs";
+    }
+    if (cond == CLt) {
+        return "lt";
+    }
+    if (cond == CLe) {
+        return "le";
+    }
+    if (cond == CGt) {
+        return "gt";
+    }
+    return "ge";
+}
+
+const char* fcc_of(int64_t cond) {
+    if (cond == CEq) {
+        return "eq";
+    }
+    if (cond == CNe) {
+        return "ne";
+    }
+    if (cond == CLt) {
+        return "mi";
+    }
+    if (cond == CLe) {
+        return "ls";
+    }
+    if (cond == CGt) {
+        return "gt";
+    }
+    return "ge";
+}
+
+const char* inv_cc(const char* c) {
+    if (str_eq(c, "eq")) {
+        return "ne";
+    }
+    if (str_eq(c, "ne")) {
+        return "eq";
+    }
+    if (str_eq(c, "lt")) {
+        return "ge";
+    }
+    if (str_eq(c, "ge")) {
+        return "lt";
+    }
+    if (str_eq(c, "le")) {
+        return "gt";
+    }
+    if (str_eq(c, "gt")) {
+        return "le";
+    }
+    if (str_eq(c, "lo")) {
+        return "hs";
+    }
+    if (str_eq(c, "hs")) {
+        return "lo";
+    }
+    if (str_eq(c, "ls")) {
+        return "hi";
+    }
+    if (str_eq(c, "hi")) {
+        return "ls";
+    }
+    if (str_eq(c, "mi")) {
+        return "pl";
+    }
+    if (str_eq(c, "pl")) {
+        return "mi";
+    }
+    return "al";
+}
+
+void bcond(A64* x, const char* cc, const char* target) {
+    if (!x->far) {
+        ins(x, str_concat(str_concat(str_concat("b.", cc), " "), target));
+        return;
+    }
+    const char* skip = new_local(x);
+    (({ __auto_type strata_t1405_ = x; __auto_type strata_t1406_ = str_concat(str_concat(str_concat("b.", inv_cc(cc)), " "), skip); ins(strata_t1405_, strata_t1406_); }));
+    ins(x, str_concat("b ", target));
+    arch_arm64__label(x, skip);
+}
+
+void arch_arm64__branch_cc(A64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next) {
+    if (e == next) {
+        (({ __auto_type strata_t1407_ = x; __auto_type strata_t1408_ = cc; __auto_type strata_t1409_ = arch_arm64__lbl(x, t); bcond(strata_t1407_, strata_t1408_, strata_t1409_); }));
+    } else 
+    if ((t == next) && (!str_eq(ncc, ""))) {
+        (({ __auto_type strata_t1410_ = x; __auto_type strata_t1411_ = ncc; __auto_type strata_t1412_ = arch_arm64__lbl(x, e); bcond(strata_t1410_, strata_t1411_, strata_t1412_); }));
+    } else {
+        (({ __auto_type strata_t1413_ = x; __auto_type strata_t1414_ = cc; __auto_type strata_t1415_ = arch_arm64__lbl(x, t); bcond(strata_t1413_, strata_t1414_, strata_t1415_); }));
+        (({ __auto_type strata_t1416_ = x; __auto_type strata_t1417_ = str_concat("b ", arch_arm64__lbl(x, e)); ins(strata_t1416_, strata_t1417_); }));
+    }
+}
+
+void cmp_ints(A64* x, int64_t a, int64_t b) {
+    int64_t ra = isrc(x, a, 9);
+    if (((((int64_t*)(x->lazy).data)[b] == 1) && (((int64_t*)(x->lval).data)[b] >= 0)) && (((int64_t*)(x->lval).data)[b] < 4096)) {
+        (({ __auto_type strata_t1418_ = x; __auto_type strata_t1419_ = (({ __auto_type strata_t1420_ = str_concat(str_concat("cmp ", xr(ra)), ", "); __auto_type strata_t1421_ = imm_text(((int64_t*)(x->lval).data)[b]); str_concat(strata_t1420_, strata_t1421_); })); ins(strata_t1418_, strata_t1419_); }));
+    } else 
+    if (((((int64_t*)(x->lazy).data)[b] == 1) && (((int64_t*)(x->lval).data)[b] < 0)) && (((int64_t*)(x->lval).data)[b] > (0 - 4096))) {
+        (({ __auto_type strata_t1422_ = x; __auto_type strata_t1423_ = (({ __auto_type strata_t1424_ = str_concat(str_concat("cmn ", xr(ra)), ", "); __auto_type strata_t1425_ = imm_text((0 - ((int64_t*)(x->lval).data)[b])); str_concat(strata_t1424_, strata_t1425_); })); ins(strata_t1422_, strata_t1423_); }));
+    } else {
+        int64_t rb = isrc(x, b, 10);
+        (({ __auto_type strata_t1426_ = x; __auto_type strata_t1427_ = (({ __auto_type strata_t1428_ = str_concat(str_concat("cmp ", xr(ra)), ", "); __auto_type strata_t1429_ = xr(rb); str_concat(strata_t1428_, strata_t1429_); })); ins(strata_t1426_, strata_t1427_); }));
+    }
+}
+
+void cmp_floats(A64* x, int64_t ty, int64_t a, int64_t b) {
+    int64_t ra = fsrc(x, ty, a, 16);
+    int64_t rb = fsrc(x, ty, b, 17);
+    (({ __auto_type strata_t1430_ = x; __auto_type strata_t1431_ = (({ __auto_type strata_t1432_ = str_concat(str_concat("fcmp ", fr(ty, ra)), ", "); __auto_type strata_t1433_ = fr(ty, rb); str_concat(strata_t1432_, strata_t1433_); })); ins(strata_t1430_, strata_t1431_); }));
+}
+
+void arch_arm64__cmp_branch(A64* x, Ins i, int64_t t, int64_t e, int64_t next) {
+    if (ir_is_float(i.ty)) {
+        cmp_floats(x, i.ty, i.a, i.b);
+        (({ __auto_type strata_t1434_ = x; __auto_type strata_t1435_ = fcc_of(i.ty2); arch_arm64__branch_cc(strata_t1434_, strata_t1435_, "", t, e, next); }));
+        return;
+    }
+    cmp_ints(x, i.a, i.b);
+    const char* cc = (({ __auto_type strata_t1436_ = i.ty2; __auto_type strata_t1437_ = ir_is_unsigned(i.ty); arch_arm64__cc_of(strata_t1436_, strata_t1437_); }));
+    (({ __auto_type strata_t1438_ = x; __auto_type strata_t1439_ = cc; __auto_type strata_t1440_ = inv_cc(cc); arch_arm64__branch_cc(strata_t1438_, strata_t1439_, strata_t1440_, t, e, next); }));
+}
+
+void arch_arm64__copy_bytes(A64* x, int64_t size, bool zero) {
+    int64_t off = 0;
+    const char* d8 = "x11";
+    const char* d4 = "w11";
+    if (zero) {
+        d8 = "xzr";
+        d4 = "wzr";
+    }
+    if (size > 128) {
+        int64_t words = (size / 8);
+        const char* l = new_local(x);
+        mov_imm(x, 12, words);
+        arch_arm64__label(x, l);
+        if (!zero) {
+            ins(x, "ldr x11, [x10], #8");
+        }
+        ins(x, str_concat(str_concat("str ", d8), ", [x9], #8"));
+        ins(x, "subs x12, x12, #1");
+        ins(x, str_concat("b.ne ", l));
+        size = (size - (words * 8));
+    }
+    while ((off + 8) <= size) {
+        if (!zero) {
+            ldst(x, "ldr", "ldur", "x11", 10, off, 8);
+        }
+        ldst(x, "str", "stur", d8, 9, off, 8);
+        off += 8;
+    }
+    if ((off + 4) <= size) {
+        if (!zero) {
+            ldst(x, "ldr", "ldur", "w11", 10, off, 4);
+        }
+        ldst(x, "str", "stur", d4, 9, off, 4);
+        off += 4;
+    }
+    if ((off + 2) <= size) {
+        if (!zero) {
+            ldst(x, "ldrh", "ldurh", "w11", 10, off, 2);
+        }
+        ldst(x, "strh", "sturh", d4, 9, off, 2);
+        off += 2;
+    }
+    if (off < size) {
+        if (!zero) {
+            ldst(x, "ldrb", "ldurb", "w11", 10, off, 1);
+        }
+        ldst(x, "strb", "sturb", d4, 9, off, 1);
+    }
+}
+
+const char* load_mn(int64_t ty) {
+    if (ty == KI8) {
+        return "ldrsb";
+    }
+    if (ty == KU8) {
+        return "ldrb";
+    }
+    if (ty == KI16) {
+        return "ldrsh";
+    }
+    if (ty == KU16) {
+        return "ldrh";
+    }
+    if (ty == KI32) {
+        return "ldrsw";
+    }
+    return "ldr";
+}
+
+const char* unscaled(const char* mn) {
+    return str_concat("ldu", str_sub(mn, 2, (str_len(mn) - 2)));
+}
+
+bool load_w(int64_t ty) {
+    return (((ty == KU8) || (ty == KU16)) || (ty == KU32));
+}
+
+void arch_arm64__emit_ins(A64* x, IrFunc* f, int64_t k, const char* epilogue) {
+    Ins i = ((Ins*)(f->code).data)[k];
+    int64_t t = i.ty;
+    int64_t next = (0 - 1);
+    if (((k + 1) < f->code.len) && (((Ins*)(f->code).data)[(k + 1)].op == OLabel)) {
+        next = ((Ins*)(f->code).data)[(k + 1)].imm;
+    }
+    if ((i.dst >= 0) && (((int64_t*)(x->lazy).data)[i.dst] != 0)) {
+        return;
+    }
+    switch (i.op) {
+        case OConst:
+        {
+            {
+                int64_t rd = idst(x, i.dst, 9);
+                (({ __auto_type strata_t1441_ = x; __auto_type strata_t1442_ = rd; __auto_type strata_t1443_ = ir_norm_imm(t, i.imm); mov_imm(strata_t1441_, strata_t1442_, strata_t1443_); }));
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case OFConst:
+        {
+            {
+                const char* c = arch_arm64__float_const(x, t, i.sym);
+                int64_t rd = fdst(x, i.dst, 16);
+                ins(x, str_concat(str_concat("adrp x16, ", c), "@PAGE"));
+                (({ __auto_type strata_t1444_ = x; __auto_type strata_t1445_ = str_concat(str_concat(str_concat(str_concat("ldr ", fr(t, rd)), ", [x16, "), c), "@PAGEOFF]"); ins(strata_t1444_, strata_t1445_); }));
+                arch_arm64__fput(x, t, rd, i.dst);
+            }
+            break;
+        }
+        case OCopy:
+        {
+            if (ir_is_float(t)) {
+                int64_t rd = fdst(x, i.dst, 16);
+                arch_arm64__fget(x, t, i.a, rd);
+                arch_arm64__fput(x, t, rd, i.dst);
+            } else {
+                int64_t rd = idst(x, i.dst, 9);
+                iget(x, i.a, rd);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case OAdd:
+        case OSub:
+        case OMul:
+        case OAnd:
+        case OOr:
+        case OXor:
+        {
+            if (ir_is_float(t)) {
+                const char* fop = "fadd";
+                if (i.op == OSub) {
+                    fop = "fsub";
+                } else 
+                if (i.op == OMul) {
+                    fop = "fmul";
+                }
+                arch_arm64__float_op(x, i, fop);
+            } else {
+                const char* op = "add";
+                if (i.op == OSub) {
+                    op = "sub";
+                } else 
+                if (i.op == OMul) {
+                    op = "mul";
+                } else 
+                if (i.op == OAnd) {
+                    op = "and";
+                } else 
+                if (i.op == OOr) {
+                    op = "orr";
+                } else 
+                if (i.op == OXor) {
+                    op = "eor";
+                }
+                int64_t ra = isrc(x, i.a, 9);
+                int64_t rd = idst(x, i.dst, 9);
+                bool small = (((((int64_t*)(x->lazy).data)[i.b] == 1) && (((int64_t*)(x->lval).data)[i.b] > (0 - 4096))) && (((int64_t*)(x->lval).data)[i.b] < 4096));
+                if (((i.op == OAdd) || (i.op == OSub)) && small) {
+                    int64_t v = ((int64_t*)(x->lval).data)[i.b];
+                    if (v < 0) {
+                        v = (0 - v);
+                        if (str_eq(op, "add")) {
+                            op = "sub";
+                        } else {
+                            op = "add";
+                        }
+                    }
+                    (({ __auto_type strata_t1446_ = x; __auto_type strata_t1447_ = (({ __auto_type strata_t1452_ = str_concat((({ __auto_type strata_t1450_ = str_concat((({ __auto_type strata_t1448_ = str_concat(op, " "); __auto_type strata_t1449_ = xr(rd); str_concat(strata_t1448_, strata_t1449_); })), ", "); __auto_type strata_t1451_ = xr(ra); str_concat(strata_t1450_, strata_t1451_); })), ", "); __auto_type strata_t1453_ = imm_text(v); str_concat(strata_t1452_, strata_t1453_); })); ins(strata_t1446_, strata_t1447_); }));
+                } else {
+                    int64_t rb = isrc(x, i.b, 10);
+                    (({ __auto_type strata_t1454_ = x; __auto_type strata_t1455_ = (({ __auto_type strata_t1460_ = str_concat((({ __auto_type strata_t1458_ = str_concat((({ __auto_type strata_t1456_ = str_concat(op, " "); __auto_type strata_t1457_ = xr(rd); str_concat(strata_t1456_, strata_t1457_); })), ", "); __auto_type strata_t1459_ = xr(ra); str_concat(strata_t1458_, strata_t1459_); })), ", "); __auto_type strata_t1461_ = xr(rb); str_concat(strata_t1460_, strata_t1461_); })); ins(strata_t1454_, strata_t1455_); }));
+                }
+                arch_arm64__norm(x, t, rd);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case ODiv:
+        case OMod:
+        {
+            if (ir_is_float(t)) {
+                arch_arm64__float_op(x, i, "fdiv");
+            } else {
+                int64_t ra = isrc(x, i.a, 9);
+                int64_t rb = isrc(x, i.b, 10);
+                int64_t rd = idst(x, i.dst, 9);
+                const char* dv = "sdiv";
+                if (ir_is_unsigned(t)) {
+                    dv = "udiv";
+                }
+                if (i.op == ODiv) {
+                    (({ __auto_type strata_t1462_ = x; __auto_type strata_t1463_ = (({ __auto_type strata_t1468_ = str_concat((({ __auto_type strata_t1466_ = str_concat((({ __auto_type strata_t1464_ = str_concat(dv, " "); __auto_type strata_t1465_ = xr(rd); str_concat(strata_t1464_, strata_t1465_); })), ", "); __auto_type strata_t1467_ = xr(ra); str_concat(strata_t1466_, strata_t1467_); })), ", "); __auto_type strata_t1469_ = xr(rb); str_concat(strata_t1468_, strata_t1469_); })); ins(strata_t1462_, strata_t1463_); }));
+                } else {
+                    (({ __auto_type strata_t1470_ = x; __auto_type strata_t1471_ = (({ __auto_type strata_t1474_ = str_concat((({ __auto_type strata_t1472_ = str_concat(dv, " x11, "); __auto_type strata_t1473_ = xr(ra); str_concat(strata_t1472_, strata_t1473_); })), ", "); __auto_type strata_t1475_ = xr(rb); str_concat(strata_t1474_, strata_t1475_); })); ins(strata_t1470_, strata_t1471_); }));
+                    (({ __auto_type strata_t1476_ = x; __auto_type strata_t1477_ = (({ __auto_type strata_t1480_ = str_concat((({ __auto_type strata_t1478_ = str_concat(str_concat("msub ", xr(rd)), ", x11, "); __auto_type strata_t1479_ = xr(rb); str_concat(strata_t1478_, strata_t1479_); })), ", "); __auto_type strata_t1481_ = xr(ra); str_concat(strata_t1480_, strata_t1481_); })); ins(strata_t1476_, strata_t1477_); }));
+                }
+                arch_arm64__norm(x, t, rd);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case OShl:
+        case OShr:
+        {
+            {
+                int64_t ra = isrc(x, i.a, 9);
+                int64_t rd = idst(x, i.dst, 9);
+                const char* op = "lsl";
+                if (i.op == OShr) {
+                    if (ir_is_unsigned(t)) {
+                        op = "lsr";
+                    } else {
+                        op = "asr";
+                    }
+                }
+                if (((int64_t*)(x->lazy).data)[i.b] == 1) {
+                    (({ __auto_type strata_t1482_ = x; __auto_type strata_t1483_ = (({ __auto_type strata_t1488_ = str_concat((({ __auto_type strata_t1486_ = str_concat((({ __auto_type strata_t1484_ = str_concat(op, " "); __auto_type strata_t1485_ = xr(rd); str_concat(strata_t1484_, strata_t1485_); })), ", "); __auto_type strata_t1487_ = xr(ra); str_concat(strata_t1486_, strata_t1487_); })), ", "); __auto_type strata_t1489_ = imm_text((((int64_t*)(x->lval).data)[i.b] & 63)); str_concat(strata_t1488_, strata_t1489_); })); ins(strata_t1482_, strata_t1483_); }));
+                } else {
+                    int64_t rb = isrc(x, i.b, 10);
+                    (({ __auto_type strata_t1490_ = x; __auto_type strata_t1491_ = (({ __auto_type strata_t1496_ = str_concat((({ __auto_type strata_t1494_ = str_concat((({ __auto_type strata_t1492_ = str_concat(op, " "); __auto_type strata_t1493_ = xr(rd); str_concat(strata_t1492_, strata_t1493_); })), ", "); __auto_type strata_t1495_ = xr(ra); str_concat(strata_t1494_, strata_t1495_); })), ", "); __auto_type strata_t1497_ = xr(rb); str_concat(strata_t1496_, strata_t1497_); })); ins(strata_t1490_, strata_t1491_); }));
+                }
+                arch_arm64__norm(x, t, rd);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case ONeg:
+        {
+            if (ir_is_float(t)) {
+                int64_t ra = fsrc(x, t, i.a, 16);
+                int64_t rd = fdst(x, i.dst, 16);
+                (({ __auto_type strata_t1498_ = x; __auto_type strata_t1499_ = (({ __auto_type strata_t1500_ = str_concat(str_concat("fneg ", fr(t, rd)), ", "); __auto_type strata_t1501_ = fr(t, ra); str_concat(strata_t1500_, strata_t1501_); })); ins(strata_t1498_, strata_t1499_); }));
+                arch_arm64__fput(x, t, rd, i.dst);
+            } else {
+                int64_t ra = isrc(x, i.a, 9);
+                int64_t rd = idst(x, i.dst, 9);
+                (({ __auto_type strata_t1502_ = x; __auto_type strata_t1503_ = (({ __auto_type strata_t1504_ = str_concat(str_concat("neg ", xr(rd)), ", "); __auto_type strata_t1505_ = xr(ra); str_concat(strata_t1504_, strata_t1505_); })); ins(strata_t1502_, strata_t1503_); }));
+                arch_arm64__norm(x, t, rd);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case ONot:
+        {
+            {
+                int64_t ra = isrc(x, i.a, 9);
+                int64_t rd = idst(x, i.dst, 9);
+                (({ __auto_type strata_t1506_ = x; __auto_type strata_t1507_ = (({ __auto_type strata_t1508_ = str_concat(str_concat("mvn ", xr(rd)), ", "); __auto_type strata_t1509_ = xr(ra); str_concat(strata_t1508_, strata_t1509_); })); ins(strata_t1506_, strata_t1507_); }));
+                arch_arm64__norm(x, t, rd);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case OSqrt:
+        {
+            {
+                int64_t ra = fsrc(x, t, i.a, 16);
+                int64_t rd = fdst(x, i.dst, 16);
+                (({ __auto_type strata_t1510_ = x; __auto_type strata_t1511_ = (({ __auto_type strata_t1512_ = str_concat(str_concat("fsqrt ", fr(t, rd)), ", "); __auto_type strata_t1513_ = fr(t, ra); str_concat(strata_t1512_, strata_t1513_); })); ins(strata_t1510_, strata_t1511_); }));
+                arch_arm64__fput(x, t, rd, i.dst);
+            }
+            break;
+        }
+        case OCmp:
+        {
+            {
+                if (((((k + 1) < f->code.len) && (((Ins*)(f->code).data)[(k + 1)].op == OBr)) && (((Ins*)(f->code).data)[(k + 1)].a == i.dst)) && (((int64_t*)(x->nuse).data)[i.dst] == 1)) {
+                    int64_t nx = (0 - 1);
+                    if (((k + 2) < f->code.len) && (((Ins*)(f->code).data)[(k + 2)].op == OLabel)) {
+                        nx = ((Ins*)(f->code).data)[(k + 2)].imm;
+                    }
+                    arch_arm64__cmp_branch(x, i, ((Ins*)(f->code).data)[(k + 1)].imm, ((Ins*)(f->code).data)[(k + 1)].imm2, nx);
+                } else {
+                    const char* cc = "";
+                    if (ir_is_float(t)) {
+                        cmp_floats(x, t, i.a, i.b);
+                        cc = fcc_of(i.ty2);
+                    } else {
+                        cmp_ints(x, i.a, i.b);
+                        cc = (({ __auto_type strata_t1514_ = i.ty2; __auto_type strata_t1515_ = ir_is_unsigned(t); arch_arm64__cc_of(strata_t1514_, strata_t1515_); }));
+                    }
+                    int64_t rd = idst(x, i.dst, 9);
+                    (({ __auto_type strata_t1516_ = x; __auto_type strata_t1517_ = str_concat(str_concat(str_concat("cset ", xr(rd)), ", "), cc); ins(strata_t1516_, strata_t1517_); }));
+                    iput(x, rd, i.dst);
+                }
+            }
+            break;
+        }
+        case OConv:
+        {
+            arch_arm64__emit_conv(x, i);
+            break;
+        }
+        case OLoad:
+        {
+            {
+                MemRef m = arch_arm64__mem_at(x, i.a, i.imm);
+                if (ir_is_float(t)) {
+                    int64_t rd = fdst(x, i.dst, 16);
+                    ldr_f(x, t, rd, m.base, m.off);
+                    arch_arm64__fput(x, t, rd, i.dst);
+                } else {
+                    int64_t rd = idst(x, i.dst, 9);
+                    const char* mn = load_mn(t);
+                    const char* reg = xr(rd);
+                    if (load_w(t)) {
+                        reg = wr(rd);
+                    }
+                    (({ __auto_type strata_t1518_ = x; __auto_type strata_t1519_ = mn; __auto_type strata_t1520_ = unscaled(mn); __auto_type strata_t1521_ = reg; __auto_type strata_t1522_ = m.base; __auto_type strata_t1523_ = m.off; __auto_type strata_t1524_ = ir_size(t); ldst(strata_t1518_, strata_t1519_, strata_t1520_, strata_t1521_, strata_t1522_, strata_t1523_, strata_t1524_); }));
+                    iput(x, rd, i.dst);
+                }
+            }
+            break;
+        }
+        case OStore:
+        {
+            {
+                if (ir_is_float(t)) {
+                    int64_t rb = fsrc(x, t, i.b, 16);
+                    MemRef m = arch_arm64__mem_at(x, i.a, i.imm);
+                    str_f(x, t, rb, m.base, m.off);
+                } else {
+                    const char* reg = "";
+                    int64_t sz = ir_size(t);
+                    if ((((int64_t*)(x->lazy).data)[i.b] == 1) && (((int64_t*)(x->lval).data)[i.b] == 0)) {
+                        if (sz == 8) {
+                            reg = "xzr";
+                        } else {
+                            reg = "wzr";
+                        }
+                    } else {
+                        int64_t rb = isrc(x, i.b, 10);
+                        if (sz == 8) {
+                            reg = xr(rb);
+                        } else {
+                            reg = wr(rb);
+                        }
+                    }
+                    MemRef m = arch_arm64__mem_at(x, i.a, i.imm);
+                    const char* mn = "str";
+                    if (sz == 1) {
+                        mn = "strb";
+                    } else 
+                    if (sz == 2) {
+                        mn = "strh";
+                    }
+                    (({ __auto_type strata_t1525_ = x; __auto_type strata_t1526_ = mn; __auto_type strata_t1527_ = str_concat("stu", str_sub(mn, 2, (str_len(mn) - 2))); ldst(strata_t1525_, strata_t1526_, strata_t1527_, reg, m.base, m.off, sz); }));
+                }
+            }
+            break;
+        }
+        case OSlotAddr:
+        {
+            {
+                int64_t rd = idst(x, i.dst, 9);
+                add_off(x, rd, 31, ((int64_t*)(x->slot_off).data)[i.imm]);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case OSymAddr:
+        {
+            {
+                int64_t rd = idst(x, i.dst, 9);
+                arch_arm64__sym_addr(x, rd, i.sym);
+                iput(x, rd, i.dst);
+            }
+            break;
+        }
+        case OCopyMem:
+        {
+            iget(x, i.a, 9);
+            iget(x, i.b, 10);
+            arch_arm64__copy_bytes(x, i.imm, false);
+            break;
+        }
+        case OZeroMem:
+        {
+            iget(x, i.a, 9);
+            arch_arm64__copy_bytes(x, i.imm, true);
+            break;
+        }
+        case OParam:
+        {
+            arch_arm64__emit_param(x, f, i);
+            break;
+        }
+        case OCall:
+        {
+            arch_arm64__emit_call(x, f, i);
+            break;
+        }
+        case ORet:
+        {
+            if ((i.a >= 0) && (f->ret_spec != 0)) {
+                load_spec(x, f->ret_spec, i.a);
+            } else 
+            if (i.a >= 0) {
+                int64_t rt = f->ret_ty;
+                if (ir_is_float(rt)) {
+                    arch_arm64__fget(x, rt, i.a, 0);
+                } else {
+                    iget(x, i.a, 0);
+                }
+            }
+            if ((k + 1) < f->code.len) {
+                ins(x, str_concat("b ", epilogue));
+            }
+            break;
+        }
+        case OLabel:
+        {
+            (({ __auto_type strata_t1528_ = x; __auto_type strata_t1529_ = arch_arm64__lbl(x, i.imm); arch_arm64__label(strata_t1528_, strata_t1529_); }));
+            break;
+        }
+        case OJmp:
+        {
+            if (i.imm != next) {
+                (({ __auto_type strata_t1530_ = x; __auto_type strata_t1531_ = str_concat("b ", arch_arm64__lbl(x, i.imm)); ins(strata_t1530_, strata_t1531_); }));
+            }
+            break;
+        }
+        case OBr:
+        {
+            if (((int64_t*)(x->lazy).data)[i.a] == 1) {
+                if (((int64_t*)(x->lval).data)[i.a] != 0) {
+                    (({ __auto_type strata_t1532_ = x; __auto_type strata_t1533_ = str_concat("b ", arch_arm64__lbl(x, i.imm)); ins(strata_t1532_, strata_t1533_); }));
+                } else {
+                    (({ __auto_type strata_t1534_ = x; __auto_type strata_t1535_ = str_concat("b ", arch_arm64__lbl(x, i.imm2)); ins(strata_t1534_, strata_t1535_); }));
+                }
+            } else {
+                int64_t ra = isrc(x, i.a, 9);
+                (({ __auto_type strata_t1536_ = x; __auto_type strata_t1537_ = str_concat(str_concat("cmp ", xr(ra)), ", #0"); ins(strata_t1536_, strata_t1537_); }));
+                arch_arm64__branch_cc(x, "ne", "eq", i.imm, i.imm2, next);
+            }
+            break;
+        }
+        case ONop:
+        {
+            {
+            }
+            break;
+        }
+    }
+}
+
+void arch_arm64__float_op(A64* x, Ins i, const char* fop) {
+    int64_t t = i.ty;
+    int64_t ra = fsrc(x, t, i.a, 16);
+    int64_t rb = fsrc(x, t, i.b, 17);
+    int64_t rd = fdst(x, i.dst, 16);
+    (({ __auto_type strata_t1538_ = x; __auto_type strata_t1539_ = (({ __auto_type strata_t1544_ = str_concat((({ __auto_type strata_t1542_ = str_concat((({ __auto_type strata_t1540_ = str_concat(fop, " "); __auto_type strata_t1541_ = fr(t, rd); str_concat(strata_t1540_, strata_t1541_); })), ", "); __auto_type strata_t1543_ = fr(t, ra); str_concat(strata_t1542_, strata_t1543_); })), ", "); __auto_type strata_t1545_ = fr(t, rb); str_concat(strata_t1544_, strata_t1545_); })); ins(strata_t1538_, strata_t1539_); }));
+    arch_arm64__fput(x, t, rd, i.dst);
+}
+
+void arch_arm64__emit_conv(A64* x, Ins i) {
+    int64_t to = i.ty;
+    int64_t from = i.ty2;
+    if (ir_is_float(from) && ir_is_float(to)) {
+        int64_t ra = fsrc(x, from, i.a, 16);
+        int64_t rd = fdst(x, i.dst, 17);
+        if (from == to) {
+            if (ra != rd) {
+                (({ __auto_type strata_t1546_ = x; __auto_type strata_t1547_ = (({ __auto_type strata_t1548_ = str_concat(str_concat("fmov ", fr(to, rd)), ", "); __auto_type strata_t1549_ = fr(from, ra); str_concat(strata_t1548_, strata_t1549_); })); ins(strata_t1546_, strata_t1547_); }));
+            }
+        } else {
+            (({ __auto_type strata_t1550_ = x; __auto_type strata_t1551_ = (({ __auto_type strata_t1552_ = str_concat(str_concat("fcvt ", fr(to, rd)), ", "); __auto_type strata_t1553_ = fr(from, ra); str_concat(strata_t1552_, strata_t1553_); })); ins(strata_t1550_, strata_t1551_); }));
+        }
+        arch_arm64__fput(x, to, rd, i.dst);
+    } else 
+    if (ir_is_float(to)) {
+        int64_t ra = isrc(x, i.a, 9);
+        int64_t rd = fdst(x, i.dst, 16);
+        const char* op = "scvtf";
+        if (from == KU64) {
+            op = "ucvtf";
+        }
+        (({ __auto_type strata_t1554_ = x; __auto_type strata_t1555_ = (({ __auto_type strata_t1558_ = str_concat((({ __auto_type strata_t1556_ = str_concat(op, " "); __auto_type strata_t1557_ = fr(to, rd); str_concat(strata_t1556_, strata_t1557_); })), ", "); __auto_type strata_t1559_ = xr(ra); str_concat(strata_t1558_, strata_t1559_); })); ins(strata_t1554_, strata_t1555_); }));
+        arch_arm64__fput(x, to, rd, i.dst);
+    } else 
+    if (ir_is_float(from)) {
+        int64_t ra = fsrc(x, from, i.a, 16);
+        int64_t rd = idst(x, i.dst, 9);
+        const char* op = "fcvtzs";
+        if (to == KU64) {
+            op = "fcvtzu";
+        }
+        (({ __auto_type strata_t1560_ = x; __auto_type strata_t1561_ = (({ __auto_type strata_t1564_ = str_concat((({ __auto_type strata_t1562_ = str_concat(op, " "); __auto_type strata_t1563_ = xr(rd); str_concat(strata_t1562_, strata_t1563_); })), ", "); __auto_type strata_t1565_ = fr(from, ra); str_concat(strata_t1564_, strata_t1565_); })); ins(strata_t1560_, strata_t1561_); }));
+        arch_arm64__norm(x, to, rd);
+        iput(x, rd, i.dst);
+    } else {
+        int64_t rd = idst(x, i.dst, 9);
+        iget(x, i.a, rd);
+        arch_arm64__norm(x, to, rd);
+        iput(x, rd, i.dst);
+    }
+}
+
+int64_t hfa_mark(void) {
+    return 100000;
+}
+
+APlace place_args(Array types, Array bytes) {
+    Array kd = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array at = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    int64_t ni = 0;
+    int64_t ns = 0;
+    int64_t st = 0;
+    for (int64_t k = 0; k < types.len; k++) {
+        int64_t b = 0;
+        if (k < bytes.len) {
+            b = ((int64_t*)(bytes).data)[k];
+        }
+        int64_t t = ((int64_t*)(types).data)[k];
+        if (b == (0 - 1)) {
+            ({ int64_t _e = 5; arr_push(&(kd), &_e); });
+            ({ int64_t _e = 0; arr_push(&(at), &_e); });
+        } else 
+        if (b == (0 - 2)) {
+            ({ int64_t _e = 4; arr_push(&(kd), &_e); });
+            ({ int64_t _e = 8; arr_push(&(at), &_e); });
+        } else 
+        if (b > 0) {
+            int64_t size = b;
+            if (({ __auto_type strata_t1566_ = b; __auto_type strata_t1567_ = hfa_mark(); (strata_t1566_ >= strata_t1567_); })) {
+                size = (({ __auto_type strata_t1568_ = b; __auto_type strata_t1569_ = hfa_mark(); (strata_t1568_ - strata_t1569_); }));
+                ns = 8;
+            } else {
+                ni = 8;
+            }
+            st = arch_arm64__align_to(st, 8);
+            ({ int64_t _e = 3; arr_push(&(kd), &_e); });
+            ({ int64_t _e = st; arr_push(&(at), &_e); });
+            st += arch_arm64__align_to(size, 8);
+        } else 
+        if (ir_is_float(t) && (ns < 8)) {
+            ({ int64_t _e = 1; arr_push(&(kd), &_e); });
+            ({ int64_t _e = ns; arr_push(&(at), &_e); });
+            ns += 1;
+        } else 
+        if ((!ir_is_float(t)) && (ni < 8)) {
+            ({ int64_t _e = 0; arr_push(&(kd), &_e); });
+            ({ int64_t _e = ni; arr_push(&(at), &_e); });
+            ni += 1;
+        } else {
+            int64_t size = ir_size(t);
+            if (size < 1) {
+                size = 8;
+            }
+            st = arch_arm64__align_to(st, size);
+            ({ int64_t _e = 2; arr_push(&(kd), &_e); });
+            ({ int64_t _e = st; arr_push(&(at), &_e); });
+            st += size;
+        }
+    }
+    return (({ __auto_type strata_t1570_ = kd; __auto_type strata_t1571_ = at; __auto_type strata_t1572_ = arch_arm64__align_to(st, 16); (APlace){strata_t1570_, strata_t1571_, strata_t1572_}; }));
+}
+
+APlace param_places(IrFunc* f) {
+    return place_args(f->param_types, f->param_bytes);
+}
+
+APlace call_places(IrFunc* f, Ins i) {
+    Array types = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < i.args.len; k++) {
+        ({ int64_t _e = ((int64_t*)(f->vtypes).data)[((int64_t*)(i.args).data)[k]]; arr_push(&(types), &_e); });
+    }
+    return place_args(types, i.arg_bytes);
+}
+
+void arch_arm64__emit_param(A64* x, IrFunc* f, Ins i) {
+    int64_t t = i.ty;
+    APlace p = param_places(f);
+    int64_t kd = ((int64_t*)(p.kind).data)[i.imm];
+    int64_t at = ((int64_t*)(p.at).data)[i.imm];
+    if ((kd == 0) || (kd == 4)) {
+        arch_arm64__norm(x, t, at);
+        iput(x, at, i.dst);
+    } else 
+    if (kd == 1) {
+        arch_arm64__fput(x, t, at, i.dst);
+    } else 
+    if (kd == 3) {
+        add_off(x, 9, 29, (16 + at));
+        iput(x, 9, i.dst);
+    } else 
+    if (ir_is_float(t)) {
+        ldr_f(x, t, 16, 29, (16 + at));
+        arch_arm64__fput(x, t, 16, i.dst);
+    } else {
+        const char* mn = load_mn(t);
+        const char* reg = "x9";
+        if (load_w(t)) {
+            reg = "w9";
+        }
+        (({ __auto_type strata_t1573_ = x; __auto_type strata_t1574_ = mn; __auto_type strata_t1575_ = unscaled(mn); __auto_type strata_t1576_ = reg; __auto_type strata_t1577_ = (16 + at); __auto_type strata_t1578_ = ir_size(t); ldst(strata_t1573_, strata_t1574_, strata_t1575_, strata_t1576_, 29, strata_t1577_, strata_t1578_); }));
+        iput(x, 9, i.dst);
+    }
+}
+
+void load_spec(A64* x, int64_t spec, int64_t buf) {
+    iget(x, buf, 16);
+    if ((spec & 64) != 0) {
+        int64_t ty = KF32;
+        if ((spec & 8) != 0) {
+            ty = KF64;
+        }
+        for (int64_t h = 0; h < (spec & 7); h++) {
+            (({ __auto_type strata_t1579_ = x; __auto_type strata_t1580_ = ty; __auto_type strata_t1581_ = h; __auto_type strata_t1582_ = (ir_size(ty) * h); ldr_f(strata_t1579_, strata_t1580_, strata_t1581_, 16, strata_t1582_); }));
+        }
+    } else {
+        for (int64_t h = 0; h < (spec & 3); h++) {
+            ldr_x(x, h, 16, (8 * h));
+        }
+    }
+}
+
+void store_spec(A64* x, int64_t spec, int64_t buf) {
+    iget(x, buf, 16);
+    if ((spec & 64) != 0) {
+        int64_t ty = KF32;
+        if ((spec & 8) != 0) {
+            ty = KF64;
+        }
+        for (int64_t h = 0; h < (spec & 7); h++) {
+            (({ __auto_type strata_t1583_ = x; __auto_type strata_t1584_ = ty; __auto_type strata_t1585_ = h; __auto_type strata_t1586_ = (ir_size(ty) * h); str_f(strata_t1583_, strata_t1584_, strata_t1585_, 16, strata_t1586_); }));
+        }
+    } else {
+        for (int64_t h = 0; h < (spec & 3); h++) {
+            str_x(x, h, 16, (8 * h));
+        }
+    }
+}
+
+void arch_arm64__emit_call(A64* x, IrFunc* f, Ins i) {
+    APlace p = call_places(f, i);
+    int64_t n = i.args.len;
+    int64_t buf = (0 - 1);
+    for (int64_t k = 0; k < n; k++) {
+        int64_t a = ((int64_t*)(i.args).data)[k];
+        int64_t at = ((int64_t*)(f->vtypes).data)[a];
+        int64_t kd = ((int64_t*)(p.kind).data)[k];
+        if (kd == 5) {
+            buf = a;
+        } else 
+        if (kd == 3) {
+            int64_t size = ((int64_t*)(i.arg_bytes).data)[k];
+            if (({ __auto_type strata_t1587_ = size; __auto_type strata_t1588_ = hfa_mark(); (strata_t1587_ >= strata_t1588_); })) {
+                size = (({ __auto_type strata_t1589_ = size; __auto_type strata_t1590_ = hfa_mark(); (strata_t1589_ - strata_t1590_); }));
+            }
+            iget(x, a, 10);
+            add_off(x, 9, 31, ((int64_t*)(p.at).data)[k]);
+            arch_arm64__copy_bytes(x, size, false);
+        } else 
+        if (kd == 2) {
+            if (ir_is_float(at)) {
+                int64_t r = fsrc(x, at, a, 16);
+                str_f(x, at, r, 31, ((int64_t*)(p.at).data)[k]);
+            } else {
+                int64_t sz = ir_size(at);
+                int64_t r = isrc(x, a, 9);
+                const char* reg = xr(r);
+                const char* mn = "str";
+                if (sz < 8) {
+                    reg = wr(r);
+                }
+                if (sz == 1) {
+                    mn = "strb";
+                } else 
+                if (sz == 2) {
+                    mn = "strh";
+                }
+                (({ __auto_type strata_t1591_ = x; __auto_type strata_t1592_ = mn; __auto_type strata_t1593_ = str_concat("stu", str_sub(mn, 2, (str_len(mn) - 2))); ldst(strata_t1591_, strata_t1592_, strata_t1593_, reg, 31, ((int64_t*)(p.at).data)[k], sz); }));
+            }
+        }
+    }
+    for (int64_t k = 0; k < n; k++) {
+        int64_t a = ((int64_t*)(i.args).data)[k];
+        int64_t at = ((int64_t*)(f->vtypes).data)[a];
+        int64_t kd = ((int64_t*)(p.kind).data)[k];
+        if ((kd == 0) || (kd == 4)) {
+            iget(x, a, ((int64_t*)(p.at).data)[k]);
+        } else 
+        if (kd == 1) {
+            arch_arm64__fget(x, at, a, ((int64_t*)(p.at).data)[k]);
+        }
+    }
+    if (i.a >= 0) {
+        iget(x, i.a, 16);
+        ins(x, "blr x16");
+    } else {
+        ins(x, str_concat("bl ", i.sym));
+    }
+    if (buf >= 0) {
+        store_spec(x, i.imm, buf);
+    }
+    if (i.dst >= 0) {
+        if (ir_is_float(i.ty)) {
+            arch_arm64__fput(x, i.ty, 0, i.dst);
+        } else {
+            arch_arm64__norm(x, i.ty, 0);
+            iput(x, 0, i.dst);
+        }
+    }
+}
+
+void arch_arm64__find_lazy(A64* x, IrFunc* f) {
+    int64_t nv = f->vtypes.len;
+    Array ndef = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array nuse = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lz = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array ls = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t v = 0; v < nv; v++) {
+        ({ int64_t _e = 0; arr_push(&(ndef), &_e); });
+        ({ int64_t _e = 0; arr_push(&(nuse), &_e); });
+        ({ int64_t _e = 0; arr_push(&(lz), &_e); });
+        ({ int64_t _e = 0; arr_push(&(lv), &_e); });
+        ({ const char* _e = ""; arr_push(&(ls), &_e); });
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if (i.op != ONop) {
+            if (i.dst >= 0) {
+                ((int64_t*)(ndef).data)[i.dst] = (((int64_t*)(ndef).data)[i.dst] + 1);
+            }
+            if (i.a >= 0) {
+                ((int64_t*)(nuse).data)[i.a] = (((int64_t*)(nuse).data)[i.a] + 1);
+            }
+            if (i.b >= 0) {
+                ((int64_t*)(nuse).data)[i.b] = (((int64_t*)(nuse).data)[i.b] + 1);
+            }
+            for (int64_t j = 0; j < i.args.len; j++) {
+                ((int64_t*)(nuse).data)[((int64_t*)(i.args).data)[j]] = (((int64_t*)(nuse).data)[((int64_t*)(i.args).data)[j]] + 1);
+            }
+        }
+    }
+    for (int64_t k = 0; k < f->code.len; k++) {
+        Ins i = ((Ins*)(f->code).data)[k];
+        if ((i.dst >= 0) && (((int64_t*)(ndef).data)[i.dst] == 1)) {
+            if ((i.op == OConst) && (imm_moves(ir_norm_imm(i.ty, i.imm)) == 1)) {
+                ((int64_t*)(lz).data)[i.dst] = 1;
+                ((int64_t*)(lv).data)[i.dst] = ir_norm_imm(i.ty, i.imm);
+            } else 
+            if (i.op == OSlotAddr) {
+                ((int64_t*)(lz).data)[i.dst] = 2;
+                ((int64_t*)(lv).data)[i.dst] = i.imm;
+            } else 
+            if (i.op == OSymAddr) {
+                ((int64_t*)(lz).data)[i.dst] = 3;
+                ((const char**)(ls).data)[i.dst] = i.sym;
+            }
+        }
+    }
+    x->lazy = lz;
+    x->lval = lv;
+    x->lsym = ls;
+    x->nuse = nuse;
+}
+
+Array arm64_lazy(IrFunc* f) {
+    A64 x = new_a64();
+    arch_arm64__find_lazy((&x), f);
+    Array r = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t v = 0; v < x.lazy.len; v++) {
+        if (((int64_t*)(x.lazy).data)[v] != 0) {
+            ({ int64_t _e = 1; arr_push(&(r), &_e); });
+        } else {
+            ({ int64_t _e = 0; arr_push(&(r), &_e); });
+        }
+    }
+    return r;
+}
+
+void arm64_function(A64* x, IrFunc* f, Array regs) {
+    int64_t nv = f->vtypes.len;
+    arch_arm64__find_lazy(x, f);
+    x->far = (f->code.len > 20000);
+    Array used = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < 18; k++) {
+        ({ int64_t _e = 0; arr_push(&(used), &_e); });
+    }
+    int64_t nregs = regs.len;
+    if (nregs > nv) {
+        nregs = nv;
+    }
+    for (int64_t v = 0; v < nregs; v++) {
+        if (((((int64_t*)(regs).data)[v] >= 0) && (((int64_t*)(regs).data)[v] < 18)) && (((int64_t*)(x->lazy).data)[v] == 0)) {
+            ((int64_t*)(used).data)[((int64_t*)(regs).data)[v]] = 1;
+        }
+    }
+    Array saved = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < used.len; k++) {
+        if (((int64_t*)(used).data)[k] == 1) {
+            ({ int64_t _e = k; arr_push(&(saved), &_e); });
+        }
+    }
+    x->saved = saved;
+    int64_t outgoing = 0;
+    for (int64_t k = 0; k < f->code.len; k++) {
+        if (((Ins*)(f->code).data)[k].op == OCall) {
+            APlace p = call_places(f, ((Ins*)(f->code).data)[k]);
+            if (p.stack > outgoing) {
+                outgoing = p.stack;
+            }
+        }
+    }
+    int64_t cur = outgoing;
+    Array loc = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array isreg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    bool shared = (regs.len >= (2 * nv));
+    int64_t spill_base = cur;
+    if (shared) {
+        int64_t top = (0 - 1);
+        for (int64_t v = 0; v < nv; v++) {
+            if (((int64_t*)(regs).data)[(nv + v)] > top) {
+                top = ((int64_t*)(regs).data)[(nv + v)];
+            }
+        }
+        cur += (8 * (top + 1));
+    }
+    for (int64_t v = 0; v < nv; v++) {
+        if (((int64_t*)(x->lazy).data)[v] != 0) {
+            ({ int64_t _e = 0; arr_push(&(loc), &_e); });
+            ({ int64_t _e = 0; arr_push(&(isreg), &_e); });
+        } else 
+        if ((v < nregs) && (((int64_t*)(regs).data)[v] >= 0)) {
+            ({ int64_t _e = ((int64_t*)(regs).data)[v]; arr_push(&(loc), &_e); });
+            ({ int64_t _e = 1; arr_push(&(isreg), &_e); });
+        } else 
+        if (shared && (((int64_t*)(regs).data)[(nv + v)] >= 0)) {
+            ({ int64_t _e = (spill_base + (8 * ((int64_t*)(regs).data)[(nv + v)])); arr_push(&(loc), &_e); });
+            ({ int64_t _e = 0; arr_push(&(isreg), &_e); });
+        } else 
+        if (shared) {
+            ({ int64_t _e = 0; arr_push(&(loc), &_e); });
+            ({ int64_t _e = 0; arr_push(&(isreg), &_e); });
+        } else {
+            ({ int64_t _e = cur; arr_push(&(loc), &_e); });
+            ({ int64_t _e = 0; arr_push(&(isreg), &_e); });
+            cur += 8;
+        }
+    }
+    x->loc = loc;
+    x->isreg = isreg;
+    Array so = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t s = 0; s < f->slots.len; s++) {
+        int64_t al = ((IrSlot*)(f->slots).data)[s].align;
+        if (al > 16) {
+            al = 16;
+        }
+        cur = arch_arm64__align_to(cur, al);
+        ({ int64_t _e = cur; arr_push(&(so), &_e); });
+        cur += ((IrSlot*)(f->slots).data)[s].size;
+    }
+    x->slot_off = so;
+    cur = arch_arm64__align_to(cur, 8);
+    Array sv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < saved.len; k++) {
+        ({ int64_t _e = cur; arr_push(&(sv), &_e); });
+        cur += 8;
+    }
+    x->save_off = sv;
+    int64_t frame = arch_arm64__align_to(cur, 16);
+    ({ const char* _e = ".p2align 2\n"; arr_push(&(x->out), &_e); });
+    if (f->global) {
+        ({ const char* _e = str_concat(str_concat(".globl ", f->name), "\n"); arr_push(&(x->out), &_e); });
+    }
+    arch_arm64__label(x, f->name);
+    ins(x, "stp x29, x30, [sp, #-16]!");
+    ins(x, "mov x29, sp");
+    int64_t left = frame;
+    while (left > 4096) {
+        ins(x, "sub sp, sp, #1, lsl #12");
+        ins(x, "str xzr, [sp]");
+        left = (left - 4096);
+    }
+    if (left > 0) {
+        (({ __auto_type strata_t1594_ = x; __auto_type strata_t1595_ = str_concat("sub sp, sp, ", imm_text(left)); ins(strata_t1594_, strata_t1595_); }));
+    }
+    for (int64_t k = 0; k < saved.len; k++) {
+        int64_t h = hw_of(((int64_t*)(saved).data)[k]);
+        if (is_freg(((int64_t*)(saved).data)[k])) {
+            str_f(x, KF64, h, 31, ((int64_t*)(sv).data)[k]);
+        } else {
+            str_x(x, h, 31, ((int64_t*)(sv).data)[k]);
+        }
+    }
+    const char* epilogue = str_concat(".Lret", str_from_int(x->fnum));
+    int64_t k = 0;
+    while (k < f->code.len) {
+        arch_arm64__emit_ins(x, f, k, epilogue);
+        if ((((((((Ins*)(f->code).data)[k].op == OCmp) && ((k + 1) < f->code.len)) && (((Ins*)(f->code).data)[(k + 1)].op == OBr)) && (((Ins*)(f->code).data)[(k + 1)].a == ((Ins*)(f->code).data)[k].dst)) && (((int64_t*)(x->nuse).data)[((Ins*)(f->code).data)[k].dst] == 1)) && (((int64_t*)(x->lazy).data)[((Ins*)(f->code).data)[k].dst] == 0)) {
+            k += 1;
+        }
+        k += 1;
+    }
+    arch_arm64__label(x, epilogue);
+    for (int64_t k2 = 0; k2 < saved.len; k2++) {
+        int64_t h = hw_of(((int64_t*)(saved).data)[k2]);
+        if (is_freg(((int64_t*)(saved).data)[k2])) {
+            ldr_f(x, KF64, h, 31, ((int64_t*)(sv).data)[k2]);
+        } else {
+            ldr_x(x, h, 31, ((int64_t*)(sv).data)[k2]);
+        }
+    }
+    ins(x, "mov sp, x29");
+    ins(x, "ldp x29, x30, [sp], #16");
+    ins(x, "ret");
+    x->fnum += 1;
+}
+
+void arm64_begin(A64* x) {
+    ({ const char* _e = "# Generated by stratac (arm64, Apple). Do not edit.\n"; arr_push(&(x->out), &_e); });
+    ({ const char* _e = ".text\n"; arr_push(&(x->out), &_e); });
+}
+
+void arch_arm64__dline(A64* x, const char* s) {
+    ({ const char* _e = str_concat(s, "\n"); arr_push(&(x->out), &_e); });
+}
+
+void arm64_global(A64* x, IrGlobal g) {
+    int64_t p = 0;
+    int64_t a = 1;
+    while (a < g.align) {
+        a = (a * 2);
+        p += 1;
+    }
+    (({ __auto_type strata_t1596_ = x; __auto_type strata_t1597_ = str_concat(".p2align ", str_from_int(p)); arch_arm64__dline(strata_t1596_, strata_t1597_); }));
+    if (g.global) {
+        arch_arm64__dline(x, str_concat(".globl ", g.sym));
+    }
+    arch_arm64__label(x, g.sym);
+    if (g.kind == 1) {
+        const char* d = ".quad ";
+        if (g.size == 4) {
+            d = ".long ";
+        } else 
+        if (g.size == 2) {
+            d = ".short ";
+        } else 
+        if (g.size == 1) {
+            d = ".byte ";
+        }
+        (({ __auto_type strata_t1598_ = x; __auto_type strata_t1599_ = (({ __auto_type strata_t1600_ = d; __auto_type strata_t1601_ = str_from_int(g.ival); str_concat(strata_t1600_, strata_t1601_); })); arch_arm64__dline(strata_t1598_, strata_t1599_); }));
+    } else 
+    if (g.kind == 2) {
+        if (g.ty == KF64) {
+            arch_arm64__dline(x, str_concat(".double ", g.text));
+        } else {
+            arch_arm64__dline(x, str_concat(".float ", g.text));
+        }
+    } else 
+    if (g.kind == 3) {
+        arch_arm64__dline(x, str_concat(".quad ", g.text));
+    } else 
+    if (g.kind == 4) {
+        arch_arm64__dline(x, ".zero 24");
+        (({ __auto_type strata_t1602_ = x; __auto_type strata_t1603_ = str_concat(".quad ", str_from_int(g.ival)); arch_arm64__dline(strata_t1602_, strata_t1603_); }));
+    } else {
+        (({ __auto_type strata_t1604_ = x; __auto_type strata_t1605_ = str_concat(".zero ", str_from_int(g.size)); arch_arm64__dline(strata_t1604_, strata_t1605_); }));
+    }
+}
+
+const char* arm64_finish(A64* x, IrProgram* prog) {
+    if (prog->globals.len > 0) {
+        arch_arm64__dline(x, ".data");
+        for (int64_t k = 0; k < prog->globals.len; k++) {
+            arm64_global(x, ((IrGlobal*)(prog->globals).data)[k]);
+        }
+    }
+    if ((prog->strings.len > 0) || (x->data.len > 0)) {
+        arch_arm64__dline(x, ".section .rdata,\"dr\"");
+        for (int64_t k = 0; k < prog->strings.len; k++) {
+            arch_arm64__label(x, ((IrData*)(prog->strings).data)[k].sym);
+            (({ __auto_type strata_t1606_ = x; __auto_type strata_t1607_ = str_concat(str_concat(".asciz \"", arch_arm64__as_text(((IrData*)(prog->strings).data)[k].text)), "\""); arch_arm64__dline(strata_t1606_, strata_t1607_); }));
+        }
+        for (int64_t k = 0; k < x->data.len; k++) {
+            arch_arm64__dline(x, ((const char**)(x->data).data)[k]);
+        }
+    }
+    return strata_join((&x->out));
+}
+
+AOp no_op(void) {
+    return (AOp){0, 0, 0, false, false, 0, false, ""};
+}
+
+const char* a_trim(const char* s) {
+    int64_t i = 0;
+    int64_t j = str_len(s);
+    while ((i < j) && ((s[i] == ' ') || (s[i] == '\t'))) {
+        i += 1;
+    }
+    while ((j > i) && ((s[(j - 1)] == ' ') || (s[(j - 1)] == '\t'))) {
+        j -= 1;
+    }
+    return str_sub(s, i, (j - i));
+}
+
+bool all_digits(const char* s, int64_t from) {
+    if (from >= str_len(s)) {
+        return false;
+    }
+    for (int64_t i = from; i < str_len(s); i++) {
+        if (!asm_digit(s[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int64_t digits_of(const char* s, int64_t from) {
+    int64_t v = 0;
+    for (int64_t i = from; i < str_len(s); i++) {
+        v = ((v * 10) + (((int64_t)(s[i])) - ((int64_t)('0'))));
+    }
+    return v;
+}
+
+bool parse_areg(const char* s, AOp* o) {
+    o->kind = 1;
+    o->fp = false;
+    o->sp = false;
+    if (str_eq(s, "sp")) {
+        o->reg = 31;
+        o->size = 8;
+        o->sp = true;
+        return true;
+    }
+    if (str_eq(s, "wsp")) {
+        o->reg = 31;
+        o->size = 4;
+        o->sp = true;
+        return true;
+    }
+    if (str_eq(s, "xzr")) {
+        o->reg = 31;
+        o->size = 8;
+        return true;
+    }
+    if (str_eq(s, "wzr")) {
+        o->reg = 31;
+        o->size = 4;
+        return true;
+    }
+    if (str_eq(s, "fp")) {
+        o->reg = 29;
+        o->size = 8;
+        return true;
+    }
+    if (str_eq(s, "lr")) {
+        o->reg = 30;
+        o->size = 8;
+        return true;
+    }
+    if ((str_len(s) >= 2) && all_digits(s, 1)) {
+        int64_t n = digits_of(s, 1);
+        char c = s[0];
+        if ((c == 'x') && (n <= 30)) {
+            o->reg = n;
+            o->size = 8;
+            return true;
+        }
+        if ((c == 'w') && (n <= 30)) {
+            o->reg = n;
+            o->size = 4;
+            return true;
+        }
+        if ((c == 'd') && (n <= 31)) {
+            o->reg = n;
+            o->size = 8;
+            o->fp = true;
+            return true;
+        }
+        if ((c == 's') && (n <= 31)) {
+            o->reg = n;
+            o->size = 4;
+            o->fp = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+int64_t a_imm(Asm* a, const char* s) {
+    if ((str_len(s) > 0) && (s[0] == '#')) {
+        return (({ __auto_type strata_t1608_ = a; __auto_type strata_t1609_ = str_sub(s, 1, (str_len(s) - 1)); asm_num(strata_t1608_, strata_t1609_); }));
+    }
+    return asm_num(a, s);
+}
+
+int64_t cond_code(const char* c) {
+    if (str_eq(c, "eq")) {
+        return 0;
+    }
+    if (str_eq(c, "ne")) {
+        return 1;
+    }
+    if (str_eq(c, "hs") || str_eq(c, "cs")) {
+        return 2;
+    }
+    if (str_eq(c, "lo") || str_eq(c, "cc")) {
+        return 3;
+    }
+    if (str_eq(c, "mi")) {
+        return 4;
+    }
+    if (str_eq(c, "pl")) {
+        return 5;
+    }
+    if (str_eq(c, "vs")) {
+        return 6;
+    }
+    if (str_eq(c, "vc")) {
+        return 7;
+    }
+    if (str_eq(c, "hi")) {
+        return 8;
+    }
+    if (str_eq(c, "ls")) {
+        return 9;
+    }
+    if (str_eq(c, "ge")) {
+        return 10;
+    }
+    if (str_eq(c, "lt")) {
+        return 11;
+    }
+    if (str_eq(c, "gt")) {
+        return 12;
+    }
+    if (str_eq(c, "le")) {
+        return 13;
+    }
+    if (str_eq(c, "al")) {
+        return 14;
+    }
+    return (0 - 1);
+}
+
+bool arch_arm64__ends_with(const char* s, const char* t) {
+    return ((str_len(s) >= str_len(t)) && str_eq(str_sub(s, (str_len(s) - str_len(t)), str_len(t)), t));
+}
+
+AOp parse_aop(Asm* a, const char* s) {
+    AOp o = no_op();
+    if (str_len(s) == 0) {
+        asm_fail(a, "missing operand");
+        return o;
+    }
+    if (s[0] == '#') {
+        o.kind = 2;
+        o.imm = a_imm(a, s);
+        return o;
+    }
+    if (s[0] == '[') {
+        const char* body = s;
+        if (arch_arm64__ends_with(body, "!")) {
+            o.pre = true;
+            body = str_sub(body, 0, (str_len(body) - 1));
+        }
+        if (!arch_arm64__ends_with(body, "]")) {
+            asm_fail(a, str_concat("bad memory operand ", s));
+            return o;
+        }
+        body = str_sub(body, 1, (str_len(body) - 2));
+        int64_t comma = (0 - 1);
+        for (int64_t i = 0; i < str_len(body); i++) {
+            if ((comma < 0) && (body[i] == ',')) {
+                comma = i;
+            }
+        }
+        const char* base = body;
+        const char* off = "";
+        if (comma >= 0) {
+            base = a_trim(str_sub(body, 0, comma));
+            off = a_trim(str_sub(body, (comma + 1), ((str_len(body) - comma) - 1)));
+        }
+        AOp r = no_op();
+        if (((!parse_areg(a_trim(base), (&r))) || r.fp) || (r.size != 8)) {
+            asm_fail(a, str_concat("bad base register in ", s));
+            return o;
+        }
+        o.kind = 3;
+        o.reg = r.reg;
+        o.sp = r.sp;
+        if (!str_eq(off, "")) {
+            if (arch_arm64__ends_with(off, "@PAGEOFF")) {
+                o.sym = str_sub(off, 0, (str_len(off) - 8));
+            } else {
+                o.imm = a_imm(a, off);
+            }
+        }
+        return o;
+    }
+    if ((str_len(s) > 4) && str_eq(str_sub(s, 0, 4), "lsl ")) {
+        o.kind = 7;
+        o.imm = (({ __auto_type strata_t1610_ = a; __auto_type strata_t1611_ = a_trim(str_sub(s, 4, (str_len(s) - 4))); a_imm(strata_t1610_, strata_t1611_); }));
+        return o;
+    }
+    if (parse_areg(s, (&o))) {
+        return o;
+    }
+    o = no_op();
+    if (arch_arm64__ends_with(s, "@PAGEOFF")) {
+        o.kind = 6;
+        o.sym = str_sub(s, 0, (str_len(s) - 8));
+        return o;
+    }
+    if (arch_arm64__ends_with(s, "@PAGE")) {
+        o.kind = 5;
+        o.sym = str_sub(s, 0, (str_len(s) - 5));
+        return o;
+    }
+    if (cond_code(s) >= 0) {
+        o.kind = 8;
+        o.sym = s;
+        return o;
+    }
+    o.kind = 4;
+    o.sym = s;
+    return o;
+}
+
+void arm64_instruction(Asm* a, const char* mn, Array ops) {
+    Array o = ({ Array _a = arr_make(sizeof(AOp)); _a; });
+    bool target_last = ((((str_eq(mn, "b") || str_eq(mn, "bl")) || str_eq(mn, "cbz")) || str_eq(mn, "cbnz")) || ((str_len(mn) > 2) && str_eq(str_sub(mn, 0, 2), "b.")));
+    for (int64_t i = 0; i < ops.len; i++) {
+        if (target_last && (i == (ops.len - 1))) {
+            AOp t = no_op();
+            t.kind = 4;
+            t.sym = ((const char**)(ops).data)[i];
+            ({ AOp _e = t; arr_push(&(o), &_e); });
+        } else {
+            ({ AOp _e = parse_aop(a, ((const char**)(ops).data)[i]); arr_push(&(o), &_e); });
+        }
+    }
+    if (a->o.ok) {
+        arm64_encode(a, mn, o);
+    }
+}
+
+void word(Asm* a, int64_t w) {
+    asm_bytes(a, w, 4);
+}
+
+bool isreg(AOp o) {
+    return ((o.kind == 1) && (!o.fp));
+}
+
+bool isfreg(AOp o) {
+    return ((o.kind == 1) && o.fp);
+}
+
+int64_t sf(AOp o) {
+    if (o.size == 8) {
+        return 1;
+    }
+    return 0;
+}
+
+void need_n(Asm* a, int64_t have, int64_t n) {
+    if (have != n) {
+        (({ __auto_type strata_t1612_ = a; __auto_type strata_t1613_ = str_concat(str_concat("expected ", str_from_int(n)), " operands"); asm_fail(strata_t1612_, strata_t1613_); }));
+    }
+}
+
+int64_t ldst_bits(const char* base, AOp rt, int64_t* opc, int64_t* v) {
+    v[0] = 0;
+    bool load = (base[0] == 'l');
+    if (load) {
+        opc[0] = 1;
+    } else {
+        opc[0] = 0;
+    }
+    const char* rest = str_sub(base, 3, (str_len(base) - 3));
+    if (rt.fp) {
+        v[0] = 1;
+        if (!str_eq(rest, "")) {
+            return (0 - 1);
+        }
+        if (rt.size == 8) {
+            return 3;
+        }
+        return 2;
+    }
+    if (str_eq(rest, "")) {
+        if (rt.size == 8) {
+            return 3;
+        }
+        return 2;
+    }
+    if (str_eq(rest, "b")) {
+        return 0;
+    }
+    if (str_eq(rest, "h")) {
+        return 1;
+    }
+    if (load && ((str_eq(rest, "sb") || str_eq(rest, "sh")) || str_eq(rest, "sw"))) {
+        if (rt.size == 8) {
+            opc[0] = 2;
+        } else {
+            opc[0] = 3;
+        }
+        if (str_eq(rest, "sb")) {
+            return 0;
+        }
+        if (str_eq(rest, "sh")) {
+            return 1;
+        }
+        if (rt.size != 8) {
+            return (0 - 1);
+        }
+        return 2;
+    }
+    return (0 - 1);
+}
+
+void enc_ldst(Asm* a, const char* mn, Array o) {
+    bool force_unscaled = ((str_len(mn) >= 4) && (str_eq(str_sub(mn, 0, 4), "ldur") || str_eq(str_sub(mn, 0, 4), "stur")));
+    const char* base = mn;
+    if (force_unscaled) {
+        base = (({ __auto_type strata_t1614_ = str_concat(str_sub(mn, 0, 2), "r"); __auto_type strata_t1615_ = str_sub(mn, 4, (str_len(mn) - 4)); str_concat(strata_t1614_, strata_t1615_); }));
+    }
+    if ((o.len < 2) || (((AOp*)(o).data)[1].kind != 3)) {
+        asm_fail(a, "expected a memory operand");
+        return;
+    }
+    AOp rt = ((AOp*)(o).data)[0];
+    if (rt.kind != 1) {
+        asm_fail(a, "expected a register");
+        return;
+    }
+    int64_t opc = 0;
+    int64_t v = 0;
+    int64_t size = ldst_bits(base, rt, (&opc), (&v));
+    if (size < 0) {
+        asm_fail(a, str_concat("bad register for ", mn));
+        return;
+    }
+    AOp m = ((AOp*)(o).data)[1];
+    int64_t fixed = (((((size << 30) | (v << 26)) | (opc << 22)) | (m.reg << 5)) | rt.reg);
+    if (o.len == 3) {
+        if (((AOp*)(o).data)[2].kind != 2) {
+            asm_fail(a, "expected an immediate");
+            return;
+        }
+        word(a, (((939524096 | fixed) | ((((AOp*)(o).data)[2].imm & 511) << 12)) | 1024));
+        return;
+    }
+    if (m.pre) {
+        word(a, (((939524096 | fixed) | ((m.imm & 511) << 12)) | 3072));
+        return;
+    }
+    if (!str_eq(m.sym, "")) {
+        if (force_unscaled) {
+            asm_fail(a, "@PAGEOFF needs the scaled form");
+            return;
+        }
+        asm_fix(a, m.sym, 0, (5 + size));
+        word(a, (956301312 | fixed));
+        return;
+    }
+    int64_t scale = ((int64_t)1 << size);
+    if ((((!force_unscaled) && (m.imm >= 0)) && ((m.imm % scale) == 0)) && ((m.imm / scale) < 4096)) {
+        word(a, ((956301312 | fixed) | ((m.imm / scale) << 10)));
+    } else 
+    if ((m.imm >= (0 - 256)) && (m.imm < 256)) {
+        word(a, ((939524096 | fixed) | ((m.imm & 511) << 12)));
+    } else {
+        asm_fail(a, "offset out of range");
+    }
+}
+
+void enc_pair(Asm* a, const char* mn, Array o) {
+    if ((((o.len < 3) || (((AOp*)(o).data)[0].kind != 1)) || (((AOp*)(o).data)[1].kind != 1)) || (((AOp*)(o).data)[2].kind != 3)) {
+        asm_fail(a, str_concat("bad ", mn));
+        return;
+    }
+    bool load = str_eq(mn, "ldp");
+    int64_t base = 0;
+    int64_t scale = 8;
+    if (((AOp*)(o).data)[0].fp) {
+        if (((AOp*)(o).data)[0].size != 8) {
+            asm_fail(a, "ldp / stp: d registers only");
+            return;
+        }
+        base = 1811939328;
+    } else {
+        if (((AOp*)(o).data)[0].size != 8) {
+            asm_fail(a, "ldp / stp: x registers only");
+            return;
+        }
+        base = (0 - 1476395008);
+    }
+    int64_t mode = ((int64_t)2 << 23);
+    int64_t off = ((AOp*)(o).data)[2].imm;
+    if (o.len == 4) {
+        mode = ((int64_t)1 << 23);
+        off = ((AOp*)(o).data)[3].imm;
+    } else 
+    if (((AOp*)(o).data)[2].pre) {
+        mode = ((int64_t)3 << 23);
+    }
+    int64_t l = 0;
+    if (load) {
+        l = ((int64_t)1 << 22);
+    }
+    word(a, ((((((base | mode) | l) | (((off / scale) & 127) << 15)) | (((AOp*)(o).data)[1].reg << 10)) | (((AOp*)(o).data)[2].reg << 5)) | ((AOp*)(o).data)[0].reg));
+}
+
+void enc_addsub(Asm* a, int64_t op, int64_t s, AOp rd, AOp rn, Array o, int64_t third) {
+    int64_t top = (((sf(rd) << 31) | (op << 30)) | (s << 29));
+    AOp m = ((AOp*)(o).data)[third];
+    if ((m.kind == 2) || (m.kind == 6)) {
+        int64_t sh = 0;
+        if (o.len > (third + 1)) {
+            if ((((AOp*)(o).data)[(third + 1)].kind != 7) || ((((AOp*)(o).data)[(third + 1)].imm != 0) && (((AOp*)(o).data)[(third + 1)].imm != 12))) {
+                asm_fail(a, "bad shift");
+                return;
+            }
+            if (((AOp*)(o).data)[(third + 1)].imm == 12) {
+                sh = 1;
+            }
+        }
+        int64_t imm = m.imm;
+        if (m.kind == 6) {
+            asm_fix(a, m.sym, 0, 4);
+            imm = 0;
+        }
+        if ((imm < 0) || (imm > 4095)) {
+            asm_fail(a, "immediate out of range");
+            return;
+        }
+        word(a, (((((top | 285212672) | (sh << 22)) | (imm << 10)) | (rn.reg << 5)) | rd.reg));
+    } else 
+    if (isreg(m)) {
+        if ((rd.sp && (s == 0)) || rn.sp) {
+            int64_t option = 3;
+            if (rd.size == 4) {
+                option = 2;
+            }
+            word(a, (((((top | 186646528) | (m.reg << 16)) | (option << 13)) | (rn.reg << 5)) | rd.reg));
+        } else {
+            word(a, ((((top | 184549376) | (m.reg << 16)) | (rn.reg << 5)) | rd.reg));
+        }
+    } else {
+        asm_fail(a, "bad operand");
+    }
+}
+
+void enc_logic(Asm* a, int64_t opc, int64_t n, AOp rd, AOp rn, AOp rm) {
+    if (!isreg(rm)) {
+        asm_fail(a, "expected a register (no bitmask immediates)");
+        return;
+    }
+    (({ __auto_type strata_t1616_ = a; __auto_type strata_t1617_ = (((((((sf(rd) << 31) | (opc << 29)) | 167772160) | (n << 21)) | (rm.reg << 16)) | (rn.reg << 5)) | rd.reg); word(strata_t1616_, strata_t1617_); }));
+}
+
+void enc_bfm(Asm* a, int64_t opc, AOp rd, AOp rn, int64_t immr, int64_t imms) {
+    int64_t s = sf(rd);
+    word(a, ((((((((s << 31) | (opc << 29)) | 318767104) | (s << 22)) | ((immr & 63) << 16)) | ((imms & 63) << 10)) | (rn.reg << 5)) | rd.reg));
+}
+
+int64_t ftype(AOp r) {
+    if (r.size == 8) {
+        return 1;
+    }
+    return 0;
+}
+
+void arm64_encode(Asm* a, const char* mn, Array o) {
+    int64_t n = o.len;
+    if (str_eq(mn, "ret")) {
+        if (n == 0) {
+            word(a, (0 - 698416192));
+        } else {
+            word(a, ((0 - 698417152) | (((AOp*)(o).data)[0].reg << 5)));
+        }
+        return;
+    }
+    if (str_eq(mn, "nop")) {
+        word(a, (0 - 721215457));
+        return;
+    }
+    if (str_eq(mn, "br") || str_eq(mn, "blr")) {
+        need_n(a, n, 1);
+        int64_t base = (0 - 702611456);
+        if (str_eq(mn, "blr")) {
+            base = (0 - 700514304);
+        }
+        word(a, (base | (((AOp*)(o).data)[0].reg << 5)));
+        return;
+    }
+    if (str_eq(mn, "brk")) {
+        word(a, ((0 - 736100352) | ((((AOp*)(o).data)[0].imm & 65535) << 5)));
+        return;
+    }
+    if (str_eq(mn, "svc")) {
+        word(a, ((0 - 738197503) | ((((AOp*)(o).data)[0].imm & 65535) << 5)));
+        return;
+    }
+    if (str_eq(mn, "b") || str_eq(mn, "bl")) {
+        need_n(a, n, 1);
+        if (((AOp*)(o).data)[0].kind != 4) {
+            asm_fail(a, "expected a label");
+            return;
+        }
+        asm_fix(a, ((AOp*)(o).data)[0].sym, 0, 1);
+        if (str_eq(mn, "b")) {
+            word(a, 335544320);
+        } else {
+            word(a, (0 - 1811939328));
+        }
+        return;
+    }
+    if ((str_len(mn) > 2) && str_eq(str_sub(mn, 0, 2), "b.")) {
+        int64_t c = cond_code(str_sub(mn, 2, (str_len(mn) - 2)));
+        if (((c < 0) || (n != 1)) || (((AOp*)(o).data)[0].kind != 4)) {
+            asm_fail(a, "bad conditional branch");
+            return;
+        }
+        asm_fix(a, ((AOp*)(o).data)[0].sym, 0, 2);
+        word(a, (1409286144 | c));
+        return;
+    }
+    if (str_eq(mn, "cbz") || str_eq(mn, "cbnz")) {
+        need_n(a, n, 2);
+        if ((!isreg(((AOp*)(o).data)[0])) || (((AOp*)(o).data)[1].kind != 4)) {
+            asm_fail(a, str_concat("bad ", mn));
+            return;
+        }
+        asm_fix(a, ((AOp*)(o).data)[1].sym, 0, 2);
+        int64_t nz = 0;
+        if (str_eq(mn, "cbnz")) {
+            nz = 1;
+        }
+        (({ __auto_type strata_t1618_ = a; __auto_type strata_t1619_ = ((((sf(((AOp*)(o).data)[0]) << 31) | 872415232) | (nz << 24)) | ((AOp*)(o).data)[0].reg); word(strata_t1618_, strata_t1619_); }));
+        return;
+    }
+    if (str_eq(mn, "adrp")) {
+        need_n(a, n, 2);
+        if ((!isreg(((AOp*)(o).data)[0])) || (((AOp*)(o).data)[1].kind != 5)) {
+            asm_fail(a, "bad adrp");
+            return;
+        }
+        asm_fix(a, ((AOp*)(o).data)[1].sym, 0, 3);
+        word(a, ((0 - 1879048192) | ((AOp*)(o).data)[0].reg));
+        return;
+    }
+    if (str_eq(mn, "mov")) {
+        need_n(a, n, 2);
+        if (isfreg(((AOp*)(o).data)[0]) || isfreg(((AOp*)(o).data)[1])) {
+            arm64_encode(a, "fmov", o);
+            return;
+        }
+        if ((!isreg(((AOp*)(o).data)[0])) || (!isreg(((AOp*)(o).data)[1]))) {
+            asm_fail(a, "mov: registers only (use movz / movn)");
+            return;
+        }
+        if (((AOp*)(o).data)[0].sp || ((AOp*)(o).data)[1].sp) {
+            (({ __auto_type strata_t1620_ = a; __auto_type strata_t1621_ = ((((sf(((AOp*)(o).data)[0]) << 31) | 285212672) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1620_, strata_t1621_); }));
+        } else {
+            (({ __auto_type strata_t1622_ = a; __auto_type strata_t1623_ = ((((sf(((AOp*)(o).data)[0]) << 31) | 704644064) | (((AOp*)(o).data)[1].reg << 16)) | ((AOp*)(o).data)[0].reg); word(strata_t1622_, strata_t1623_); }));
+        }
+        return;
+    }
+    if ((str_eq(mn, "movz") || str_eq(mn, "movn")) || str_eq(mn, "movk")) {
+        if (((n < 2) || (!isreg(((AOp*)(o).data)[0]))) || (((AOp*)(o).data)[1].kind != 2)) {
+            asm_fail(a, str_concat("bad ", mn));
+            return;
+        }
+        int64_t hw = 0;
+        if (n == 3) {
+            if ((((AOp*)(o).data)[2].kind != 7) || ((((AOp*)(o).data)[2].imm % 16) != 0)) {
+                asm_fail(a, "bad shift");
+                return;
+            }
+            hw = (((AOp*)(o).data)[2].imm / 16);
+        }
+        int64_t opc = 2;
+        if (str_eq(mn, "movn")) {
+            opc = 0;
+        } else 
+        if (str_eq(mn, "movk")) {
+            opc = 3;
+        }
+        (({ __auto_type strata_t1624_ = a; __auto_type strata_t1625_ = ((((((sf(((AOp*)(o).data)[0]) << 31) | (opc << 29)) | 310378496) | (hw << 21)) | ((((AOp*)(o).data)[1].imm & 65535) << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1624_, strata_t1625_); }));
+        return;
+    }
+    if (((str_eq(mn, "add") || str_eq(mn, "sub")) || str_eq(mn, "adds")) || str_eq(mn, "subs")) {
+        if (((n < 3) || (!isreg(((AOp*)(o).data)[0]))) || (!isreg(((AOp*)(o).data)[1]))) {
+            asm_fail(a, str_concat("bad ", mn));
+            return;
+        }
+        int64_t op = 0;
+        if (str_eq(mn, "sub") || str_eq(mn, "subs")) {
+            op = 1;
+        }
+        int64_t s = 0;
+        if (str_eq(mn, "adds") || str_eq(mn, "subs")) {
+            s = 1;
+        }
+        enc_addsub(a, op, s, ((AOp*)(o).data)[0], ((AOp*)(o).data)[1], o, 2);
+        return;
+    }
+    if (str_eq(mn, "cmp") || str_eq(mn, "cmn")) {
+        if ((n < 2) || (!isreg(((AOp*)(o).data)[0]))) {
+            asm_fail(a, str_concat("bad ", mn));
+            return;
+        }
+        AOp zr = (AOp){1, 31, ((AOp*)(o).data)[0].size, false, false, 0, false, ""};
+        int64_t op = 1;
+        if (str_eq(mn, "cmn")) {
+            op = 0;
+        }
+        enc_addsub(a, op, 1, zr, ((AOp*)(o).data)[0], o, 1);
+        return;
+    }
+    if (str_eq(mn, "neg")) {
+        need_n(a, n, 2);
+        AOp zr = (AOp){1, 31, ((AOp*)(o).data)[0].size, false, false, 0, false, ""};
+        (({ __auto_type strata_t1626_ = a; __auto_type strata_t1627_ = ((((((sf(((AOp*)(o).data)[0]) << 31) | ((int64_t)1 << 30)) | 184549376) | (((AOp*)(o).data)[1].reg << 16)) | (zr.reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1626_, strata_t1627_); }));
+        return;
+    }
+    if (((str_eq(mn, "and") || str_eq(mn, "orr")) || str_eq(mn, "eor")) || str_eq(mn, "ands")) {
+        need_n(a, n, 3);
+        int64_t opc = 0;
+        if (str_eq(mn, "orr")) {
+            opc = 1;
+        } else 
+        if (str_eq(mn, "eor")) {
+            opc = 2;
+        } else 
+        if (str_eq(mn, "ands")) {
+            opc = 3;
+        }
+        enc_logic(a, opc, 0, ((AOp*)(o).data)[0], ((AOp*)(o).data)[1], ((AOp*)(o).data)[2]);
+        return;
+    }
+    if (str_eq(mn, "mvn")) {
+        need_n(a, n, 2);
+        AOp zr = (AOp){1, 31, ((AOp*)(o).data)[0].size, false, false, 0, false, ""};
+        enc_logic(a, 1, 1, ((AOp*)(o).data)[0], zr, ((AOp*)(o).data)[1]);
+        return;
+    }
+    if (str_eq(mn, "tst")) {
+        need_n(a, n, 2);
+        AOp zr = (AOp){1, 31, ((AOp*)(o).data)[0].size, false, false, 0, false, ""};
+        enc_logic(a, 3, 0, zr, ((AOp*)(o).data)[0], ((AOp*)(o).data)[1]);
+        return;
+    }
+    if ((str_eq(mn, "mul") || str_eq(mn, "madd")) || str_eq(mn, "msub")) {
+        int64_t ra = 31;
+        if (!str_eq(mn, "mul")) {
+            need_n(a, n, 4);
+            ra = ((AOp*)(o).data)[3].reg;
+        } else {
+            need_n(a, n, 3);
+        }
+        int64_t o0 = 0;
+        if (str_eq(mn, "msub")) {
+            o0 = 1;
+        }
+        (({ __auto_type strata_t1628_ = a; __auto_type strata_t1629_ = (((((((sf(((AOp*)(o).data)[0]) << 31) | 452984832) | (((AOp*)(o).data)[2].reg << 16)) | (o0 << 15)) | (ra << 10)) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1628_, strata_t1629_); }));
+        return;
+    }
+    if (((((str_eq(mn, "sdiv") || str_eq(mn, "udiv")) || str_eq(mn, "lslv")) || str_eq(mn, "lsrv")) || str_eq(mn, "asrv")) || ((((str_eq(mn, "lsl") || str_eq(mn, "lsr")) || str_eq(mn, "asr")) && (n == 3)) && isreg(((AOp*)(o).data)[2]))) {
+        need_n(a, n, 3);
+        int64_t opcode = 2;
+        if (str_eq(mn, "sdiv")) {
+            opcode = 3;
+        } else 
+        if (str_eq(mn, "lslv") || str_eq(mn, "lsl")) {
+            opcode = 8;
+        } else 
+        if (str_eq(mn, "lsrv") || str_eq(mn, "lsr")) {
+            opcode = 9;
+        } else 
+        if (str_eq(mn, "asrv") || str_eq(mn, "asr")) {
+            opcode = 10;
+        }
+        (({ __auto_type strata_t1630_ = a; __auto_type strata_t1631_ = ((((((sf(((AOp*)(o).data)[0]) << 31) | 448790528) | (((AOp*)(o).data)[2].reg << 16)) | (opcode << 10)) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1630_, strata_t1631_); }));
+        return;
+    }
+    if ((str_eq(mn, "lsl") || str_eq(mn, "lsr")) || str_eq(mn, "asr")) {
+        need_n(a, n, 3);
+        if (((AOp*)(o).data)[2].kind != 2) {
+            asm_fail(a, "bad shift");
+            return;
+        }
+        int64_t bits = 32;
+        if (((AOp*)(o).data)[0].size == 8) {
+            bits = 64;
+        }
+        int64_t s = (((AOp*)(o).data)[2].imm & (bits - 1));
+        if (str_eq(mn, "lsl")) {
+            enc_bfm(a, 2, ((AOp*)(o).data)[0], ((AOp*)(o).data)[1], ((bits - s) % bits), ((bits - 1) - s));
+        } else 
+        if (str_eq(mn, "lsr")) {
+            enc_bfm(a, 2, ((AOp*)(o).data)[0], ((AOp*)(o).data)[1], s, (bits - 1));
+        } else {
+            enc_bfm(a, 0, ((AOp*)(o).data)[0], ((AOp*)(o).data)[1], s, (bits - 1));
+        }
+        return;
+    }
+    if ((((str_eq(mn, "sxtb") || str_eq(mn, "sxth")) || str_eq(mn, "sxtw")) || str_eq(mn, "uxtb")) || str_eq(mn, "uxth")) {
+        need_n(a, n, 2);
+        int64_t imms = 7;
+        if (str_eq(mn, "sxth") || str_eq(mn, "uxth")) {
+            imms = 15;
+        } else 
+        if (str_eq(mn, "sxtw")) {
+            imms = 31;
+        }
+        int64_t opc = 0;
+        if (mn[0] == 'u') {
+            opc = 2;
+        }
+        enc_bfm(a, opc, ((AOp*)(o).data)[0], ((AOp*)(o).data)[1], 0, imms);
+        return;
+    }
+    if (str_eq(mn, "cset")) {
+        need_n(a, n, 2);
+        int64_t c = cond_code(((AOp*)(o).data)[1].sym);
+        if ((((!isreg(((AOp*)(o).data)[0])) || (((AOp*)(o).data)[1].kind != 8)) || (c < 0)) || (c >= 14)) {
+            asm_fail(a, "bad cset");
+            return;
+        }
+        (({ __auto_type strata_t1632_ = a; __auto_type strata_t1633_ = ((((sf(((AOp*)(o).data)[0]) << 31) | 446629856) | ((c ^ 1) << 12)) | ((AOp*)(o).data)[0].reg); word(strata_t1632_, strata_t1633_); }));
+        return;
+    }
+    if (str_eq(mn, "ldp") || str_eq(mn, "stp")) {
+        enc_pair(a, mn, o);
+        return;
+    }
+    if ((str_len(mn) >= 3) && (((str_eq(str_sub(mn, 0, 3), "ldr") || str_eq(str_sub(mn, 0, 3), "str")) || str_eq(str_sub(mn, 0, 3), "ldu")) || str_eq(str_sub(mn, 0, 3), "stu"))) {
+        enc_ldst(a, mn, o);
+        return;
+    }
+    if (((str_eq(mn, "fadd") || str_eq(mn, "fsub")) || str_eq(mn, "fmul")) || str_eq(mn, "fdiv")) {
+        need_n(a, n, 3);
+        int64_t opcode = 2;
+        if (str_eq(mn, "fsub")) {
+            opcode = 3;
+        } else 
+        if (str_eq(mn, "fmul")) {
+            opcode = 0;
+        } else 
+        if (str_eq(mn, "fdiv")) {
+            opcode = 1;
+        }
+        (({ __auto_type strata_t1634_ = a; __auto_type strata_t1635_ = ((((((505415680 | (ftype(((AOp*)(o).data)[0]) << 22)) | (((AOp*)(o).data)[2].reg << 16)) | (opcode << 12)) | 2048) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1634_, strata_t1635_); }));
+        return;
+    }
+    if ((str_eq(mn, "fsqrt") || str_eq(mn, "fneg")) || str_eq(mn, "fabs")) {
+        need_n(a, n, 2);
+        int64_t b = 505528320;
+        if (str_eq(mn, "fneg")) {
+            b = 505495552;
+        } else 
+        if (str_eq(mn, "fabs")) {
+            b = 505462784;
+        }
+        (({ __auto_type strata_t1636_ = a; __auto_type strata_t1637_ = (((({ __auto_type strata_t1638_ = b; __auto_type strata_t1639_ = (ftype(((AOp*)(o).data)[0]) << 22); (strata_t1638_ | strata_t1639_); })) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1636_, strata_t1637_); }));
+        return;
+    }
+    if (str_eq(mn, "fmov")) {
+        need_n(a, n, 2);
+        if (isfreg(((AOp*)(o).data)[0]) && isfreg(((AOp*)(o).data)[1])) {
+            (({ __auto_type strata_t1640_ = a; __auto_type strata_t1641_ = (((505430016 | (ftype(((AOp*)(o).data)[0]) << 22)) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1640_, strata_t1641_); }));
+            return;
+        }
+        if (isreg(((AOp*)(o).data)[0]) && isfreg(((AOp*)(o).data)[1])) {
+            if (((AOp*)(o).data)[0].size == 8) {
+                word(a, (((0 - 1637482496) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg));
+            } else {
+                word(a, ((505806848 | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg));
+            }
+            return;
+        }
+        if (isfreg(((AOp*)(o).data)[0]) && isreg(((AOp*)(o).data)[1])) {
+            if (((AOp*)(o).data)[0].size == 8) {
+                word(a, (((0 - 1637416960) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg));
+            } else {
+                word(a, ((505872384 | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg));
+            }
+            return;
+        }
+        asm_fail(a, "bad fmov");
+        return;
+    }
+    if (str_eq(mn, "fcmp")) {
+        need_n(a, n, 2);
+        (({ __auto_type strata_t1642_ = a; __auto_type strata_t1643_ = (((505421824 | (ftype(((AOp*)(o).data)[0]) << 22)) | (((AOp*)(o).data)[1].reg << 16)) | (((AOp*)(o).data)[0].reg << 5)); word(strata_t1642_, strata_t1643_); }));
+        return;
+    }
+    if (str_eq(mn, "fcvt")) {
+        need_n(a, n, 2);
+        if ((((AOp*)(o).data)[0].size == 8) && (((AOp*)(o).data)[1].size == 4)) {
+            word(a, ((505593856 | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg));
+            return;
+        }
+        if ((((AOp*)(o).data)[0].size == 4) && (((AOp*)(o).data)[1].size == 8)) {
+            word(a, ((509755392 | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg));
+            return;
+        }
+        asm_fail(a, "bad fcvt");
+        return;
+    }
+    if (str_eq(mn, "scvtf") || str_eq(mn, "ucvtf")) {
+        need_n(a, n, 2);
+        int64_t b = 505544704;
+        if (str_eq(mn, "ucvtf")) {
+            b = 505610240;
+        }
+        (({ __auto_type strata_t1644_ = a; __auto_type strata_t1645_ = (((({ __auto_type strata_t1646_ = ((sf(((AOp*)(o).data)[1]) << 31) | b); __auto_type strata_t1647_ = (ftype(((AOp*)(o).data)[0]) << 22); (strata_t1646_ | strata_t1647_); })) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1644_, strata_t1645_); }));
+        return;
+    }
+    if (str_eq(mn, "fcvtzs") || str_eq(mn, "fcvtzu")) {
+        need_n(a, n, 2);
+        int64_t b = 506986496;
+        if (str_eq(mn, "fcvtzu")) {
+            b = 507052032;
+        }
+        (({ __auto_type strata_t1648_ = a; __auto_type strata_t1649_ = (((({ __auto_type strata_t1650_ = ((sf(((AOp*)(o).data)[0]) << 31) | b); __auto_type strata_t1651_ = (ftype(((AOp*)(o).data)[1]) << 22); (strata_t1650_ | strata_t1651_); })) | (((AOp*)(o).data)[1].reg << 5)) | ((AOp*)(o).data)[0].reg); word(strata_t1648_, strata_t1649_); }));
+        return;
+    }
+    asm_fail(a, str_concat("unknown instruction ", mn));
+}
+
+int64_t read32(Asm* a, int64_t at) {
+    int64_t v = 0;
+    for (int64_t i = 0; i < 4; i++) {
+        v = (v | (((int64_t)(((uint8_t*)(a->o.text).data)[(at + i)])) << (8 * i)));
+    }
+    return v;
+}
+
+void arm64_fixup(Asm* a, Fix f, int64_t li) {
+    int64_t k = f.after;
+    if ((k == 1) || (k == 2)) {
+        if ((li >= 0) && (((int64_t*)(a->lsec).data)[li] == 1)) {
+            int64_t d = ((((int64_t*)(a->loff).data)[li] + f.addend) - f.pos);
+            int64_t w = read32(a, f.pos);
+            if (k == 1) {
+                if ((d < (0 - 134217728)) || (d >= 134217728)) {
+                    asm_fail(a, str_concat("branch out of range: ", f.label));
+                    return;
+                }
+                w = (w | ((d / 4) & 67108863));
+            } else {
+                if ((d < (0 - 1048576)) || (d >= 1048576)) {
+                    asm_fail(a, str_concat("conditional branch out of range: ", f.label));
+                    return;
+                }
+                w = (w | (((d / 4) & 524287) << 5));
+            }
+            asm_patch(a, f.pos, w, 4);
+        } else 
+        if ((k == 1) && (li < 0)) {
+            ({ ObjReloc _e = (({ __auto_type strata_t1652_ = f.pos; __auto_type strata_t1653_ = asm_symbol(a, f.label, 0, 0); (ObjReloc){1, strata_t1652_, strata_t1653_, 0, 2}; })); arr_push(&(a->o.relocs), &_e); });
+        } else {
+            asm_fail(a, str_concat(str_concat("a branch to ", f.label), " (not in this object's code)"));
+        }
+        return;
+    }
+    int64_t sym = 0;
+    if (li >= 0) {
+        sym = asm_symbol(a, f.label, ((int64_t*)(a->lsec).data)[li], ((int64_t*)(a->loff).data)[li]);
+    } else {
+        sym = asm_symbol(a, f.label, 0, 0);
+    }
+    if (k == 3) {
+        ({ ObjReloc _e = (ObjReloc){1, f.pos, sym, 0, 3}; arr_push(&(a->o.relocs), &_e); });
+    } else {
+        ({ ObjReloc _e = (ObjReloc){1, f.pos, sym, ((k - 4) - (k / 5)), 4}; arr_push(&(a->o.relocs), &_e); });
+    }
+}
+
+int64_t arm64_nop(void) {
+    return (0 - 721215457);
+}
+
+void asm_fail(Asm* a, const char* msg) {
+    if (a->o.ok) {
+        a->o.err = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("line ", str_from_int(a->line)), ": "), msg), " ("), a->text), ")");
+    }
+    a->o.ok = false;
+}
+
+bool asm__is_space(char c) {
+    return (((c == ' ') || (c == '\t')) || (c == '\r'));
+}
+
+const char* asm__trim(const char* s) {
+    int64_t i = 0;
+    int64_t j = str_len(s);
+    while ((i < j) && asm__is_space(s[i])) {
+        i += 1;
+    }
+    while ((j > i) && asm__is_space(s[(j - 1)])) {
+        j -= 1;
+    }
+    return str_sub(s, i, (j - i));
+}
+
+bool asm_digit(char c) {
+    return ((c >= '0') && (c <= '9'));
+}
+
+int64_t asm_num(Asm* a, const char* s) {
+    int64_t i = 0;
+    bool neg = false;
+    if ((str_len(s) > 0) && (s[0] == '-')) {
+        neg = true;
+        i = 1;
+    } else 
+    if ((str_len(s) > 0) && (s[0] == '+')) {
+        i = 1;
+    }
+    uint64_t v = 0;
+    if (((str_len(s) > (i + 2)) && (s[i] == '0')) && ((s[(i + 1)] == 'x') || (s[(i + 1)] == 'X'))) {
+        i += 2;
+        while (i < str_len(s)) {
+            char c = s[i];
+            uint64_t d = 0;
+            if ((c >= '0') && (c <= '9')) {
+                d = ((uint64_t)((((int64_t)(c)) - ((int64_t)('0')))));
+            } else 
+            if ((c >= 'a') && (c <= 'f')) {
+                d = ((uint64_t)(((((int64_t)(c)) - ((int64_t)('a'))) + 10)));
+            } else 
+            if ((c >= 'A') && (c <= 'F')) {
+                d = ((uint64_t)(((((int64_t)(c)) - ((int64_t)('A'))) + 10)));
+            } else {
+                asm_fail(a, str_concat("bad number ", s));
+            }
+            v = ((v * 16) + d);
+            i += 1;
+        }
+    } else {
+        if (i >= str_len(s)) {
+            asm_fail(a, str_concat("bad number ", s));
+        }
+        while (i < str_len(s)) {
+            if (!asm_digit(s[i])) {
+                asm_fail(a, str_concat("bad number ", s));
+            }
+            v = ((v * 10) + ((uint64_t)((((int64_t)(s[i])) - ((int64_t)('0'))))));
+            i += 1;
+        }
+    }
+    int64_t r = ((int64_t)(v));
+    if (neg) {
+        return (0 - r);
+    }
+    return r;
+}
+
+Array split_operands(const char* s) {
+    Array r = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    int64_t depth = 0;
+    bool quoted = false;
+    int64_t start = 0;
+    for (int64_t i = 0; i < str_len(s); i++) {
+        char c = s[i];
+        if (c == '"') {
+            quoted = (!quoted);
+        } else 
+        if ((!quoted) && ((c == '(') || (c == '['))) {
+            depth += 1;
+        } else 
+        if ((!quoted) && ((c == ')') || (c == ']'))) {
+            depth -= 1;
+        } else 
+        if (((!quoted) && (depth == 0)) && (c == ',')) {
+            ({ const char* _e = asm__trim(str_sub(s, start, (i - start))); arr_push(&(r), &_e); });
+            start = (i + 1);
+        }
+    }
+    const char* last = asm__trim(str_sub(s, start, (str_len(s) - start)));
+    if (str_len(last) > 0) {
+        ({ const char* _e = last; arr_push(&(r), &_e); });
+    }
+    return r;
+}
+
+int64_t asm_pos(Asm* a) {
+    if (a->sec == 2) {
+        return a->o.rdata.len;
+    }
+    if (a->sec == 3) {
+        return a->o.data.len;
+    }
+    return a->o.text.len;
+}
+
+void asm_byte(Asm* a, int64_t v) {
+    if (a->sec == 2) {
+        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.rdata), &_e); });
+    } else 
+    if (a->sec == 3) {
+        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.data), &_e); });
+    } else {
+        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.text), &_e); });
+    }
+}
+
+void asm_bytes(Asm* a, int64_t v, int64_t n) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < n; i++) {
+        asm_byte(a, ((int64_t)((x & ((uint64_t)(255))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+void asm_fix(Asm* a, const char* label, int64_t addend, int64_t after) {
+    ({ Fix _e = (Fix){a->o.text.len, label, addend, after, 1}; arr_push(&(a->fixes), &_e); });
+}
+
+void asm_patch(Asm* a, int64_t at, int64_t v, int64_t n) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < n; i++) {
+        ((uint8_t*)(a->o.text).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+void asm__align_to(Asm* a, int64_t n) {
+    if (a->sec == 1) {
+        if (str_eq(a->arch, "x64")) {
+            while ((asm_pos(a) % n) != 0) {
+                (({ __auto_type strata_t1654_ = a; __auto_type strata_t1655_ = x64_nop(); asm_byte(strata_t1654_, strata_t1655_); }));
+            }
+        }
+        if (str_eq(a->arch, "arm64")) {
+            while (((asm_pos(a) % 4) == 0) && ((asm_pos(a) % n) != 0)) {
+                (({ __auto_type strata_t1656_ = a; __auto_type strata_t1657_ = arm64_nop(); asm_bytes(strata_t1656_, strata_t1657_, 4); }));
+            }
+        }
+    }
+    while ((asm_pos(a) % n) != 0) {
+        asm_byte(a, 0);
+    }
+}
+
+void asciz(Asm* a, const char* q) {
+    if (((str_len(q) < 2) || (q[0] != '"')) || (q[(str_len(q) - 1)] != '"')) {
+        asm_fail(a, "expected a quoted string");
+        return;
+    }
+    int64_t i = 1;
+    int64_t end = (str_len(q) - 1);
+    while (i < end) {
+        char c = q[i];
+        if ((c == '\\') && ((i + 1) < end)) {
+            char e = q[(i + 1)];
+            i += 2;
+            if (e == 'n') {
+                asm_byte(a, 10);
+            } else 
+            if (e == 't') {
+                asm_byte(a, 9);
+            } else 
+            if (e == 'r') {
+                asm_byte(a, 13);
+            } else 
+            if (e == 'b') {
+                asm_byte(a, 8);
+            } else 
+            if (e == 'f') {
+                asm_byte(a, 12);
+            } else 
+            if ((e >= '0') && (e <= '7')) {
+                int64_t v = (((int64_t)(e)) - ((int64_t)('0')));
+                int64_t k = 0;
+                while ((((k < 2) && (i < end)) && (q[i] >= '0')) && (q[i] <= '7')) {
+                    v = ((v * 8) + (((int64_t)(q[i])) - ((int64_t)('0'))));
+                    i += 1;
+                    k += 1;
+                }
+                asm_byte(a, v);
+            } else {
+                asm_byte(a, ((int64_t)(e)));
+            }
+        } else {
+            asm_byte(a, ((int64_t)(c)));
+            i += 1;
+        }
+    }
+    asm_byte(a, 0);
+}
+
+void directive(Asm* a, const char* s) {
+    int64_t sp = (0 - 1);
+    for (int64_t i = 0; i < str_len(s); i++) {
+        if ((sp < 0) && asm__is_space(s[i])) {
+            sp = i;
+        }
+    }
+    const char* name = s;
+    const char* arg = "";
+    if (sp >= 0) {
+        name = str_sub(s, 0, sp);
+        arg = asm__trim(str_sub(s, sp, (str_len(s) - sp)));
+    }
+    if (str_eq(name, ".text")) {
+        a->sec = 1;
+    } else 
+    if (str_eq(name, ".data")) {
+        a->sec = 3;
+    } else 
+    if (str_eq(name, ".section")) {
+        if ((str_len(arg) >= 6) && str_eq(str_sub(arg, 0, 6), ".rdata")) {
+            a->sec = 2;
+        } else 
+        if ((str_len(arg) >= 5) && str_eq(str_sub(arg, 0, 5), ".text")) {
+            a->sec = 1;
+        } else 
+        if ((str_len(arg) >= 5) && str_eq(str_sub(arg, 0, 5), ".data")) {
+            a->sec = 3;
+        } else {
+            asm_fail(a, str_concat("unknown section ", arg));
+        }
+    } else 
+    if (((str_eq(name, ".quad") || str_eq(name, ".long")) || str_eq(name, ".short")) || str_eq(name, ".byte")) {
+        int64_t n = 8;
+        if (str_eq(name, ".long")) {
+            n = 4;
+        } else 
+        if (str_eq(name, ".short")) {
+            n = 2;
+        } else 
+        if (str_eq(name, ".byte")) {
+            n = 1;
+        }
+        if ((str_len(arg) > 0) && ((asm_digit(arg[0]) || (arg[0] == '-')) || (arg[0] == '+'))) {
+            (({ __auto_type strata_t1658_ = a; __auto_type strata_t1659_ = asm_num(a, arg); asm_bytes(strata_t1658_, strata_t1659_, n); }));
+        } else 
+        if ((n == 8) && (a->sec == 3)) {
+            const char* sym = arg;
+            int64_t off = 0;
+            int64_t q = (0 - 1);
+            for (int64_t i = 1; i < str_len(arg); i++) {
+                if ((q < 0) && ((arg[i] == '+') || (arg[i] == '-'))) {
+                    q = i;
+                }
+            }
+            if (q > 0) {
+                sym = str_sub(arg, 0, q);
+                off = (({ __auto_type strata_t1660_ = a; __auto_type strata_t1661_ = str_sub(arg, q, (str_len(arg) - q)); asm_num(strata_t1660_, strata_t1661_); }));
+            }
+            ({ Fix _e = (Fix){a->o.data.len, sym, off, 0, 3}; arr_push(&(a->fixes), &_e); });
+            asm_bytes(a, 0, 8);
+        } else {
+            asm_fail(a, "a symbol needs .quad in .data");
+        }
+    } else 
+    if (str_eq(name, ".zero")) {
+        int64_t n = asm_num(a, arg);
+        for (int64_t i = 0; i < n; i++) {
+            asm_byte(a, 0);
+        }
+    } else 
+    if (str_eq(name, ".globl")) {
+        ({ const char* _e = arg; arr_push(&(a->globals), &_e); });
+    } else 
+    if (str_eq(name, ".p2align")) {
+        int64_t p = asm_num(a, arg);
+        int64_t n = 1;
+        for (int64_t k = 0; k < p; k++) {
+            n = (n * 2);
+        }
+        asm__align_to(a, n);
+    } else 
+    if (str_eq(name, ".asciz")) {
+        asciz(a, arg);
+    } else 
+    if (str_eq(name, ".float")) {
+        (({ __auto_type strata_t1662_ = a; __auto_type strata_t1663_ = strata_f32_bits(arg); asm_bytes(strata_t1662_, strata_t1663_, 4); }));
+    } else 
+    if (str_eq(name, ".double")) {
+        (({ __auto_type strata_t1664_ = a; __auto_type strata_t1665_ = strata_f64_bits(arg); asm_bytes(strata_t1664_, strata_t1665_, 8); }));
+    } else {
+        asm_fail(a, str_concat("unknown directive ", name));
+    }
+}
+
+void asm_label_here(Asm* a, const char* name) {
+    idx_add((&a->lidx), name, a->lnames.len);
+    ({ const char* _e = name; arr_push(&(a->lnames), &_e); });
+    ({ int64_t _e = a->sec; arr_push(&(a->lsec), &_e); });
+    ({ int64_t _e = asm_pos(a); arr_push(&(a->loff), &_e); });
+}
+
+int64_t asm_label(Asm* a, const char* name) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&a->lidx), name);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((const char**)(a->lnames).data)[k], name)) {
+            found = k;
+        }
+        k = idx_next((&a->lidx), k);
+    }
+    return found;
+}
+
+int64_t asm_symbol(Asm* a, const char* name, int64_t section, int64_t value) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&a->sidx), name);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((ObjSymbol*)(a->o.symbols).data)[k].name, name)) {
+            found = k;
+        }
+        k = idx_next((&a->sidx), k);
+    }
+    if (found >= 0) {
+        return found;
+    }
+    idx_add((&a->sidx), name, a->o.symbols.len);
+    bool global = (section == 0);
+    for (int64_t i = 0; i < a->globals.len; i++) {
+        if (str_eq(((const char**)(a->globals).data)[i], name)) {
+            global = true;
+        }
+    }
+    ({ ObjSymbol _e = (ObjSymbol){name, section, value, global}; arr_push(&(a->o.symbols), &_e); });
+    return (a->o.symbols.len - 1);
+}
+
+void patch64_data(Asm* a, int64_t at, int64_t v) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < 8; i++) {
+        ((uint8_t*)(a->o.data).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+ObjFile assemble(const char* src, const char* arch) {
+    int64_t lines = 1;
+    int64_t n = str_len(src);
+    for (int64_t i = 0; i < n; i++) {
+        if (src[i] == '\n') {
+            lines += 1;
+        }
+    }
+    Asm a = asm_new(arch, lines);
+    int64_t start = 0;
+    int64_t i = 0;
+    while ((i <= n) && a.o.ok) {
+        if ((i == n) || (src[i] == '\n')) {
+            (({ __auto_type strata_t1666_ = (&a); __auto_type strata_t1667_ = str_sub(src, start, (i - start)); asm_line(strata_t1666_, strata_t1667_); }));
+            start = (i + 1);
+        }
+        i += 1;
+    }
+    return asm_finish((&a));
+}
+
+Asm asm_new(const char* arch, int64_t size_hint) {
+    int64_t lines = size_hint;
+    Array t = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array r = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array dt = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array rl = ({ Array _a = arr_make(sizeof(ObjReloc)); _a; });
+    Array sy = ({ Array _a = arr_make(sizeof(ObjSymbol)); _a; });
+    Array ln = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array ls = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lo = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array gl = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array fx = ({ Array _a = arr_make(sizeof(Fix)); _a; });
+    Asm a = (({ __auto_type strata_t1668_ = (ObjFile){true, "", t, r, dt, rl, sy}; __auto_type strata_t1669_ = arch; __auto_type strata_t1670_ = ln; __auto_type strata_t1671_ = ls; __auto_type strata_t1672_ = lo; __auto_type strata_t1673_ = new_idx(((lines / 2) + 16)); __auto_type strata_t1674_ = gl; __auto_type strata_t1675_ = fx; __auto_type strata_t1676_ = new_idx(((lines / 8) + 16)); (Asm){strata_t1668_, strata_t1669_, 1, strata_t1670_, strata_t1671_, strata_t1672_, strata_t1673_, strata_t1674_, strata_t1675_, strata_t1676_, 0, ""}; }));
+    if ((!str_eq(arch, "x64")) && (!str_eq(arch, "arm64"))) {
+        asm_fail((&a), str_concat("no assembler for the CPU ", arch));
+    }
+    return a;
+}
+
+void asm_line(Asm* a, const char* line) {
+    if (!a->o.ok) {
+        return;
+    }
+    a->line += 1;
+    const char* s = asm__trim(line);
+    a->text = s;
+    if ((str_len(s) == 0) || (s[0] == '#')) {
+        return;
+    }
+    if (s[(str_len(s) - 1)] == ':') {
+        (({ __auto_type strata_t1677_ = a; __auto_type strata_t1678_ = str_sub(s, 0, (str_len(s) - 1)); asm_label_here(strata_t1677_, strata_t1678_); }));
+    } else 
+    if (s[0] == '.') {
+        directive(a, s);
+    } else {
+        int64_t sp = (0 - 1);
+        for (int64_t k = 0; k < str_len(s); k++) {
+            if ((sp < 0) && asm__is_space(s[k])) {
+                sp = k;
+            }
+        }
+        const char* mn = s;
+        const char* ops = "";
+        if (sp >= 0) {
+            mn = str_sub(s, 0, sp);
+            ops = str_sub(s, sp, (str_len(s) - sp));
+        }
+        if (a->sec != 1) {
+            asm_fail(a, "instruction outside .text");
+        } else 
+        if (str_eq(a->arch, "arm64")) {
+            (({ __auto_type strata_t1679_ = a; __auto_type strata_t1680_ = mn; __auto_type strata_t1681_ = split_operands(ops); arm64_instruction(strata_t1679_, strata_t1680_, strata_t1681_); }));
+        } else {
+            (({ __auto_type strata_t1682_ = a; __auto_type strata_t1683_ = mn; __auto_type strata_t1684_ = split_operands(ops); x64_instruction(strata_t1682_, strata_t1683_, strata_t1684_); }));
+        }
+    }
+}
+
+ObjFile asm_finish(Asm* a_in) {
+    Asm a = a_in[0];
+    if (!a.o.ok) {
+        return a.o;
+    }
+    for (int64_t k = 0; k < a.lnames.len; k++) {
+        const char* nm = ((const char**)(a.lnames).data)[k];
+        if (((((int64_t*)(a.lsec).data)[k] == 1) || (((int64_t*)(a.lsec).data)[k] == 3)) && (!(((str_len(nm) > 1) && (nm[0] == '.')) && (nm[1] == 'L')))) {
+            asm_symbol((&a), nm, ((int64_t*)(a.lsec).data)[k], ((int64_t*)(a.loff).data)[k]);
+        }
+    }
+    for (int64_t k = 0; k < a.fixes.len; k++) {
+        Fix f = ((Fix*)(a.fixes).data)[k];
+        int64_t li = asm_label((&a), f.label);
+        if (f.section == 3) {
+            if (li >= 0) {
+                patch64_data((&a), f.pos, (((int64_t*)(a.loff).data)[li] + f.addend));
+                ({ ObjReloc _e = (ObjReloc){3, f.pos, (0 - ((int64_t*)(a.lsec).data)[li]), 0, 1}; arr_push(&(a.o.relocs), &_e); });
+            } else {
+                patch64_data((&a), f.pos, f.addend);
+                ({ ObjReloc _e = (({ __auto_type strata_t1685_ = f.pos; __auto_type strata_t1686_ = asm_symbol((&a), f.label, 0, 0); (ObjReloc){3, strata_t1685_, strata_t1686_, 0, 1}; })); arr_push(&(a.o.relocs), &_e); });
+            }
+        } else 
+        if (str_eq(a.arch, "arm64")) {
+            arm64_fixup((&a), f, li);
+        } else {
+            x64_fixup((&a), f, li);
+        }
+    }
+    return a.o;
+}
+
+X64 new_x64(bool direct, int64_t size_hint) {
+    Array o = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array d = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array r = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lz = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array lv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array ls = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array nu = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array b = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array c = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    sysv_mode = (!str_eq(target_os(), "windows"));
+    return (({ __auto_type strata_t1687_ = direct; __auto_type strata_t1688_ = asm_new("x64", size_hint); (X64){strata_t1687_, strata_t1688_, o, d, 0, 0, 0, a, r, lz, lv, ls, nu, b, c, 0}; }));
+}
+
+int64_t arch_x64__align_to(int64_t n, int64_t a) {
+    return ((((n + a) - 1) / a) * a);
+}
+
+Opnd hw(int64_t r, int64_t size) {
+    return (Opnd){1, r, size, 0, 0, ""};
+}
+
+Opnd rax(void) {
+    return hw(0, 8);
+}
+
+Opnd rcx(void) {
+    return hw(1, 8);
+}
+
+Opnd rdx(void) {
+    return hw(2, 8);
+}
+
+Opnd rsp(void) {
+    return hw(4, 8);
+}
+
+Opnd rbp(void) {
+    return hw(5, 8);
+}
+
+Opnd r8(void) {
+    return hw(8, 8);
+}
+
+Opnd r11(void) {
+    return hw(11, 8);
+}
+
+Opnd xmm(int64_t n) {
+    return (Opnd){1, n, 16, 0, 0, ""};
+}
+
+Opnd imm(int64_t v) {
+    return (Opnd){2, 0, 0, v, 0, ""};
+}
+
+Opnd mem(int64_t base, int64_t disp) {
+    return (Opnd){3, 0, 0, disp, base, ""};
+}
+
+Opnd rip(const char* sym, int64_t off) {
+    return (Opnd){3, 0, 0, off, (0 - 1), sym};
+}
+
+Opnd target(const char* name) {
+    return (Opnd){4, 0, 0, 0, 0, name};
+}
+
+Opnd sized(Opnd r, int64_t size) {
+    return (Opnd){r.kind, r.reg, size, r.imm, r.base, r.sym};
+}
+
+bool same(Opnd a, Opnd b) {
+    return ((((((a.kind == b.kind) && (a.reg == b.reg)) && (a.size == b.size)) && (a.imm == b.imm)) && (a.base == b.base)) && str_eq(a.sym, b.sym));
+}
+
+const char* reg_text(int64_t r, int64_t size) {
+    if (size == 16) {
+        return str_concat("%xmm", str_from_int(r));
+    }
+    if (r >= 8) {
+        if (size == 4) {
+            return str_concat(str_concat("%r", str_from_int(r)), "d");
+        }
+        if (size == 2) {
+            return str_concat(str_concat("%r", str_from_int(r)), "w");
+        }
+        if (size == 1) {
+            return str_concat(str_concat("%r", str_from_int(r)), "b");
+        }
+        return str_concat("%r", str_from_int(r));
+    }
+    Array names = ({ Array _a = arr_make(sizeof(const char*)); { const char* _e = "ax"; arr_push(&_a, &_e); } { const char* _e = "cx"; arr_push(&_a, &_e); } { const char* _e = "dx"; arr_push(&_a, &_e); } { const char* _e = "bx"; arr_push(&_a, &_e); } { const char* _e = "sp"; arr_push(&_a, &_e); } { const char* _e = "bp"; arr_push(&_a, &_e); } { const char* _e = "si"; arr_push(&_a, &_e); } { const char* _e = "di"; arr_push(&_a, &_e); } _a; });
+    const char* n = ((const char**)(names).data)[r];
+    if (size == 8) {
+        return str_concat("%r", n);
+    }
+    if (size == 4) {
+        return str_concat("%e", n);
+    }
+    if (size == 2) {
+        return str_concat("%", n);
+    }
+    if (r < 4) {
+        return str_concat(str_concat("%", str_sub(n, 0, 1)), "l");
+    }
+    return str_concat(str_concat("%", n), "l");
+}
+
+const char* opnd_text(Opnd o) {
+    if (o.kind == 1) {
+        return reg_text(o.reg, o.size);
+    }
+    if (o.kind == 2) {
+        return str_concat("$", str_from_int(o.imm));
+    }
+    if (o.kind == 4) {
+        return o.sym;
+    }
+    if (o.base < 0) {
+        const char* s = o.sym;
+        if (o.imm > 0) {
+            s = (({ __auto_type strata_t1689_ = str_concat(s, "+"); __auto_type strata_t1690_ = str_from_int(o.imm); str_concat(strata_t1689_, strata_t1690_); }));
+        } else 
+        if (o.imm < 0) {
+            s = (({ __auto_type strata_t1691_ = s; __auto_type strata_t1692_ = str_from_int(o.imm); str_concat(strata_t1691_, strata_t1692_); }));
+        }
+        return str_concat(s, "(%rip)");
+    }
+    return str_concat((({ __auto_type strata_t1693_ = str_concat(str_from_int(o.imm), "("); __auto_type strata_t1694_ = reg_text(o.base, 8); str_concat(strata_t1693_, strata_t1694_); })), ")");
+}
+
+void ins2(X64* x, const char* mn, Opnd s, Opnd d) {
+    if (x->direct) {
+        x64_encode((&x->as), mn, 2, s, d);
+    } else {
+        ({ const char* _e = str_concat((({ __auto_type strata_t1697_ = str_concat((({ __auto_type strata_t1695_ = str_concat(str_concat("\t", mn), " "); __auto_type strata_t1696_ = opnd_text(s); str_concat(strata_t1695_, strata_t1696_); })), ", "); __auto_type strata_t1698_ = opnd_text(d); str_concat(strata_t1697_, strata_t1698_); })), "\n"); arr_push(&(x->out), &_e); });
+    }
+}
+
+void ins1(X64* x, const char* mn, Opnd o) {
+    if (x->direct) {
+        (({ __auto_type strata_t1699_ = (&x->as); __auto_type strata_t1700_ = mn; __auto_type strata_t1701_ = o; __auto_type strata_t1702_ = no_opnd(); x64_encode(strata_t1699_, strata_t1700_, 1, strata_t1701_, strata_t1702_); }));
+    } else 
+    if (str_eq(mn, "call") && (o.kind == 1)) {
+        ({ const char* _e = str_concat(str_concat("\tcall *", opnd_text(o)), "\n"); arr_push(&(x->out), &_e); });
+    } else {
+        ({ const char* _e = str_concat((({ __auto_type strata_t1703_ = str_concat(str_concat("\t", mn), " "); __auto_type strata_t1704_ = opnd_text(o); str_concat(strata_t1703_, strata_t1704_); })), "\n"); arr_push(&(x->out), &_e); });
+    }
+}
+
+void ins0(X64* x, const char* mn) {
+    if (x->direct) {
+        (({ __auto_type strata_t1705_ = (&x->as); __auto_type strata_t1706_ = mn; __auto_type strata_t1707_ = no_opnd(); __auto_type strata_t1708_ = no_opnd(); x64_encode(strata_t1705_, strata_t1706_, 0, strata_t1707_, strata_t1708_); }));
+    } else {
+        ({ const char* _e = str_concat(str_concat("\t", mn), "\n"); arr_push(&(x->out), &_e); });
+    }
+}
+
+void arch_x64__label(X64* x, const char* name) {
+    if (x->direct) {
+        asm_label_here((&x->as), name);
+    } else {
+        ({ const char* _e = str_concat(name, ":\n"); arr_push(&(x->out), &_e); });
+    }
+}
+
+void arch_x64__dline(X64* x, const char* s) {
+    if (x->direct) {
+        asm_line((&x->as), s);
+    } else {
+        ({ const char* _e = str_concat(str_concat("\t", s), "\n"); arr_push(&(x->out), &_e); });
+    }
+}
+
+RegSet x64_regs(void) {
+    if (!str_eq(target_os(), "windows")) {
+        return (RegSet){5, 0, 1, 8};
+    }
+    return (RegSet){7, 10, 1, 2};
+}
+
+int64_t x64_int_regs(void) {
+    if (sysv_mode) {
+        return 5;
+    }
+    return 7;
+}
+
+int64_t x64_saved_regs(void) {
+    if (sysv_mode) {
+        return 5;
+    }
+    return 17;
+}
+
+Opnd alloc_reg(int64_t k) {
+    if (sysv_mode) {
+        if (k == 0) {
+            return hw(3, 8);
+        }
+        if (k <= 4) {
+            return hw((k + 11), 8);
+        }
+        if (k == 5) {
+            return hw(10, 8);
+        }
+        return xmm(((k - 6) + 8));
+    }
+    if (k == 17) {
+        return hw(10, 8);
+    }
+    if (k == 18) {
+        return xmm(4);
+    }
+    if (k == 19) {
+        return xmm(5);
+    }
+    if (k == 0) {
+        return hw(3, 8);
+    }
+    if (k == 1) {
+        return hw(6, 8);
+    }
+    if (k == 2) {
+        return hw(7, 8);
+    }
+    if (k <= 6) {
+        return hw((k + 9), 8);
+    }
+    return xmm(((k - 7) + 6));
+}
+
+bool arch_x64__in_reg(X64* x, int64_t v) {
+    return (((int64_t*)(x->isreg).data)[v] == 1);
+}
+
+int64_t arch_x64__reg_of(X64* x, int64_t v) {
+    return ((int64_t*)(x->loc).data)[v];
+}
+
+Opnd opnd(X64* x, int64_t v) {
+    if (arch_x64__in_reg(x, v)) {
+        return alloc_reg(arch_x64__reg_of(x, v));
+    }
+    return mem(5, ((int64_t*)(x->loc).data)[v]);
+}
+
+const char* fsuf(int64_t ty) {
+    if (ty == KF64) {
+        return "sd";
+    }
+    return "ss";
+}
+
+Opnd slot_mem(X64* x, int64_t slot, int64_t off) {
+    return mem(5, (((int64_t*)(x->slot_off).data)[slot] + off));
+}
+
+Opnd src(X64* x, int64_t v) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[v];
+    if (lz == 1) {
+        return imm(((int64_t*)(x->lval).data)[v]);
+    }
+    if (lz == 2) {
+        (({ __auto_type strata_t1709_ = x; __auto_type strata_t1710_ = slot_mem(x, ((int64_t*)(x->lval).data)[v], 0); __auto_type strata_t1711_ = r11(); ins2(strata_t1709_, "leaq", strata_t1710_, strata_t1711_); }));
+        return r11();
+    }
+    if (lz == 3) {
+        (({ __auto_type strata_t1712_ = x; __auto_type strata_t1713_ = rip(((const char**)(x->lsym).data)[v], 0); __auto_type strata_t1714_ = r11(); ins2(strata_t1712_, "leaq", strata_t1713_, strata_t1714_); }));
+        return r11();
+    }
+    return opnd(x, v);
+}
+
+void get(X64* x, int64_t v, Opnd r) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[v];
+    if (lz == 1) {
+        if (((int64_t*)(x->lval).data)[v] == 0) {
+            (({ __auto_type strata_t1715_ = x; __auto_type strata_t1716_ = sized(r, 4); __auto_type strata_t1717_ = sized(r, 4); ins2(strata_t1715_, "xorl", strata_t1716_, strata_t1717_); }));
+        } else {
+            (({ __auto_type strata_t1718_ = x; __auto_type strata_t1719_ = imm(((int64_t*)(x->lval).data)[v]); ins2(strata_t1718_, "movq", strata_t1719_, r); }));
+        }
+    } else 
+    if (lz == 2) {
+        (({ __auto_type strata_t1720_ = x; __auto_type strata_t1721_ = slot_mem(x, ((int64_t*)(x->lval).data)[v], 0); ins2(strata_t1720_, "leaq", strata_t1721_, r); }));
+    } else 
+    if (lz == 3) {
+        (({ __auto_type strata_t1722_ = x; __auto_type strata_t1723_ = rip(((const char**)(x->lsym).data)[v], 0); ins2(strata_t1722_, "leaq", strata_t1723_, r); }));
+    } else 
+    if (!same(opnd(x, v), r)) {
+        (({ __auto_type strata_t1724_ = x; __auto_type strata_t1725_ = opnd(x, v); ins2(strata_t1724_, "movq", strata_t1725_, r); }));
+    }
+}
+
+void put(X64* x, Opnd r, int64_t v) {
+    Opnd o = opnd(x, v);
+    if (!same(o, r)) {
+        ins2(x, "movq", r, o);
+    }
+}
+
+void arch_x64__fget(X64* x, int64_t ty, int64_t v, Opnd r) {
+    if (arch_x64__in_reg(x, v)) {
+        if (!same(opnd(x, v), r)) {
+            (({ __auto_type strata_t1726_ = x; __auto_type strata_t1727_ = opnd(x, v); ins2(strata_t1726_, "movaps", strata_t1727_, r); }));
+        }
+    } else {
+        (({ __auto_type strata_t1728_ = x; __auto_type strata_t1729_ = str_concat("mov", fsuf(ty)); __auto_type strata_t1730_ = opnd(x, v); ins2(strata_t1728_, strata_t1729_, strata_t1730_, r); }));
+    }
+}
+
+void arch_x64__fput(X64* x, int64_t ty, Opnd r, int64_t v) {
+    if (arch_x64__in_reg(x, v)) {
+        if (!same(opnd(x, v), r)) {
+            (({ __auto_type strata_t1731_ = x; __auto_type strata_t1732_ = r; __auto_type strata_t1733_ = opnd(x, v); ins2(strata_t1731_, "movaps", strata_t1732_, strata_t1733_); }));
+        }
+    } else {
+        (({ __auto_type strata_t1734_ = x; __auto_type strata_t1735_ = str_concat("mov", fsuf(ty)); __auto_type strata_t1736_ = r; __auto_type strata_t1737_ = opnd(x, v); ins2(strata_t1734_, strata_t1735_, strata_t1736_, strata_t1737_); }));
+    }
+}
+
+Opnd arch_x64__mem_at(X64* x, int64_t a, int64_t off) {
+    int64_t lz = ((int64_t*)(x->lazy).data)[a];
+    if (lz == 2) {
+        return slot_mem(x, ((int64_t*)(x->lval).data)[a], off);
+    }
+    if (lz == 3) {
+        return rip(((const char**)(x->lsym).data)[a], off);
+    }
+    if (arch_x64__in_reg(x, a)) {
+        return mem(alloc_reg(arch_x64__reg_of(x, a)).reg, off);
+    }
+    (({ __auto_type strata_t1738_ = x; __auto_type strata_t1739_ = a; __auto_type strata_t1740_ = rax(); get(strata_t1738_, strata_t1739_, strata_t1740_); }));
+    return mem(0, off);
+}
+
+Opnd work(X64* x, Ins i) {
+    if (arch_x64__in_reg(x, i.dst) && (!(((i.b >= 0) && arch_x64__in_reg(x, i.b)) && (({ __auto_type strata_t1741_ = arch_x64__reg_of(x, i.b); __auto_type strata_t1742_ = arch_x64__reg_of(x, i.dst); (strata_t1741_ == strata_t1742_); }))))) {
+        return alloc_reg(arch_x64__reg_of(x, i.dst));
+    }
+    return rax();
+}
+
+void arch_x64__norm(X64* x, int64_t ty, Opnd r) {
+    if (ty == KI8) {
+        (({ __auto_type strata_t1743_ = x; __auto_type strata_t1744_ = sized(r, 1); ins2(strata_t1743_, "movsbq", strata_t1744_, r); }));
+    } else 
+    if (ty == KU8) {
+        (({ __auto_type strata_t1745_ = x; __auto_type strata_t1746_ = sized(r, 1); __auto_type strata_t1747_ = sized(r, 4); ins2(strata_t1745_, "movzbl", strata_t1746_, strata_t1747_); }));
+    } else 
+    if (ty == KI16) {
+        (({ __auto_type strata_t1748_ = x; __auto_type strata_t1749_ = sized(r, 2); ins2(strata_t1748_, "movswq", strata_t1749_, r); }));
+    } else 
+    if (ty == KU16) {
+        (({ __auto_type strata_t1750_ = x; __auto_type strata_t1751_ = sized(r, 2); __auto_type strata_t1752_ = sized(r, 4); ins2(strata_t1750_, "movzwl", strata_t1751_, strata_t1752_); }));
+    } else 
+    if (ty == KI32) {
+        (({ __auto_type strata_t1753_ = x; __auto_type strata_t1754_ = sized(r, 4); ins2(strata_t1753_, "movslq", strata_t1754_, r); }));
+    } else 
+    if (ty == KU32) {
+        (({ __auto_type strata_t1755_ = x; __auto_type strata_t1756_ = sized(r, 4); __auto_type strata_t1757_ = sized(r, 4); ins2(strata_t1755_, "movl", strata_t1756_, strata_t1757_); }));
+    }
+}
+
+bool fits32(int64_t v) {
+    return ((v >= (0 - 2147483648)) && (v <= 2147483647));
+}
+
+const char* arch_x64__float_const(X64* x, int64_t ty, const char* text) {
+    const char* name = str_concat(".LCf", str_from_int(x->floats));
+    x->floats += 1;
+    if (ty == KF64) {
+        ({ const char* _e = ".p2align 3"; arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(name, ":"); arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(".double ", text); arr_push(&(x->data), &_e); });
+    } else {
+        ({ const char* _e = ".p2align 2"; arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(name, ":"); arr_push(&(x->data), &_e); });
+        ({ const char* _e = str_concat(".float ", text); arr_push(&(x->data), &_e); });
+    }
+    return name;
+}
+
+const char* arch_x64__as_text(const char* s) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    int64_t i = 0;
+    int64_t n = str_len(s);
+    while (i < n) {
+        if ((s[i] == '\\') && ((i + 1) < n)) {
+            if (s[(i + 1)] == '0') {
+                ({ const char* _e = "\\000"; arr_push(&(p), &_e); });
+            } else 
+            if (s[(i + 1)] == '\'') {
+                ({ const char* _e = "'"; arr_push(&(p), &_e); });
+            } else {
+                ({ const char* _e = str_sub(s, i, 2); arr_push(&(p), &_e); });
+            }
+            i += 2;
+        } else {
+            ({ const char* _e = str_sub(s, i, 1); arr_push(&(p), &_e); });
+            i += 1;
+        }
+    }
+    return strata_join((&p));
+}
+
+const char* arch_x64__lbl(X64* x, int64_t n) {
+    return (({ __auto_type strata_t1758_ = str_concat(str_concat(".L", str_from_int(x->fnum)), "_"); __auto_type strata_t1759_ = str_from_int(n); str_concat(strata_t1758_, strata_t1759_); }));
+}
+
+Opnd sysv_int_arg(int64_t i) {
     if (i == 0) {
-        return "%rcx";
+        return hw(7, 8);
     }
     if (i == 1) {
-        return "%rdx";
+        return hw(6, 8);
     }
     if (i == 2) {
-        return "%r8";
+        return rdx();
     }
-    return "%r9";
+    if (i == 3) {
+        return rcx();
+    }
+    if (i == 4) {
+        return r8();
+    }
+    return hw(9, 8);
 }
 
-const char* cc_of(int64_t cond, bool is_unsigned) {
+Opnd int_reg_arg(int64_t i) {
+    if (i == 0) {
+        return rcx();
+    }
+    if (i == 1) {
+        return rdx();
+    }
+    if (i == 2) {
+        return r8();
+    }
+    return hw(9, 8);
+}
+
+const char* arch_x64__cc_of(int64_t cond, bool is_unsigned) {
     if (cond == CEq) {
         return "e";
     }
@@ -10904,53 +15601,53 @@ int64_t invert(int64_t cond) {
     return CLt;
 }
 
-void copy_bytes(X64* x, int64_t size, bool zero) {
+void arch_x64__copy_bytes(X64* x, int64_t size, bool zero) {
     int64_t off = 0;
     if (zero) {
-        out(x, "xorl %edx, %edx");
+        (({ __auto_type strata_t1760_ = x; __auto_type strata_t1761_ = sized(rdx(), 4); __auto_type strata_t1762_ = sized(rdx(), 4); ins2(strata_t1760_, "xorl", strata_t1761_, strata_t1762_); }));
     }
     if (size > 128) {
         int64_t words = (size / 8);
-        const char* l = (({ __auto_type strata_t1203_ = str_concat(str_concat(".Lm", str_from_int(x->fnum)), "_"); __auto_type strata_t1204_ = str_from_int(x->loops); str_concat(strata_t1203_, strata_t1204_); }));
+        const char* l = (({ __auto_type strata_t1763_ = str_concat(str_concat(".Lm", str_from_int(x->fnum)), "_"); __auto_type strata_t1764_ = str_from_int(x->loops); str_concat(strata_t1763_, strata_t1764_); }));
         x->loops += 1;
-        (({ __auto_type strata_t1205_ = x; __auto_type strata_t1206_ = str_concat(str_concat("movq $", str_from_int(words)), ", %r8"); out(strata_t1205_, strata_t1206_); }));
-        out_label(x, l);
+        (({ __auto_type strata_t1765_ = x; __auto_type strata_t1766_ = imm(words); __auto_type strata_t1767_ = r8(); ins2(strata_t1765_, "movq", strata_t1766_, strata_t1767_); }));
+        arch_x64__label(x, l);
         if (!zero) {
-            out(x, "movq (%rcx), %rdx");
-            out(x, "addq $8, %rcx");
+            (({ __auto_type strata_t1768_ = x; __auto_type strata_t1769_ = mem(1, 0); __auto_type strata_t1770_ = rdx(); ins2(strata_t1768_, "movq", strata_t1769_, strata_t1770_); }));
+            (({ __auto_type strata_t1771_ = x; __auto_type strata_t1772_ = imm(8); __auto_type strata_t1773_ = rcx(); ins2(strata_t1771_, "addq", strata_t1772_, strata_t1773_); }));
         }
-        out(x, "movq %rdx, (%rax)");
-        out(x, "addq $8, %rax");
-        out(x, "decq %r8");
-        out(x, str_concat("jnz ", l));
+        (({ __auto_type strata_t1774_ = x; __auto_type strata_t1775_ = rdx(); __auto_type strata_t1776_ = mem(0, 0); ins2(strata_t1774_, "movq", strata_t1775_, strata_t1776_); }));
+        (({ __auto_type strata_t1777_ = x; __auto_type strata_t1778_ = imm(8); __auto_type strata_t1779_ = rax(); ins2(strata_t1777_, "addq", strata_t1778_, strata_t1779_); }));
+        (({ __auto_type strata_t1780_ = x; __auto_type strata_t1781_ = r8(); ins1(strata_t1780_, "decq", strata_t1781_); }));
+        (({ __auto_type strata_t1782_ = x; __auto_type strata_t1783_ = target(l); ins1(strata_t1782_, "jnz", strata_t1783_); }));
         size = (size - (words * 8));
     }
     while ((off + 8) <= size) {
         if (!zero) {
-            (({ __auto_type strata_t1207_ = x; __auto_type strata_t1208_ = str_concat(str_concat("movq ", str_from_int(off)), "(%rcx), %rdx"); out(strata_t1207_, strata_t1208_); }));
+            (({ __auto_type strata_t1784_ = x; __auto_type strata_t1785_ = mem(1, off); __auto_type strata_t1786_ = rdx(); ins2(strata_t1784_, "movq", strata_t1785_, strata_t1786_); }));
         }
-        (({ __auto_type strata_t1209_ = x; __auto_type strata_t1210_ = str_concat(str_concat("movq %rdx, ", str_from_int(off)), "(%rax)"); out(strata_t1209_, strata_t1210_); }));
+        (({ __auto_type strata_t1787_ = x; __auto_type strata_t1788_ = rdx(); __auto_type strata_t1789_ = mem(0, off); ins2(strata_t1787_, "movq", strata_t1788_, strata_t1789_); }));
         off += 8;
     }
     if ((off + 4) <= size) {
         if (!zero) {
-            (({ __auto_type strata_t1211_ = x; __auto_type strata_t1212_ = str_concat(str_concat("movl ", str_from_int(off)), "(%rcx), %edx"); out(strata_t1211_, strata_t1212_); }));
+            (({ __auto_type strata_t1790_ = x; __auto_type strata_t1791_ = mem(1, off); __auto_type strata_t1792_ = sized(rdx(), 4); ins2(strata_t1790_, "movl", strata_t1791_, strata_t1792_); }));
         }
-        (({ __auto_type strata_t1213_ = x; __auto_type strata_t1214_ = str_concat(str_concat("movl %edx, ", str_from_int(off)), "(%rax)"); out(strata_t1213_, strata_t1214_); }));
+        (({ __auto_type strata_t1793_ = x; __auto_type strata_t1794_ = sized(rdx(), 4); __auto_type strata_t1795_ = mem(0, off); ins2(strata_t1793_, "movl", strata_t1794_, strata_t1795_); }));
         off += 4;
     }
     if ((off + 2) <= size) {
         if (!zero) {
-            (({ __auto_type strata_t1215_ = x; __auto_type strata_t1216_ = str_concat(str_concat("movw ", str_from_int(off)), "(%rcx), %dx"); out(strata_t1215_, strata_t1216_); }));
+            (({ __auto_type strata_t1796_ = x; __auto_type strata_t1797_ = mem(1, off); __auto_type strata_t1798_ = sized(rdx(), 2); ins2(strata_t1796_, "movw", strata_t1797_, strata_t1798_); }));
         }
-        (({ __auto_type strata_t1217_ = x; __auto_type strata_t1218_ = str_concat(str_concat("movw %dx, ", str_from_int(off)), "(%rax)"); out(strata_t1217_, strata_t1218_); }));
+        (({ __auto_type strata_t1799_ = x; __auto_type strata_t1800_ = sized(rdx(), 2); __auto_type strata_t1801_ = mem(0, off); ins2(strata_t1799_, "movw", strata_t1800_, strata_t1801_); }));
         off += 2;
     }
     if (off < size) {
         if (!zero) {
-            (({ __auto_type strata_t1219_ = x; __auto_type strata_t1220_ = str_concat(str_concat("movb ", str_from_int(off)), "(%rcx), %dl"); out(strata_t1219_, strata_t1220_); }));
+            (({ __auto_type strata_t1802_ = x; __auto_type strata_t1803_ = mem(1, off); __auto_type strata_t1804_ = sized(rdx(), 1); ins2(strata_t1802_, "movb", strata_t1803_, strata_t1804_); }));
         }
-        (({ __auto_type strata_t1221_ = x; __auto_type strata_t1222_ = str_concat(str_concat("movb %dl, ", str_from_int(off)), "(%rax)"); out(strata_t1221_, strata_t1222_); }));
+        (({ __auto_type strata_t1805_ = x; __auto_type strata_t1806_ = sized(rdx(), 1); __auto_type strata_t1807_ = mem(0, off); ins2(strata_t1805_, "movb", strata_t1806_, strata_t1807_); }));
     }
 }
 
@@ -10973,58 +15670,59 @@ const char* load_insn(int64_t ty) {
     return "movq";
 }
 
-void branch_cc(X64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next) {
+void arch_x64__branch_cc(X64* x, const char* cc, const char* ncc, int64_t t, int64_t e, int64_t next) {
     if (e == next) {
-        (({ __auto_type strata_t1223_ = x; __auto_type strata_t1224_ = (({ __auto_type strata_t1225_ = str_concat(str_concat("j", cc), " "); __auto_type strata_t1226_ = lbl(x, t); str_concat(strata_t1225_, strata_t1226_); })); out(strata_t1223_, strata_t1224_); }));
+        (({ __auto_type strata_t1808_ = x; __auto_type strata_t1809_ = str_concat("j", cc); __auto_type strata_t1810_ = target(arch_x64__lbl(x, t)); ins1(strata_t1808_, strata_t1809_, strata_t1810_); }));
     } else 
     if ((t == next) && (!str_eq(ncc, ""))) {
-        (({ __auto_type strata_t1227_ = x; __auto_type strata_t1228_ = (({ __auto_type strata_t1229_ = str_concat(str_concat("j", ncc), " "); __auto_type strata_t1230_ = lbl(x, e); str_concat(strata_t1229_, strata_t1230_); })); out(strata_t1227_, strata_t1228_); }));
+        (({ __auto_type strata_t1811_ = x; __auto_type strata_t1812_ = str_concat("j", ncc); __auto_type strata_t1813_ = target(arch_x64__lbl(x, e)); ins1(strata_t1811_, strata_t1812_, strata_t1813_); }));
     } else {
-        (({ __auto_type strata_t1231_ = x; __auto_type strata_t1232_ = (({ __auto_type strata_t1233_ = str_concat(str_concat("j", cc), " "); __auto_type strata_t1234_ = lbl(x, t); str_concat(strata_t1233_, strata_t1234_); })); out(strata_t1231_, strata_t1232_); }));
-        (({ __auto_type strata_t1235_ = x; __auto_type strata_t1236_ = str_concat("jmp ", lbl(x, e)); out(strata_t1235_, strata_t1236_); }));
+        (({ __auto_type strata_t1814_ = x; __auto_type strata_t1815_ = str_concat("j", cc); __auto_type strata_t1816_ = target(arch_x64__lbl(x, t)); ins1(strata_t1814_, strata_t1815_, strata_t1816_); }));
+        (({ __auto_type strata_t1817_ = x; __auto_type strata_t1818_ = target(arch_x64__lbl(x, e)); ins1(strata_t1817_, "jmp", strata_t1818_); }));
     }
 }
 
-void cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next) {
+void arch_x64__cmp_branch(X64* x, Ins i, int64_t t, int64_t e, int64_t next) {
     int64_t ty = i.ty;
     int64_t c = i.ty2;
     if (ir_is_float(ty)) {
         const char* s = fsuf(ty);
         if ((c == CLt) || (c == CLe)) {
-            fget(x, ty, i.b, "%xmm0");
-            fget(x, ty, i.a, "%xmm1");
+            (({ __auto_type strata_t1819_ = x; __auto_type strata_t1820_ = ty; __auto_type strata_t1821_ = i.b; __auto_type strata_t1822_ = xmm(0); arch_x64__fget(strata_t1819_, strata_t1820_, strata_t1821_, strata_t1822_); }));
+            (({ __auto_type strata_t1823_ = x; __auto_type strata_t1824_ = ty; __auto_type strata_t1825_ = i.a; __auto_type strata_t1826_ = xmm(1); arch_x64__fget(strata_t1823_, strata_t1824_, strata_t1825_, strata_t1826_); }));
         } else {
-            fget(x, ty, i.a, "%xmm0");
-            fget(x, ty, i.b, "%xmm1");
+            (({ __auto_type strata_t1827_ = x; __auto_type strata_t1828_ = ty; __auto_type strata_t1829_ = i.a; __auto_type strata_t1830_ = xmm(0); arch_x64__fget(strata_t1827_, strata_t1828_, strata_t1829_, strata_t1830_); }));
+            (({ __auto_type strata_t1831_ = x; __auto_type strata_t1832_ = ty; __auto_type strata_t1833_ = i.b; __auto_type strata_t1834_ = xmm(1); arch_x64__fget(strata_t1831_, strata_t1832_, strata_t1833_, strata_t1834_); }));
         }
-        out(x, str_concat(str_concat("ucomi", s), " %xmm1, %xmm0"));
+        (({ __auto_type strata_t1835_ = x; __auto_type strata_t1836_ = str_concat("ucomi", s); __auto_type strata_t1837_ = xmm(1); __auto_type strata_t1838_ = xmm(0); ins2(strata_t1835_, strata_t1836_, strata_t1837_, strata_t1838_); }));
         if ((c == CGt) || (c == CLt)) {
-            branch_cc(x, "a", "", t, e, next);
+            arch_x64__branch_cc(x, "a", "", t, e, next);
         } else 
         if ((c == CGe) || (c == CLe)) {
-            branch_cc(x, "ae", "", t, e, next);
+            arch_x64__branch_cc(x, "ae", "", t, e, next);
         } else 
         if (c == CEq) {
-            (({ __auto_type strata_t1237_ = x; __auto_type strata_t1238_ = str_concat("jp ", lbl(x, e)); out(strata_t1237_, strata_t1238_); }));
-            branch_cc(x, "e", "ne", t, e, next);
+            (({ __auto_type strata_t1839_ = x; __auto_type strata_t1840_ = target(arch_x64__lbl(x, e)); ins1(strata_t1839_, "jp", strata_t1840_); }));
+            arch_x64__branch_cc(x, "e", "ne", t, e, next);
         } else {
-            (({ __auto_type strata_t1239_ = x; __auto_type strata_t1240_ = str_concat("jp ", lbl(x, t)); out(strata_t1239_, strata_t1240_); }));
-            branch_cc(x, "ne", "e", t, e, next);
+            (({ __auto_type strata_t1841_ = x; __auto_type strata_t1842_ = target(arch_x64__lbl(x, t)); ins1(strata_t1841_, "jp", strata_t1842_); }));
+            arch_x64__branch_cc(x, "ne", "e", t, e, next);
         }
         return;
     }
-    const char* a = "%rax";
-    if (in_reg(x, i.a) && (((int64_t*)(x->lazy).data)[i.a] == 0)) {
+    Opnd a = rax();
+    if (arch_x64__in_reg(x, i.a) && (((int64_t*)(x->lazy).data)[i.a] == 0)) {
         a = opnd(x, i.a);
     } else {
-        get(x, i.a, "%rax");
+        (({ __auto_type strata_t1843_ = x; __auto_type strata_t1844_ = i.a; __auto_type strata_t1845_ = rax(); get(strata_t1843_, strata_t1844_, strata_t1845_); }));
     }
-    (({ __auto_type strata_t1241_ = x; __auto_type strata_t1242_ = str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a); out(strata_t1241_, strata_t1242_); }));
+    Opnd b = src(x, i.b);
+    ins2(x, "cmpq", b, a);
     bool u = ir_is_unsigned(ty);
-    (({ __auto_type strata_t1243_ = x; __auto_type strata_t1244_ = cc_of(c, u); __auto_type strata_t1245_ = cc_of(invert(c), u); branch_cc(strata_t1243_, strata_t1244_, strata_t1245_, t, e, next); }));
+    (({ __auto_type strata_t1846_ = x; __auto_type strata_t1847_ = arch_x64__cc_of(c, u); __auto_type strata_t1848_ = arch_x64__cc_of(invert(c), u); arch_x64__branch_cc(strata_t1846_, strata_t1847_, strata_t1848_, t, e, next); }));
 }
 
-void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
+void arch_x64__emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
     Ins i = ((Ins*)(f->code).data)[k];
     int64_t t = i.ty;
     int64_t next = (0 - 1);
@@ -11040,15 +15738,15 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
             {
                 int64_t v = ir_norm_imm(t, i.imm);
                 if (fits32(v)) {
-                    if (in_reg(x, i.dst) && (v == 0)) {
-                        const char* r = opnd(x, i.dst);
-                        (({ __auto_type strata_t1246_ = x; __auto_type strata_t1247_ = (({ __auto_type strata_t1248_ = str_concat(str_concat("xorl ", sub_reg(r, 4)), ", "); __auto_type strata_t1249_ = sub_reg(r, 4); str_concat(strata_t1248_, strata_t1249_); })); out(strata_t1246_, strata_t1247_); }));
+                    if (arch_x64__in_reg(x, i.dst) && (v == 0)) {
+                        Opnd r = opnd(x, i.dst);
+                        (({ __auto_type strata_t1849_ = x; __auto_type strata_t1850_ = sized(r, 4); __auto_type strata_t1851_ = sized(r, 4); ins2(strata_t1849_, "xorl", strata_t1850_, strata_t1851_); }));
                     } else {
-                        (({ __auto_type strata_t1250_ = x; __auto_type strata_t1251_ = (({ __auto_type strata_t1252_ = str_concat(str_concat("movq $", str_from_int(v)), ", "); __auto_type strata_t1253_ = opnd(x, i.dst); str_concat(strata_t1252_, strata_t1253_); })); out(strata_t1250_, strata_t1251_); }));
+                        (({ __auto_type strata_t1852_ = x; __auto_type strata_t1853_ = imm(v); __auto_type strata_t1854_ = opnd(x, i.dst); ins2(strata_t1852_, "movq", strata_t1853_, strata_t1854_); }));
                     }
                 } else {
-                    (({ __auto_type strata_t1254_ = x; __auto_type strata_t1255_ = str_concat(str_concat("movabsq $", str_from_int(v)), ", %rax"); out(strata_t1254_, strata_t1255_); }));
-                    put(x, "%rax", i.dst);
+                    (({ __auto_type strata_t1855_ = x; __auto_type strata_t1856_ = imm(v); __auto_type strata_t1857_ = rax(); ins2(strata_t1855_, "movabsq", strata_t1856_, strata_t1857_); }));
+                    (({ __auto_type strata_t1858_ = x; __auto_type strata_t1859_ = rax(); put(strata_t1858_, strata_t1859_, i.dst); }));
                 }
             }
             break;
@@ -11056,12 +15754,12 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case OFConst:
         {
             {
-                const char* c = float_const(x, t, i.sym);
-                if (in_reg(x, i.dst)) {
-                    (({ __auto_type strata_t1256_ = x; __auto_type strata_t1257_ = (({ __auto_type strata_t1258_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), "); __auto_type strata_t1259_ = opnd(x, i.dst); str_concat(strata_t1258_, strata_t1259_); })); out(strata_t1256_, strata_t1257_); }));
+                const char* c = arch_x64__float_const(x, t, i.sym);
+                if (arch_x64__in_reg(x, i.dst)) {
+                    (({ __auto_type strata_t1860_ = x; __auto_type strata_t1861_ = str_concat("mov", fsuf(t)); __auto_type strata_t1862_ = rip(c, 0); __auto_type strata_t1863_ = opnd(x, i.dst); ins2(strata_t1860_, strata_t1861_, strata_t1862_, strata_t1863_); }));
                 } else {
-                    (({ __auto_type strata_t1260_ = x; __auto_type strata_t1261_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), c), "(%rip), %xmm0"); out(strata_t1260_, strata_t1261_); }));
-                    fput(x, t, "%xmm0", i.dst);
+                    (({ __auto_type strata_t1864_ = x; __auto_type strata_t1865_ = str_concat("mov", fsuf(t)); __auto_type strata_t1866_ = rip(c, 0); __auto_type strata_t1867_ = xmm(0); ins2(strata_t1864_, strata_t1865_, strata_t1866_, strata_t1867_); }));
+                    (({ __auto_type strata_t1868_ = x; __auto_type strata_t1869_ = t; __auto_type strata_t1870_ = xmm(0); arch_x64__fput(strata_t1868_, strata_t1869_, strata_t1870_, i.dst); }));
                 }
             }
             break;
@@ -11069,17 +15767,17 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case OCopy:
         {
             if (ir_is_float(t)) {
-                fget(x, t, i.a, "%xmm0");
-                fput(x, t, "%xmm0", i.dst);
+                (({ __auto_type strata_t1871_ = x; __auto_type strata_t1872_ = t; __auto_type strata_t1873_ = i.a; __auto_type strata_t1874_ = xmm(0); arch_x64__fget(strata_t1871_, strata_t1872_, strata_t1873_, strata_t1874_); }));
+                (({ __auto_type strata_t1875_ = x; __auto_type strata_t1876_ = t; __auto_type strata_t1877_ = xmm(0); arch_x64__fput(strata_t1875_, strata_t1876_, strata_t1877_, i.dst); }));
             } else 
-            if (in_reg(x, i.dst)) {
-                (({ __auto_type strata_t1262_ = x; __auto_type strata_t1263_ = i.a; __auto_type strata_t1264_ = opnd(x, i.dst); get(strata_t1262_, strata_t1263_, strata_t1264_); }));
+            if (arch_x64__in_reg(x, i.dst)) {
+                (({ __auto_type strata_t1878_ = x; __auto_type strata_t1879_ = i.a; __auto_type strata_t1880_ = opnd(x, i.dst); get(strata_t1878_, strata_t1879_, strata_t1880_); }));
             } else 
             if (((int64_t*)(x->lazy).data)[i.a] == 1) {
-                (({ __auto_type strata_t1265_ = x; __auto_type strata_t1266_ = (({ __auto_type strata_t1267_ = str_concat(str_concat("movq ", src(x, i.a)), ", "); __auto_type strata_t1268_ = opnd(x, i.dst); str_concat(strata_t1267_, strata_t1268_); })); out(strata_t1265_, strata_t1266_); }));
+                (({ __auto_type strata_t1881_ = x; __auto_type strata_t1882_ = src(x, i.a); __auto_type strata_t1883_ = opnd(x, i.dst); ins2(strata_t1881_, "movq", strata_t1882_, strata_t1883_); }));
             } else {
-                get(x, i.a, "%rax");
-                put(x, "%rax", i.dst);
+                (({ __auto_type strata_t1884_ = x; __auto_type strata_t1885_ = i.a; __auto_type strata_t1886_ = rax(); get(strata_t1884_, strata_t1885_, strata_t1886_); }));
+                (({ __auto_type strata_t1887_ = x; __auto_type strata_t1888_ = rax(); put(strata_t1887_, strata_t1888_, i.dst); }));
             }
             break;
         }
@@ -11098,7 +15796,7 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                 if (i.op == OMul) {
                     fop = "mul";
                 }
-                float_op(x, i, fop);
+                arch_x64__float_op(x, i, fop);
             } else {
                 const char* op = "addq";
                 if (i.op == OSub) {
@@ -11116,10 +15814,11 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                 if (i.op == OXor) {
                     op = "xorq";
                 }
-                const char* w = work(x, i);
+                Opnd w = work(x, i);
                 get(x, i.a, w);
-                (({ __auto_type strata_t1269_ = x; __auto_type strata_t1270_ = str_concat(str_concat((({ __auto_type strata_t1271_ = str_concat(op, " "); __auto_type strata_t1272_ = src(x, i.b); str_concat(strata_t1271_, strata_t1272_); })), ", "), w); out(strata_t1269_, strata_t1270_); }));
-                norm(x, t, w);
+                Opnd b = src(x, i.b);
+                ins2(x, op, b, w);
+                arch_x64__norm(x, t, w);
                 put(x, w, i.dst);
             }
             break;
@@ -11128,22 +15827,22 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case OMod:
         {
             if (ir_is_float(t)) {
-                float_op(x, i, "div");
+                arch_x64__float_op(x, i, "div");
             } else {
-                get(x, i.a, "%rax");
-                get(x, i.b, "%rcx");
+                (({ __auto_type strata_t1889_ = x; __auto_type strata_t1890_ = i.a; __auto_type strata_t1891_ = rax(); get(strata_t1889_, strata_t1890_, strata_t1891_); }));
+                (({ __auto_type strata_t1892_ = x; __auto_type strata_t1893_ = i.b; __auto_type strata_t1894_ = rcx(); get(strata_t1892_, strata_t1893_, strata_t1894_); }));
                 if (ir_is_unsigned(t)) {
-                    out(x, "xorl %edx, %edx");
-                    out(x, "divq %rcx");
+                    (({ __auto_type strata_t1895_ = x; __auto_type strata_t1896_ = sized(rdx(), 4); __auto_type strata_t1897_ = sized(rdx(), 4); ins2(strata_t1895_, "xorl", strata_t1896_, strata_t1897_); }));
+                    (({ __auto_type strata_t1898_ = x; __auto_type strata_t1899_ = rcx(); ins1(strata_t1898_, "divq", strata_t1899_); }));
                 } else {
-                    out(x, "cqto");
-                    out(x, "idivq %rcx");
+                    ins0(x, "cqto");
+                    (({ __auto_type strata_t1900_ = x; __auto_type strata_t1901_ = rcx(); ins1(strata_t1900_, "idivq", strata_t1901_); }));
                 }
-                const char* r = "%rax";
+                Opnd r = rax();
                 if (i.op == OMod) {
-                    r = "%rdx";
+                    r = rdx();
                 }
-                norm(x, t, r);
+                arch_x64__norm(x, t, r);
                 put(x, r, i.dst);
             }
             break;
@@ -11152,7 +15851,7 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case OShr:
         {
             {
-                const char* w = work(x, i);
+                Opnd w = work(x, i);
                 get(x, i.a, w);
                 const char* op = "shlq";
                 if (i.op == OShr) {
@@ -11163,12 +15862,12 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                     }
                 }
                 if (((int64_t*)(x->lazy).data)[i.b] == 1) {
-                    (({ __auto_type strata_t1273_ = x; __auto_type strata_t1274_ = str_concat(str_concat((({ __auto_type strata_t1275_ = str_concat(op, " "); __auto_type strata_t1276_ = src(x, i.b); str_concat(strata_t1275_, strata_t1276_); })), ", "), w); out(strata_t1273_, strata_t1274_); }));
+                    (({ __auto_type strata_t1902_ = x; __auto_type strata_t1903_ = op; __auto_type strata_t1904_ = src(x, i.b); ins2(strata_t1902_, strata_t1903_, strata_t1904_, w); }));
                 } else {
-                    get(x, i.b, "%rcx");
-                    out(x, str_concat(str_concat(op, " %cl, "), w));
+                    (({ __auto_type strata_t1905_ = x; __auto_type strata_t1906_ = i.b; __auto_type strata_t1907_ = rcx(); get(strata_t1905_, strata_t1906_, strata_t1907_); }));
+                    (({ __auto_type strata_t1908_ = x; __auto_type strata_t1909_ = op; __auto_type strata_t1910_ = sized(rcx(), 1); ins2(strata_t1908_, strata_t1909_, strata_t1910_, w); }));
                 }
-                norm(x, t, w);
+                arch_x64__norm(x, t, w);
                 put(x, w, i.dst);
             }
             break;
@@ -11176,23 +15875,23 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case ONeg:
         {
             if (t == KF32) {
-                fget(x, t, i.a, "%xmm0");
-                out(x, "movd %xmm0, %eax");
-                out(x, "xorl $0x80000000, %eax");
-                out(x, "movd %eax, %xmm0");
-                fput(x, t, "%xmm0", i.dst);
+                (({ __auto_type strata_t1911_ = x; __auto_type strata_t1912_ = t; __auto_type strata_t1913_ = i.a; __auto_type strata_t1914_ = xmm(0); arch_x64__fget(strata_t1911_, strata_t1912_, strata_t1913_, strata_t1914_); }));
+                (({ __auto_type strata_t1915_ = x; __auto_type strata_t1916_ = xmm(0); __auto_type strata_t1917_ = sized(rax(), 4); ins2(strata_t1915_, "movd", strata_t1916_, strata_t1917_); }));
+                (({ __auto_type strata_t1918_ = x; __auto_type strata_t1919_ = imm(2147483648); __auto_type strata_t1920_ = sized(rax(), 4); ins2(strata_t1918_, "xorl", strata_t1919_, strata_t1920_); }));
+                (({ __auto_type strata_t1921_ = x; __auto_type strata_t1922_ = sized(rax(), 4); __auto_type strata_t1923_ = xmm(0); ins2(strata_t1921_, "movd", strata_t1922_, strata_t1923_); }));
+                (({ __auto_type strata_t1924_ = x; __auto_type strata_t1925_ = t; __auto_type strata_t1926_ = xmm(0); arch_x64__fput(strata_t1924_, strata_t1925_, strata_t1926_, i.dst); }));
             } else 
             if (t == KF64) {
-                fget(x, t, i.a, "%xmm0");
-                out(x, "movq %xmm0, %rax");
-                out(x, "btcq $63, %rax");
-                out(x, "movq %rax, %xmm0");
-                fput(x, t, "%xmm0", i.dst);
+                (({ __auto_type strata_t1927_ = x; __auto_type strata_t1928_ = t; __auto_type strata_t1929_ = i.a; __auto_type strata_t1930_ = xmm(0); arch_x64__fget(strata_t1927_, strata_t1928_, strata_t1929_, strata_t1930_); }));
+                (({ __auto_type strata_t1931_ = x; __auto_type strata_t1932_ = xmm(0); __auto_type strata_t1933_ = rax(); ins2(strata_t1931_, "movq", strata_t1932_, strata_t1933_); }));
+                (({ __auto_type strata_t1934_ = x; __auto_type strata_t1935_ = imm(63); __auto_type strata_t1936_ = rax(); ins2(strata_t1934_, "btcq", strata_t1935_, strata_t1936_); }));
+                (({ __auto_type strata_t1937_ = x; __auto_type strata_t1938_ = rax(); __auto_type strata_t1939_ = xmm(0); ins2(strata_t1937_, "movq", strata_t1938_, strata_t1939_); }));
+                (({ __auto_type strata_t1940_ = x; __auto_type strata_t1941_ = t; __auto_type strata_t1942_ = xmm(0); arch_x64__fput(strata_t1940_, strata_t1941_, strata_t1942_, i.dst); }));
             } else {
-                const char* w = work(x, i);
+                Opnd w = work(x, i);
                 get(x, i.a, w);
-                out(x, str_concat("negq ", w));
-                norm(x, t, w);
+                ins1(x, "negq", w);
+                arch_x64__norm(x, t, w);
                 put(x, w, i.dst);
             }
             break;
@@ -11200,19 +15899,19 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case ONot:
         {
             {
-                const char* w = work(x, i);
+                Opnd w = work(x, i);
                 get(x, i.a, w);
-                out(x, str_concat("notq ", w));
-                norm(x, t, w);
+                ins1(x, "notq", w);
+                arch_x64__norm(x, t, w);
                 put(x, w, i.dst);
             }
             break;
         }
         case OSqrt:
         {
-            fget(x, t, i.a, "%xmm1");
-            (({ __auto_type strata_t1277_ = x; __auto_type strata_t1278_ = str_concat(str_concat("sqrt", fsuf(t)), " %xmm1, %xmm0"); out(strata_t1277_, strata_t1278_); }));
-            fput(x, t, "%xmm0", i.dst);
+            (({ __auto_type strata_t1943_ = x; __auto_type strata_t1944_ = t; __auto_type strata_t1945_ = i.a; __auto_type strata_t1946_ = xmm(1); arch_x64__fget(strata_t1943_, strata_t1944_, strata_t1945_, strata_t1946_); }));
+            (({ __auto_type strata_t1947_ = x; __auto_type strata_t1948_ = str_concat("sqrt", fsuf(t)); __auto_type strata_t1949_ = xmm(1); __auto_type strata_t1950_ = xmm(0); ins2(strata_t1947_, strata_t1948_, strata_t1949_, strata_t1950_); }));
+            (({ __auto_type strata_t1951_ = x; __auto_type strata_t1952_ = t; __auto_type strata_t1953_ = xmm(0); arch_x64__fput(strata_t1951_, strata_t1952_, strata_t1953_, i.dst); }));
             break;
         }
         case OCmp:
@@ -11223,7 +15922,7 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                     if (((k + 2) < f->code.len) && (((Ins*)(f->code).data)[(k + 2)].op == OLabel)) {
                         nx = ((Ins*)(f->code).data)[(k + 2)].imm;
                     }
-                    cmp_branch(x, i, ((Ins*)(f->code).data)[(k + 1)].imm, ((Ins*)(f->code).data)[(k + 1)].imm2, nx);
+                    arch_x64__cmp_branch(x, i, ((Ins*)(f->code).data)[(k + 1)].imm, ((Ins*)(f->code).data)[(k + 1)].imm2, nx);
                 } else {
                     emit_cmp(x, i);
                 }
@@ -11232,29 +15931,29 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         }
         case OConv:
         {
-            emit_conv(x, i);
+            arch_x64__emit_conv(x, i);
             break;
         }
         case OLoad:
         {
             if (ir_is_float(t)) {
-                const char* m = mem_at(x, i.a, i.imm);
-                if (in_reg(x, i.dst)) {
-                    (({ __auto_type strata_t1279_ = x; __auto_type strata_t1280_ = (({ __auto_type strata_t1281_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", "); __auto_type strata_t1282_ = opnd(x, i.dst); str_concat(strata_t1281_, strata_t1282_); })); out(strata_t1279_, strata_t1280_); }));
+                Opnd m = arch_x64__mem_at(x, i.a, i.imm);
+                if (arch_x64__in_reg(x, i.dst)) {
+                    (({ __auto_type strata_t1954_ = x; __auto_type strata_t1955_ = str_concat("mov", fsuf(t)); __auto_type strata_t1956_ = m; __auto_type strata_t1957_ = opnd(x, i.dst); ins2(strata_t1954_, strata_t1955_, strata_t1956_, strata_t1957_); }));
                 } else {
-                    (({ __auto_type strata_t1283_ = x; __auto_type strata_t1284_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"); out(strata_t1283_, strata_t1284_); }));
-                    fput(x, t, "%xmm0", i.dst);
+                    (({ __auto_type strata_t1958_ = x; __auto_type strata_t1959_ = str_concat("mov", fsuf(t)); __auto_type strata_t1960_ = m; __auto_type strata_t1961_ = xmm(0); ins2(strata_t1958_, strata_t1959_, strata_t1960_, strata_t1961_); }));
+                    (({ __auto_type strata_t1962_ = x; __auto_type strata_t1963_ = t; __auto_type strata_t1964_ = xmm(0); arch_x64__fput(strata_t1962_, strata_t1963_, strata_t1964_, i.dst); }));
                 }
             } else {
-                const char* m = mem_at(x, i.a, i.imm);
-                const char* w = "%rax";
-                if (in_reg(x, i.dst)) {
+                Opnd m = arch_x64__mem_at(x, i.a, i.imm);
+                Opnd w = rax();
+                if (arch_x64__in_reg(x, i.dst)) {
                     w = opnd(x, i.dst);
                 }
                 if (t == KU32) {
-                    (({ __auto_type strata_t1285_ = x; __auto_type strata_t1286_ = (({ __auto_type strata_t1287_ = str_concat(str_concat("movl ", m), ", "); __auto_type strata_t1288_ = sub_reg(w, 4); str_concat(strata_t1287_, strata_t1288_); })); out(strata_t1285_, strata_t1286_); }));
+                    (({ __auto_type strata_t1965_ = x; __auto_type strata_t1966_ = m; __auto_type strata_t1967_ = sized(w, 4); ins2(strata_t1965_, "movl", strata_t1966_, strata_t1967_); }));
                 } else {
-                    (({ __auto_type strata_t1289_ = x; __auto_type strata_t1290_ = str_concat(str_concat(str_concat(str_concat(load_insn(t), " "), m), ", "), w); out(strata_t1289_, strata_t1290_); }));
+                    (({ __auto_type strata_t1968_ = x; __auto_type strata_t1969_ = load_insn(t); ins2(strata_t1968_, strata_t1969_, m, w); }));
                 }
                 put(x, w, i.dst);
             }
@@ -11263,13 +15962,13 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         case OStore:
         {
             {
-                const char* m = mem_at(x, i.a, i.imm);
+                Opnd m = arch_x64__mem_at(x, i.a, i.imm);
                 if (ir_is_float(t)) {
-                    if (in_reg(x, i.b)) {
-                        (({ __auto_type strata_t1291_ = x; __auto_type strata_t1292_ = str_concat(str_concat((({ __auto_type strata_t1293_ = str_concat(str_concat("mov", fsuf(t)), " "); __auto_type strata_t1294_ = opnd(x, i.b); str_concat(strata_t1293_, strata_t1294_); })), ", "), m); out(strata_t1291_, strata_t1292_); }));
+                    if (arch_x64__in_reg(x, i.b)) {
+                        (({ __auto_type strata_t1970_ = x; __auto_type strata_t1971_ = str_concat("mov", fsuf(t)); __auto_type strata_t1972_ = opnd(x, i.b); ins2(strata_t1970_, strata_t1971_, strata_t1972_, m); }));
                     } else {
-                        fget(x, t, i.b, "%xmm0");
-                        (({ __auto_type strata_t1295_ = x; __auto_type strata_t1296_ = str_concat(str_concat(str_concat("mov", fsuf(t)), " %xmm0, "), m); out(strata_t1295_, strata_t1296_); }));
+                        (({ __auto_type strata_t1973_ = x; __auto_type strata_t1974_ = t; __auto_type strata_t1975_ = i.b; __auto_type strata_t1976_ = xmm(0); arch_x64__fget(strata_t1973_, strata_t1974_, strata_t1975_, strata_t1976_); }));
+                        (({ __auto_type strata_t1977_ = x; __auto_type strata_t1978_ = str_concat("mov", fsuf(t)); __auto_type strata_t1979_ = xmm(0); ins2(strata_t1977_, strata_t1978_, strata_t1979_, m); }));
                     }
                 } else {
                     int64_t sz = ir_size(t);
@@ -11284,13 +15983,13 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
                         mv = "movl";
                     }
                     if (((int64_t*)(x->lazy).data)[i.b] == 1) {
-                        (({ __auto_type strata_t1297_ = x; __auto_type strata_t1298_ = str_concat(str_concat((({ __auto_type strata_t1299_ = str_concat(mv, " "); __auto_type strata_t1300_ = src(x, i.b); str_concat(strata_t1299_, strata_t1300_); })), ", "), m); out(strata_t1297_, strata_t1298_); }));
+                        (({ __auto_type strata_t1980_ = x; __auto_type strata_t1981_ = mv; __auto_type strata_t1982_ = src(x, i.b); ins2(strata_t1980_, strata_t1981_, strata_t1982_, m); }));
                     } else 
-                    if (in_reg(x, i.b) && (((int64_t*)(x->lazy).data)[i.b] == 0)) {
-                        (({ __auto_type strata_t1301_ = x; __auto_type strata_t1302_ = str_concat(str_concat((({ __auto_type strata_t1303_ = str_concat(mv, " "); __auto_type strata_t1304_ = sub_reg(opnd(x, i.b), sz); str_concat(strata_t1303_, strata_t1304_); })), ", "), m); out(strata_t1301_, strata_t1302_); }));
+                    if (arch_x64__in_reg(x, i.b) && (((int64_t*)(x->lazy).data)[i.b] == 0)) {
+                        (({ __auto_type strata_t1983_ = x; __auto_type strata_t1984_ = mv; __auto_type strata_t1985_ = sized(opnd(x, i.b), sz); ins2(strata_t1983_, strata_t1984_, strata_t1985_, m); }));
                     } else {
-                        get(x, i.b, "%rcx");
-                        (({ __auto_type strata_t1305_ = x; __auto_type strata_t1306_ = str_concat(str_concat((({ __auto_type strata_t1307_ = str_concat(mv, " "); __auto_type strata_t1308_ = sub_reg("%rcx", sz); str_concat(strata_t1307_, strata_t1308_); })), ", "), m); out(strata_t1305_, strata_t1306_); }));
+                        (({ __auto_type strata_t1986_ = x; __auto_type strata_t1987_ = i.b; __auto_type strata_t1988_ = rcx(); get(strata_t1986_, strata_t1987_, strata_t1988_); }));
+                        (({ __auto_type strata_t1989_ = x; __auto_type strata_t1990_ = mv; __auto_type strata_t1991_ = sized(rcx(), sz); ins2(strata_t1989_, strata_t1990_, strata_t1991_, m); }));
                     }
                 }
             }
@@ -11298,63 +15997,89 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         }
         case OSlotAddr:
         {
-            (({ __auto_type strata_t1309_ = x; __auto_type strata_t1310_ = str_concat(str_concat("leaq ", slot_mem(x, i.imm, 0)), ", %rax"); out(strata_t1309_, strata_t1310_); }));
-            put(x, "%rax", i.dst);
+            (({ __auto_type strata_t1992_ = x; __auto_type strata_t1993_ = slot_mem(x, i.imm, 0); __auto_type strata_t1994_ = rax(); ins2(strata_t1992_, "leaq", strata_t1993_, strata_t1994_); }));
+            (({ __auto_type strata_t1995_ = x; __auto_type strata_t1996_ = rax(); put(strata_t1995_, strata_t1996_, i.dst); }));
             break;
         }
         case OSymAddr:
         {
-            out(x, str_concat(str_concat("leaq ", i.sym), "(%rip), %rax"));
-            put(x, "%rax", i.dst);
+            (({ __auto_type strata_t1997_ = x; __auto_type strata_t1998_ = rip(i.sym, 0); __auto_type strata_t1999_ = rax(); ins2(strata_t1997_, "leaq", strata_t1998_, strata_t1999_); }));
+            (({ __auto_type strata_t2000_ = x; __auto_type strata_t2001_ = rax(); put(strata_t2000_, strata_t2001_, i.dst); }));
             break;
         }
         case OCopyMem:
         {
-            get(x, i.a, "%rax");
-            get(x, i.b, "%rcx");
-            copy_bytes(x, i.imm, false);
+            (({ __auto_type strata_t2002_ = x; __auto_type strata_t2003_ = i.a; __auto_type strata_t2004_ = rax(); get(strata_t2002_, strata_t2003_, strata_t2004_); }));
+            (({ __auto_type strata_t2005_ = x; __auto_type strata_t2006_ = i.b; __auto_type strata_t2007_ = rcx(); get(strata_t2005_, strata_t2006_, strata_t2007_); }));
+            arch_x64__copy_bytes(x, i.imm, false);
             break;
         }
         case OZeroMem:
         {
-            get(x, i.a, "%rax");
-            copy_bytes(x, i.imm, true);
+            (({ __auto_type strata_t2008_ = x; __auto_type strata_t2009_ = i.a; __auto_type strata_t2010_ = rax(); get(strata_t2008_, strata_t2009_, strata_t2010_); }));
+            arch_x64__copy_bytes(x, i.imm, true);
             break;
         }
         case OParam:
         {
-            emit_param(x, i);
+            if (sysv_mode) {
+                emit_param_sysv(x, f, i);
+            } else {
+                arch_x64__emit_param(x, i);
+            }
             break;
         }
         case OCall:
         {
-            emit_call(x, f, i);
+            arch_x64__emit_call(x, f, i);
             break;
         }
         case ORet:
         {
+            if ((i.a >= 0) && (f->ret_spec != 0)) {
+                (({ __auto_type strata_t2011_ = x; __auto_type strata_t2012_ = i.a; __auto_type strata_t2013_ = r11(); get(strata_t2011_, strata_t2012_, strata_t2013_); }));
+                int64_t ni = 0;
+                int64_t ns = 0;
+                for (int64_t h = 0; h < (f->ret_spec & 3); h++) {
+                    int64_t cls = ((f->ret_spec >> 2) & 3);
+                    if (h == 1) {
+                        cls = ((f->ret_spec >> 4) & 3);
+                    }
+                    if (cls == 1) {
+                        (({ __auto_type strata_t2014_ = x; __auto_type strata_t2015_ = mem(11, (8 * h)); __auto_type strata_t2016_ = xmm(ns); ins2(strata_t2014_, "movsd", strata_t2015_, strata_t2016_); }));
+                        ns += 1;
+                    } else {
+                        if (ni == 0) {
+                            (({ __auto_type strata_t2017_ = x; __auto_type strata_t2018_ = mem(11, (8 * h)); __auto_type strata_t2019_ = rax(); ins2(strata_t2017_, "movq", strata_t2018_, strata_t2019_); }));
+                        } else {
+                            (({ __auto_type strata_t2020_ = x; __auto_type strata_t2021_ = mem(11, (8 * h)); __auto_type strata_t2022_ = rdx(); ins2(strata_t2020_, "movq", strata_t2021_, strata_t2022_); }));
+                        }
+                        ni += 1;
+                    }
+                }
+            } else 
             if (i.a >= 0) {
                 int64_t rt = f->ret_ty;
                 if (ir_is_float(rt)) {
-                    fget(x, rt, i.a, "%xmm0");
+                    (({ __auto_type strata_t2023_ = x; __auto_type strata_t2024_ = rt; __auto_type strata_t2025_ = i.a; __auto_type strata_t2026_ = xmm(0); arch_x64__fget(strata_t2023_, strata_t2024_, strata_t2025_, strata_t2026_); }));
                 } else {
-                    get(x, i.a, "%rax");
+                    (({ __auto_type strata_t2027_ = x; __auto_type strata_t2028_ = i.a; __auto_type strata_t2029_ = rax(); get(strata_t2027_, strata_t2028_, strata_t2029_); }));
                 }
             }
             if ((k + 1) < f->code.len) {
-                out(x, str_concat("jmp ", epilogue));
+                (({ __auto_type strata_t2030_ = x; __auto_type strata_t2031_ = target(epilogue); ins1(strata_t2030_, "jmp", strata_t2031_); }));
             }
             break;
         }
         case OLabel:
         {
-            (({ __auto_type strata_t1311_ = x; __auto_type strata_t1312_ = lbl(x, i.imm); out_label(strata_t1311_, strata_t1312_); }));
+            (({ __auto_type strata_t2032_ = x; __auto_type strata_t2033_ = arch_x64__lbl(x, i.imm); arch_x64__label(strata_t2032_, strata_t2033_); }));
             break;
         }
         case OJmp:
         {
             if (i.imm != next) {
-                (({ __auto_type strata_t1313_ = x; __auto_type strata_t1314_ = str_concat("jmp ", lbl(x, i.imm)); out(strata_t1313_, strata_t1314_); }));
+                (({ __auto_type strata_t2034_ = x; __auto_type strata_t2035_ = target(arch_x64__lbl(x, i.imm)); ins1(strata_t2034_, "jmp", strata_t2035_); }));
             }
             break;
         }
@@ -11362,13 +16087,13 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
         {
             if (((int64_t*)(x->lazy).data)[i.a] == 1) {
                 if (((int64_t*)(x->lval).data)[i.a] != 0) {
-                    (({ __auto_type strata_t1315_ = x; __auto_type strata_t1316_ = str_concat("jmp ", lbl(x, i.imm)); out(strata_t1315_, strata_t1316_); }));
+                    (({ __auto_type strata_t2036_ = x; __auto_type strata_t2037_ = target(arch_x64__lbl(x, i.imm)); ins1(strata_t2036_, "jmp", strata_t2037_); }));
                 } else {
-                    (({ __auto_type strata_t1317_ = x; __auto_type strata_t1318_ = str_concat("jmp ", lbl(x, i.imm2)); out(strata_t1317_, strata_t1318_); }));
+                    (({ __auto_type strata_t2038_ = x; __auto_type strata_t2039_ = target(arch_x64__lbl(x, i.imm2)); ins1(strata_t2038_, "jmp", strata_t2039_); }));
                 }
             } else {
-                (({ __auto_type strata_t1319_ = x; __auto_type strata_t1320_ = str_concat("cmpq $0, ", opnd(x, i.a)); out(strata_t1319_, strata_t1320_); }));
-                branch_cc(x, "ne", "e", i.imm, i.imm2, next);
+                (({ __auto_type strata_t2040_ = x; __auto_type strata_t2041_ = imm(0); __auto_type strata_t2042_ = opnd(x, i.a); ins2(strata_t2040_, "cmpq", strata_t2041_, strata_t2042_); }));
+                arch_x64__branch_cc(x, "ne", "e", i.imm, i.imm2, next);
             }
             break;
         }
@@ -11381,132 +16106,339 @@ void emit_ins(X64* x, IrFunc* f, int64_t k, const char* epilogue) {
     }
 }
 
-void float_op(X64* x, Ins i, const char* fop) {
+void arch_x64__float_op(X64* x, Ins i, const char* fop) {
     int64_t t = i.ty;
-    const char* w = "%xmm0";
-    if (in_reg(x, i.dst) && (!(in_reg(x, i.b) && (({ __auto_type strata_t1321_ = reg_of(x, i.b); __auto_type strata_t1322_ = reg_of(x, i.dst); (strata_t1321_ == strata_t1322_); }))))) {
+    Opnd w = xmm(0);
+    if (arch_x64__in_reg(x, i.dst) && (!(arch_x64__in_reg(x, i.b) && (({ __auto_type strata_t2043_ = arch_x64__reg_of(x, i.b); __auto_type strata_t2044_ = arch_x64__reg_of(x, i.dst); (strata_t2043_ == strata_t2044_); }))))) {
         w = opnd(x, i.dst);
     }
-    fget(x, t, i.a, w);
-    (({ __auto_type strata_t1323_ = x; __auto_type strata_t1324_ = str_concat(str_concat((({ __auto_type strata_t1327_ = str_concat((({ __auto_type strata_t1325_ = fop; __auto_type strata_t1326_ = fsuf(t); str_concat(strata_t1325_, strata_t1326_); })), " "); __auto_type strata_t1328_ = opnd(x, i.b); str_concat(strata_t1327_, strata_t1328_); })), ", "), w); out(strata_t1323_, strata_t1324_); }));
-    fput(x, t, w, i.dst);
+    arch_x64__fget(x, t, i.a, w);
+    (({ __auto_type strata_t2045_ = x; __auto_type strata_t2046_ = (({ __auto_type strata_t2047_ = fop; __auto_type strata_t2048_ = fsuf(t); str_concat(strata_t2047_, strata_t2048_); })); __auto_type strata_t2049_ = opnd(x, i.b); ins2(strata_t2045_, strata_t2046_, strata_t2049_, w); }));
+    arch_x64__fput(x, t, w, i.dst);
 }
 
 void emit_cmp(X64* x, Ins i) {
     int64_t t = i.ty;
+    Opnd al = sized(rax(), 1);
+    Opnd cl = sized(rcx(), 1);
     if (ir_is_float(t)) {
         const char* s = fsuf(t);
         int64_t c = i.ty2;
         if ((c == CLt) || (c == CLe)) {
-            fget(x, t, i.b, "%xmm0");
-            fget(x, t, i.a, "%xmm1");
-            out(x, str_concat(str_concat("ucomi", s), " %xmm1, %xmm0"));
+            (({ __auto_type strata_t2050_ = x; __auto_type strata_t2051_ = t; __auto_type strata_t2052_ = i.b; __auto_type strata_t2053_ = xmm(0); arch_x64__fget(strata_t2050_, strata_t2051_, strata_t2052_, strata_t2053_); }));
+            (({ __auto_type strata_t2054_ = x; __auto_type strata_t2055_ = t; __auto_type strata_t2056_ = i.a; __auto_type strata_t2057_ = xmm(1); arch_x64__fget(strata_t2054_, strata_t2055_, strata_t2056_, strata_t2057_); }));
+            (({ __auto_type strata_t2058_ = x; __auto_type strata_t2059_ = str_concat("ucomi", s); __auto_type strata_t2060_ = xmm(1); __auto_type strata_t2061_ = xmm(0); ins2(strata_t2058_, strata_t2059_, strata_t2060_, strata_t2061_); }));
             if (c == CLt) {
-                out(x, "seta %al");
+                ins1(x, "seta", al);
             } else {
-                out(x, "setae %al");
+                ins1(x, "setae", al);
             }
         } else {
-            fget(x, t, i.a, "%xmm0");
-            fget(x, t, i.b, "%xmm1");
-            out(x, str_concat(str_concat("ucomi", s), " %xmm1, %xmm0"));
+            (({ __auto_type strata_t2062_ = x; __auto_type strata_t2063_ = t; __auto_type strata_t2064_ = i.a; __auto_type strata_t2065_ = xmm(0); arch_x64__fget(strata_t2062_, strata_t2063_, strata_t2064_, strata_t2065_); }));
+            (({ __auto_type strata_t2066_ = x; __auto_type strata_t2067_ = t; __auto_type strata_t2068_ = i.b; __auto_type strata_t2069_ = xmm(1); arch_x64__fget(strata_t2066_, strata_t2067_, strata_t2068_, strata_t2069_); }));
+            (({ __auto_type strata_t2070_ = x; __auto_type strata_t2071_ = str_concat("ucomi", s); __auto_type strata_t2072_ = xmm(1); __auto_type strata_t2073_ = xmm(0); ins2(strata_t2070_, strata_t2071_, strata_t2072_, strata_t2073_); }));
             if (c == CGt) {
-                out(x, "seta %al");
+                ins1(x, "seta", al);
             } else 
             if (c == CGe) {
-                out(x, "setae %al");
+                ins1(x, "setae", al);
             } else 
             if (c == CEq) {
-                out(x, "sete %al");
-                out(x, "setnp %cl");
-                out(x, "andb %cl, %al");
+                ins1(x, "sete", al);
+                ins1(x, "setnp", cl);
+                ins2(x, "andb", cl, al);
             } else {
-                out(x, "setne %al");
-                out(x, "setp %cl");
-                out(x, "orb %cl, %al");
+                ins1(x, "setne", al);
+                ins1(x, "setp", cl);
+                ins2(x, "orb", cl, al);
             }
         }
     } else {
-        const char* a = "%rax";
-        if (in_reg(x, i.a) && (((int64_t*)(x->lazy).data)[i.a] == 0)) {
+        Opnd a = rax();
+        if (arch_x64__in_reg(x, i.a) && (((int64_t*)(x->lazy).data)[i.a] == 0)) {
             a = opnd(x, i.a);
         } else {
-            get(x, i.a, "%rax");
+            (({ __auto_type strata_t2074_ = x; __auto_type strata_t2075_ = i.a; __auto_type strata_t2076_ = rax(); get(strata_t2074_, strata_t2075_, strata_t2076_); }));
         }
-        (({ __auto_type strata_t1329_ = x; __auto_type strata_t1330_ = str_concat(str_concat(str_concat("cmpq ", src(x, i.b)), ", "), a); out(strata_t1329_, strata_t1330_); }));
-        (({ __auto_type strata_t1331_ = x; __auto_type strata_t1332_ = str_concat(str_concat("set", (({ __auto_type strata_t1333_ = i.ty2; __auto_type strata_t1334_ = ir_is_unsigned(t); cc_of(strata_t1333_, strata_t1334_); }))), " %al"); out(strata_t1331_, strata_t1332_); }));
+        Opnd b = src(x, i.b);
+        ins2(x, "cmpq", b, a);
+        (({ __auto_type strata_t2077_ = x; __auto_type strata_t2078_ = str_concat("set", (({ __auto_type strata_t2079_ = i.ty2; __auto_type strata_t2080_ = ir_is_unsigned(t); arch_x64__cc_of(strata_t2079_, strata_t2080_); }))); ins1(strata_t2077_, strata_t2078_, al); }));
     }
-    out(x, "movzbl %al, %eax");
-    put(x, "%rax", i.dst);
+    (({ __auto_type strata_t2081_ = x; __auto_type strata_t2082_ = al; __auto_type strata_t2083_ = sized(rax(), 4); ins2(strata_t2081_, "movzbl", strata_t2082_, strata_t2083_); }));
+    (({ __auto_type strata_t2084_ = x; __auto_type strata_t2085_ = rax(); put(strata_t2084_, strata_t2085_, i.dst); }));
 }
 
-void emit_conv(X64* x, Ins i) {
+void arch_x64__emit_conv(X64* x, Ins i) {
     int64_t to = i.ty;
     int64_t from = i.ty2;
     if (ir_is_float(from) && ir_is_float(to)) {
-        fget(x, from, i.a, "%xmm1");
-        (({ __auto_type strata_t1335_ = x; __auto_type strata_t1336_ = str_concat((({ __auto_type strata_t1337_ = str_concat(str_concat("cvt", fsuf(from)), "2"); __auto_type strata_t1338_ = fsuf(to); str_concat(strata_t1337_, strata_t1338_); })), " %xmm1, %xmm0"); out(strata_t1335_, strata_t1336_); }));
-        fput(x, to, "%xmm0", i.dst);
+        (({ __auto_type strata_t2086_ = x; __auto_type strata_t2087_ = from; __auto_type strata_t2088_ = i.a; __auto_type strata_t2089_ = xmm(1); arch_x64__fget(strata_t2086_, strata_t2087_, strata_t2088_, strata_t2089_); }));
+        (({ __auto_type strata_t2090_ = x; __auto_type strata_t2091_ = (({ __auto_type strata_t2092_ = str_concat(str_concat("cvt", fsuf(from)), "2"); __auto_type strata_t2093_ = fsuf(to); str_concat(strata_t2092_, strata_t2093_); })); __auto_type strata_t2094_ = xmm(1); __auto_type strata_t2095_ = xmm(0); ins2(strata_t2090_, strata_t2091_, strata_t2094_, strata_t2095_); }));
+        (({ __auto_type strata_t2096_ = x; __auto_type strata_t2097_ = to; __auto_type strata_t2098_ = xmm(0); arch_x64__fput(strata_t2096_, strata_t2097_, strata_t2098_, i.dst); }));
     } else 
     if (ir_is_float(to)) {
-        get(x, i.a, "%rax");
-        (({ __auto_type strata_t1339_ = x; __auto_type strata_t1340_ = str_concat(str_concat("cvtsi2", fsuf(to)), "q %rax, %xmm0"); out(strata_t1339_, strata_t1340_); }));
-        fput(x, to, "%xmm0", i.dst);
+        (({ __auto_type strata_t2099_ = x; __auto_type strata_t2100_ = i.a; __auto_type strata_t2101_ = rax(); get(strata_t2099_, strata_t2100_, strata_t2101_); }));
+        (({ __auto_type strata_t2102_ = x; __auto_type strata_t2103_ = str_concat(str_concat("cvtsi2", fsuf(to)), "q"); __auto_type strata_t2104_ = rax(); __auto_type strata_t2105_ = xmm(0); ins2(strata_t2102_, strata_t2103_, strata_t2104_, strata_t2105_); }));
+        (({ __auto_type strata_t2106_ = x; __auto_type strata_t2107_ = to; __auto_type strata_t2108_ = xmm(0); arch_x64__fput(strata_t2106_, strata_t2107_, strata_t2108_, i.dst); }));
     } else 
     if (ir_is_float(from)) {
-        fget(x, from, i.a, "%xmm0");
-        (({ __auto_type strata_t1341_ = x; __auto_type strata_t1342_ = str_concat(str_concat("cvtt", fsuf(from)), "2siq %xmm0, %rax"); out(strata_t1341_, strata_t1342_); }));
-        norm(x, to, "%rax");
-        put(x, "%rax", i.dst);
+        (({ __auto_type strata_t2109_ = x; __auto_type strata_t2110_ = from; __auto_type strata_t2111_ = i.a; __auto_type strata_t2112_ = xmm(0); arch_x64__fget(strata_t2109_, strata_t2110_, strata_t2111_, strata_t2112_); }));
+        (({ __auto_type strata_t2113_ = x; __auto_type strata_t2114_ = str_concat(str_concat("cvtt", fsuf(from)), "2siq"); __auto_type strata_t2115_ = xmm(0); __auto_type strata_t2116_ = rax(); ins2(strata_t2113_, strata_t2114_, strata_t2115_, strata_t2116_); }));
+        (({ __auto_type strata_t2117_ = x; __auto_type strata_t2118_ = to; __auto_type strata_t2119_ = rax(); arch_x64__norm(strata_t2117_, strata_t2118_, strata_t2119_); }));
+        (({ __auto_type strata_t2120_ = x; __auto_type strata_t2121_ = rax(); put(strata_t2120_, strata_t2121_, i.dst); }));
     } else {
-        const char* w = "%rax";
-        if (in_reg(x, i.dst)) {
+        Opnd w = rax();
+        if (arch_x64__in_reg(x, i.dst)) {
             w = opnd(x, i.dst);
         }
         get(x, i.a, w);
-        norm(x, to, w);
+        arch_x64__norm(x, to, w);
         put(x, w, i.dst);
     }
 }
 
-void emit_param(X64* x, Ins i) {
+int64_t sysv_place(IrFunc* f, int64_t k, int64_t* where) {
+    int64_t ni = 0;
+    int64_t ns = 0;
+    int64_t st = 0;
+    int64_t place = 0;
+    for (int64_t j = 0; j < (k + 1); j++) {
+        int64_t bytes = 0;
+        if (j < f->param_bytes.len) {
+            bytes = ((int64_t*)(f->param_bytes).data)[j];
+        }
+        int64_t t = ((int64_t*)(f->param_types).data)[j];
+        int64_t p = 2;
+        int64_t at = st;
+        if (bytes > 0) {
+            st += (((bytes + 7) / 8) * 8);
+        } else 
+        if (ir_is_float(t) && (ns < 8)) {
+            p = 1;
+            at = ns;
+            ns += 1;
+        } else 
+        if ((!ir_is_float(t)) && (ni < 6)) {
+            p = 0;
+            at = ni;
+            ni += 1;
+        } else {
+            st += 8;
+        }
+        if (j == k) {
+            place = p;
+            where[0] = at;
+        }
+    }
+    return place;
+}
+
+void emit_param_sysv(X64* x, IrFunc* f, Ins i) {
+    int64_t t = i.ty;
+    int64_t at = 0;
+    int64_t place = sysv_place(f, i.imm, (&at));
+    bool copy = ((i.imm < f->param_bytes.len) && (((int64_t*)(f->param_bytes).data)[i.imm] > 0));
+    if (place == 0) {
+        Opnd r = sysv_int_arg(at);
+        arch_x64__norm(x, t, r);
+        put(x, r, i.dst);
+    } else 
+    if (place == 1) {
+        (({ __auto_type strata_t2122_ = x; __auto_type strata_t2123_ = t; __auto_type strata_t2124_ = xmm(at); arch_x64__fput(strata_t2122_, strata_t2123_, strata_t2124_, i.dst); }));
+    } else 
+    if (copy) {
+        (({ __auto_type strata_t2125_ = x; __auto_type strata_t2126_ = mem(5, (16 + at)); __auto_type strata_t2127_ = rax(); ins2(strata_t2125_, "leaq", strata_t2126_, strata_t2127_); }));
+        (({ __auto_type strata_t2128_ = x; __auto_type strata_t2129_ = rax(); put(strata_t2128_, strata_t2129_, i.dst); }));
+    } else 
+    if (ir_is_float(t)) {
+        (({ __auto_type strata_t2130_ = x; __auto_type strata_t2131_ = str_concat("mov", fsuf(t)); __auto_type strata_t2132_ = mem(5, (16 + at)); __auto_type strata_t2133_ = xmm(0); ins2(strata_t2130_, strata_t2131_, strata_t2132_, strata_t2133_); }));
+        (({ __auto_type strata_t2134_ = x; __auto_type strata_t2135_ = t; __auto_type strata_t2136_ = xmm(0); arch_x64__fput(strata_t2134_, strata_t2135_, strata_t2136_, i.dst); }));
+    } else {
+        (({ __auto_type strata_t2137_ = x; __auto_type strata_t2138_ = mem(5, (16 + at)); __auto_type strata_t2139_ = rax(); ins2(strata_t2137_, "movq", strata_t2138_, strata_t2139_); }));
+        (({ __auto_type strata_t2140_ = x; __auto_type strata_t2141_ = t; __auto_type strata_t2142_ = rax(); arch_x64__norm(strata_t2140_, strata_t2141_, strata_t2142_); }));
+        (({ __auto_type strata_t2143_ = x; __auto_type strata_t2144_ = rax(); put(strata_t2143_, strata_t2144_, i.dst); }));
+    }
+}
+
+void arch_x64__emit_param(X64* x, Ins i) {
     int64_t t = i.ty;
     int64_t k = i.imm;
     if (k < 4) {
         if (ir_is_float(t)) {
-            (({ __auto_type strata_t1343_ = x; __auto_type strata_t1344_ = t; __auto_type strata_t1345_ = str_concat("%xmm", str_from_int(k)); fput(strata_t1343_, strata_t1344_, strata_t1345_, i.dst); }));
+            (({ __auto_type strata_t2145_ = x; __auto_type strata_t2146_ = t; __auto_type strata_t2147_ = xmm(k); arch_x64__fput(strata_t2145_, strata_t2146_, strata_t2147_, i.dst); }));
         } else {
-            const char* r = int_reg_arg(k);
-            norm(x, t, r);
+            Opnd r = int_reg_arg(k);
+            arch_x64__norm(x, t, r);
             put(x, r, i.dst);
         }
     } else {
-        const char* m = str_concat(str_from_int((16 + (8 * k))), "(%rbp)");
+        Opnd m = mem(5, (16 + (8 * k)));
         if (ir_is_float(t)) {
-            (({ __auto_type strata_t1346_ = x; __auto_type strata_t1347_ = str_concat(str_concat(str_concat(str_concat("mov", fsuf(t)), " "), m), ", %xmm0"); out(strata_t1346_, strata_t1347_); }));
-            fput(x, t, "%xmm0", i.dst);
+            (({ __auto_type strata_t2148_ = x; __auto_type strata_t2149_ = str_concat("mov", fsuf(t)); __auto_type strata_t2150_ = m; __auto_type strata_t2151_ = xmm(0); ins2(strata_t2148_, strata_t2149_, strata_t2150_, strata_t2151_); }));
+            (({ __auto_type strata_t2152_ = x; __auto_type strata_t2153_ = t; __auto_type strata_t2154_ = xmm(0); arch_x64__fput(strata_t2152_, strata_t2153_, strata_t2154_, i.dst); }));
         } else {
-            out(x, str_concat(str_concat("movq ", m), ", %rax"));
-            norm(x, t, "%rax");
-            put(x, "%rax", i.dst);
+            (({ __auto_type strata_t2155_ = x; __auto_type strata_t2156_ = m; __auto_type strata_t2157_ = rax(); ins2(strata_t2155_, "movq", strata_t2156_, strata_t2157_); }));
+            (({ __auto_type strata_t2158_ = x; __auto_type strata_t2159_ = t; __auto_type strata_t2160_ = rax(); arch_x64__norm(strata_t2158_, strata_t2159_, strata_t2160_); }));
+            (({ __auto_type strata_t2161_ = x; __auto_type strata_t2162_ = rax(); put(strata_t2161_, strata_t2162_, i.dst); }));
         }
     }
 }
 
-void emit_call(X64* x, IrFunc* f, Ins i) {
+int64_t sysv_stack_bytes(IrFunc* f, Ins i) {
+    int64_t ni = 0;
+    int64_t ns = 0;
+    int64_t st = 0;
+    for (int64_t k = 0; k < i.args.len; k++) {
+        int64_t bytes = 0;
+        if (k < i.arg_bytes.len) {
+            bytes = ((int64_t*)(i.arg_bytes).data)[k];
+        }
+        int64_t t = ((int64_t*)(f->vtypes).data)[((int64_t*)(i.args).data)[k]];
+        if (bytes > 0) {
+            st += (((bytes + 7) / 8) * 8);
+        } else 
+        if (bytes == 0) {
+            if (ir_is_float(t) && (ns < 8)) {
+                ns += 1;
+            } else 
+            if ((!ir_is_float(t)) && (ni < 6)) {
+                ni += 1;
+            } else {
+                st += 8;
+            }
+        }
+    }
+    return st;
+}
+
+void emit_call_sysv(X64* x, IrFunc* f, Ins i) {
+    int64_t n = i.args.len;
+    int64_t ni = 0;
+    int64_t ns = 0;
+    int64_t st = 0;
+    int64_t buf = (0 - 1);
+    for (int64_t k = 0; k < n; k++) {
+        int64_t a = ((int64_t*)(i.args).data)[k];
+        int64_t bytes = 0;
+        if (k < i.arg_bytes.len) {
+            bytes = ((int64_t*)(i.arg_bytes).data)[k];
+        }
+        int64_t at = ((int64_t*)(f->vtypes).data)[a];
+        if (bytes < 0) {
+            buf = a;
+        } else 
+        if (bytes > 0) {
+            (({ __auto_type strata_t2163_ = x; __auto_type strata_t2164_ = a; __auto_type strata_t2165_ = rcx(); get(strata_t2163_, strata_t2164_, strata_t2165_); }));
+            (({ __auto_type strata_t2166_ = x; __auto_type strata_t2167_ = mem(4, st); __auto_type strata_t2168_ = rax(); ins2(strata_t2166_, "leaq", strata_t2167_, strata_t2168_); }));
+            arch_x64__copy_bytes(x, bytes, false);
+            st += (((bytes + 7) / 8) * 8);
+        } else 
+        if (ir_is_float(at)) {
+            if (ns < 8) {
+                ns += 1;
+            } else {
+                (({ __auto_type strata_t2169_ = x; __auto_type strata_t2170_ = at; __auto_type strata_t2171_ = a; __auto_type strata_t2172_ = xmm(0); arch_x64__fget(strata_t2169_, strata_t2170_, strata_t2171_, strata_t2172_); }));
+                (({ __auto_type strata_t2173_ = x; __auto_type strata_t2174_ = str_concat("mov", fsuf(at)); __auto_type strata_t2175_ = xmm(0); __auto_type strata_t2176_ = mem(4, st); ins2(strata_t2173_, strata_t2174_, strata_t2175_, strata_t2176_); }));
+                st += 8;
+            }
+        } else {
+            if (ni < 6) {
+                ni += 1;
+            } else 
+            if (((int64_t*)(x->lazy).data)[a] == 1) {
+                (({ __auto_type strata_t2177_ = x; __auto_type strata_t2178_ = src(x, a); __auto_type strata_t2179_ = mem(4, st); ins2(strata_t2177_, "movq", strata_t2178_, strata_t2179_); }));
+                st += 8;
+            } else {
+                (({ __auto_type strata_t2180_ = x; __auto_type strata_t2181_ = a; __auto_type strata_t2182_ = rax(); get(strata_t2180_, strata_t2181_, strata_t2182_); }));
+                (({ __auto_type strata_t2183_ = x; __auto_type strata_t2184_ = rax(); __auto_type strata_t2185_ = mem(4, st); ins2(strata_t2183_, "movq", strata_t2184_, strata_t2185_); }));
+                st += 8;
+            }
+        }
+    }
+    ni = 0;
+    ns = 0;
+    for (int64_t k = 0; k < n; k++) {
+        int64_t a = ((int64_t*)(i.args).data)[k];
+        int64_t bytes = 0;
+        if (k < i.arg_bytes.len) {
+            bytes = ((int64_t*)(i.arg_bytes).data)[k];
+        }
+        int64_t at = ((int64_t*)(f->vtypes).data)[a];
+        if (bytes == 0) {
+            if (ir_is_float(at)) {
+                if (ns < 8) {
+                    (({ __auto_type strata_t2186_ = x; __auto_type strata_t2187_ = at; __auto_type strata_t2188_ = a; __auto_type strata_t2189_ = xmm(ns); arch_x64__fget(strata_t2186_, strata_t2187_, strata_t2188_, strata_t2189_); }));
+                    ns += 1;
+                }
+            } else {
+                if (ni < 6) {
+                    (({ __auto_type strata_t2190_ = x; __auto_type strata_t2191_ = a; __auto_type strata_t2192_ = sysv_int_arg(ni); get(strata_t2190_, strata_t2191_, strata_t2192_); }));
+                    ni += 1;
+                }
+            }
+        }
+    }
+    call_insn(x, i);
+    if (buf >= 0) {
+        Opnd b = r11();
+        get(x, buf, b);
+        int64_t ri = 0;
+        int64_t rs = 0;
+        for (int64_t h = 0; h < (i.imm & 3); h++) {
+            int64_t cls = ((i.imm >> 2) & 3);
+            if (h == 1) {
+                cls = ((i.imm >> 4) & 3);
+            }
+            if (cls == 1) {
+                (({ __auto_type strata_t2193_ = x; __auto_type strata_t2194_ = xmm(rs); __auto_type strata_t2195_ = mem(11, (8 * h)); ins2(strata_t2193_, "movsd", strata_t2194_, strata_t2195_); }));
+                rs += 1;
+            } else {
+                if (ri == 0) {
+                    (({ __auto_type strata_t2196_ = x; __auto_type strata_t2197_ = rax(); __auto_type strata_t2198_ = mem(11, (8 * h)); ins2(strata_t2196_, "movq", strata_t2197_, strata_t2198_); }));
+                } else {
+                    (({ __auto_type strata_t2199_ = x; __auto_type strata_t2200_ = rdx(); __auto_type strata_t2201_ = mem(11, (8 * h)); ins2(strata_t2199_, "movq", strata_t2200_, strata_t2201_); }));
+                }
+                ri += 1;
+            }
+        }
+    }
+    if (i.dst >= 0) {
+        if (ir_is_float(i.ty)) {
+            (({ __auto_type strata_t2202_ = x; __auto_type strata_t2203_ = i.ty; __auto_type strata_t2204_ = xmm(0); arch_x64__fput(strata_t2202_, strata_t2203_, strata_t2204_, i.dst); }));
+        } else {
+            (({ __auto_type strata_t2205_ = x; __auto_type strata_t2206_ = i.ty; __auto_type strata_t2207_ = rax(); arch_x64__norm(strata_t2205_, strata_t2206_, strata_t2207_); }));
+            (({ __auto_type strata_t2208_ = x; __auto_type strata_t2209_ = rax(); put(strata_t2208_, strata_t2209_, i.dst); }));
+        }
+    }
+}
+
+void call_insn(X64* x, Ins i) {
+    if (i.a >= 0) {
+        (({ __auto_type strata_t2210_ = x; __auto_type strata_t2211_ = i.a; __auto_type strata_t2212_ = r11(); get(strata_t2210_, strata_t2211_, strata_t2212_); }));
+        (({ __auto_type strata_t2213_ = x; __auto_type strata_t2214_ = r11(); ins1(strata_t2213_, "call", strata_t2214_); }));
+    } else {
+        (({ __auto_type strata_t2215_ = x; __auto_type strata_t2216_ = target(i.sym); ins1(strata_t2215_, "call", strata_t2216_); }));
+    }
+}
+
+void arch_x64__emit_call(X64* x, IrFunc* f, Ins i) {
+    if (sysv_mode) {
+        emit_call_sysv(x, f, i);
+        return;
+    }
     int64_t n = i.args.len;
     for (int64_t k = 4; k < n; k++) {
         int64_t a = ((int64_t*)(i.args).data)[k];
         int64_t at = ((int64_t*)(f->vtypes).data)[a];
         if (ir_is_float(at)) {
-            fget(x, at, a, "%xmm0");
-            (({ __auto_type strata_t1348_ = x; __auto_type strata_t1349_ = str_concat((({ __auto_type strata_t1350_ = str_concat(str_concat("mov", fsuf(at)), " %xmm0, "); __auto_type strata_t1351_ = str_from_int((8 * k)); str_concat(strata_t1350_, strata_t1351_); })), "(%rsp)"); out(strata_t1348_, strata_t1349_); }));
+            (({ __auto_type strata_t2217_ = x; __auto_type strata_t2218_ = at; __auto_type strata_t2219_ = a; __auto_type strata_t2220_ = xmm(0); arch_x64__fget(strata_t2217_, strata_t2218_, strata_t2219_, strata_t2220_); }));
+            (({ __auto_type strata_t2221_ = x; __auto_type strata_t2222_ = str_concat("mov", fsuf(at)); __auto_type strata_t2223_ = xmm(0); __auto_type strata_t2224_ = mem(4, (8 * k)); ins2(strata_t2221_, strata_t2222_, strata_t2223_, strata_t2224_); }));
         } else 
         if (((int64_t*)(x->lazy).data)[a] == 1) {
-            (({ __auto_type strata_t1352_ = x; __auto_type strata_t1353_ = str_concat((({ __auto_type strata_t1354_ = str_concat(str_concat("movq ", src(x, a)), ", "); __auto_type strata_t1355_ = str_from_int((8 * k)); str_concat(strata_t1354_, strata_t1355_); })), "(%rsp)"); out(strata_t1352_, strata_t1353_); }));
+            (({ __auto_type strata_t2225_ = x; __auto_type strata_t2226_ = src(x, a); __auto_type strata_t2227_ = mem(4, (8 * k)); ins2(strata_t2225_, "movq", strata_t2226_, strata_t2227_); }));
         } else {
-            get(x, a, "%rax");
-            (({ __auto_type strata_t1356_ = x; __auto_type strata_t1357_ = str_concat(str_concat("movq %rax, ", str_from_int((8 * k))), "(%rsp)"); out(strata_t1356_, strata_t1357_); }));
+            (({ __auto_type strata_t2228_ = x; __auto_type strata_t2229_ = a; __auto_type strata_t2230_ = rax(); get(strata_t2228_, strata_t2229_, strata_t2230_); }));
+            (({ __auto_type strata_t2231_ = x; __auto_type strata_t2232_ = rax(); __auto_type strata_t2233_ = mem(4, (8 * k)); ins2(strata_t2231_, "movq", strata_t2232_, strata_t2233_); }));
         }
     }
     for (int64_t k = 0; k < n; k++) {
@@ -11514,24 +16446,24 @@ void emit_call(X64* x, IrFunc* f, Ins i) {
             int64_t a = ((int64_t*)(i.args).data)[k];
             int64_t at = ((int64_t*)(f->vtypes).data)[a];
             if (ir_is_float(at)) {
-                (({ __auto_type strata_t1358_ = x; __auto_type strata_t1359_ = at; __auto_type strata_t1360_ = a; __auto_type strata_t1361_ = str_concat("%xmm", str_from_int(k)); fget(strata_t1358_, strata_t1359_, strata_t1360_, strata_t1361_); }));
+                (({ __auto_type strata_t2234_ = x; __auto_type strata_t2235_ = at; __auto_type strata_t2236_ = a; __auto_type strata_t2237_ = xmm(k); arch_x64__fget(strata_t2234_, strata_t2235_, strata_t2236_, strata_t2237_); }));
             } else {
-                (({ __auto_type strata_t1362_ = x; __auto_type strata_t1363_ = a; __auto_type strata_t1364_ = int_reg_arg(k); get(strata_t1362_, strata_t1363_, strata_t1364_); }));
+                (({ __auto_type strata_t2238_ = x; __auto_type strata_t2239_ = a; __auto_type strata_t2240_ = int_reg_arg(k); get(strata_t2238_, strata_t2239_, strata_t2240_); }));
             }
         }
     }
-    out(x, str_concat("call ", i.sym));
+    call_insn(x, i);
     if (i.dst >= 0) {
         if (ir_is_float(i.ty)) {
-            fput(x, i.ty, "%xmm0", i.dst);
+            (({ __auto_type strata_t2241_ = x; __auto_type strata_t2242_ = i.ty; __auto_type strata_t2243_ = xmm(0); arch_x64__fput(strata_t2241_, strata_t2242_, strata_t2243_, i.dst); }));
         } else {
-            norm(x, i.ty, "%rax");
-            put(x, "%rax", i.dst);
+            (({ __auto_type strata_t2244_ = x; __auto_type strata_t2245_ = i.ty; __auto_type strata_t2246_ = rax(); arch_x64__norm(strata_t2244_, strata_t2245_, strata_t2246_); }));
+            (({ __auto_type strata_t2247_ = x; __auto_type strata_t2248_ = rax(); put(strata_t2247_, strata_t2248_, i.dst); }));
         }
     }
 }
 
-void find_lazy(X64* x, IrFunc* f) {
+void arch_x64__find_lazy(X64* x, IrFunc* f) {
     int64_t nv = f->vtypes.len;
     Array ndef = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array nuse = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
@@ -11586,8 +16518,8 @@ void find_lazy(X64* x, IrFunc* f) {
 }
 
 Array x64_lazy(IrFunc* f) {
-    X64 x = new_x64();
-    find_lazy((&x), f);
+    X64 x = new_x64(false, 1);
+    arch_x64__find_lazy((&x), f);
     Array r = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     for (int64_t v = 0; v < x.lazy.len; v++) {
         if (((int64_t*)(x.lazy).data)[v] != 0) {
@@ -11601,7 +16533,7 @@ Array x64_lazy(IrFunc* f) {
 
 void x64_function(X64* x, IrFunc* f, Array regs) {
     int64_t nv = f->vtypes.len;
-    find_lazy(x, f);
+    arch_x64__find_lazy(x, f);
     Array used = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     for (int64_t k = 0; k < x64_saved_regs(); k++) {
         ({ int64_t _e = 0; arr_push(&(used), &_e); });
@@ -11611,7 +16543,7 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
         nregs = nv;
     }
     for (int64_t v = 0; v < nregs; v++) {
-        if (((((int64_t*)(regs).data)[v] >= 0) && (({ __auto_type strata_t1365_ = ((int64_t*)(regs).data)[v]; __auto_type strata_t1366_ = x64_saved_regs(); (strata_t1365_ < strata_t1366_); }))) && (((int64_t*)(x->lazy).data)[v] == 0)) {
+        if (((((int64_t*)(regs).data)[v] >= 0) && (({ __auto_type strata_t2249_ = ((int64_t*)(regs).data)[v]; __auto_type strata_t2250_ = x64_saved_regs(); (strata_t2249_ < strata_t2250_); }))) && (((int64_t*)(x->lazy).data)[v] == 0)) {
             ((int64_t*)(used).data)[((int64_t*)(regs).data)[v]] = 1;
         }
     }
@@ -11625,14 +16557,14 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
     int64_t nint = 0;
     int64_t nflt = 0;
     for (int64_t k = 0; k < saved.len; k++) {
-        if (({ __auto_type strata_t1367_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t1368_ = x64_int_regs(); (strata_t1367_ < strata_t1368_); })) {
+        if (({ __auto_type strata_t2251_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t2252_ = x64_int_regs(); (strata_t2251_ < strata_t2252_); })) {
             nint += 1;
         } else {
             nflt += 1;
         }
     }
     int64_t cur = (8 * nint);
-    cur = x64__align_to((cur + (16 * nflt)), 16);
+    cur = arch_x64__align_to((cur + (16 * nflt)), 16);
     x->save_base = (0 - cur);
     Array loc = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array isreg = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
@@ -11677,82 +16609,97 @@ void x64_function(X64* x, IrFunc* f, Array regs) {
         if (al > 16) {
             al = 16;
         }
-        cur = x64__align_to((cur + ((IrSlot*)(f->slots).data)[s].size), al);
+        cur = arch_x64__align_to((cur + ((IrSlot*)(f->slots).data)[s].size), al);
         ({ int64_t _e = (0 - cur); arr_push(&(so), &_e); });
     }
     x->slot_off = so;
     int64_t outgoing = 32;
+    if (sysv_mode) {
+        outgoing = 0;
+    }
     for (int64_t k = 0; k < f->code.len; k++) {
-        if ((((Ins*)(f->code).data)[k].op == OCall) && ((8 * ((Ins*)(f->code).data)[k].args.len) > outgoing)) {
-            outgoing = (8 * ((Ins*)(f->code).data)[k].args.len);
+        if (((Ins*)(f->code).data)[k].op == OCall) {
+            int64_t need = (8 * ((Ins*)(f->code).data)[k].args.len);
+            if (sysv_mode) {
+                need = sysv_stack_bytes(f, ((Ins*)(f->code).data)[k]);
+            }
+            if (need > outgoing) {
+                outgoing = need;
+            }
         }
     }
-    int64_t frame = (x64__align_to((cur + outgoing), 16) - (8 * nint));
-    out(x, ".p2align 4");
+    int64_t frame = (arch_x64__align_to((cur + outgoing), 16) - (8 * nint));
+    arch_x64__dline(x, ".p2align 4");
     if (f->global) {
-        out(x, str_concat(".globl ", f->name));
+        arch_x64__dline(x, str_concat(".globl ", f->name));
     }
-    out_label(x, f->name);
-    out(x, "pushq %rbp");
-    out(x, "movq %rsp, %rbp");
+    arch_x64__label(x, f->name);
+    (({ __auto_type strata_t2253_ = x; __auto_type strata_t2254_ = rbp(); ins1(strata_t2253_, "pushq", strata_t2254_); }));
+    (({ __auto_type strata_t2255_ = x; __auto_type strata_t2256_ = rsp(); __auto_type strata_t2257_ = rbp(); ins2(strata_t2255_, "movq", strata_t2256_, strata_t2257_); }));
     for (int64_t k = 0; k < saved.len; k++) {
-        if (({ __auto_type strata_t1369_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t1370_ = x64_int_regs(); (strata_t1369_ < strata_t1370_); })) {
-            (({ __auto_type strata_t1371_ = x; __auto_type strata_t1372_ = str_concat("pushq ", reg_name(((int64_t*)(saved).data)[k])); out(strata_t1371_, strata_t1372_); }));
+        if (({ __auto_type strata_t2258_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t2259_ = x64_int_regs(); (strata_t2258_ < strata_t2259_); })) {
+            (({ __auto_type strata_t2260_ = x; __auto_type strata_t2261_ = alloc_reg(((int64_t*)(saved).data)[k]); ins1(strata_t2260_, "pushq", strata_t2261_); }));
         }
     }
     int64_t left = frame;
     while (left > 4096) {
-        out(x, "subq $4096, %rsp");
-        out(x, "orq $0, (%rsp)");
+        (({ __auto_type strata_t2262_ = x; __auto_type strata_t2263_ = imm(4096); __auto_type strata_t2264_ = rsp(); ins2(strata_t2262_, "subq", strata_t2263_, strata_t2264_); }));
+        (({ __auto_type strata_t2265_ = x; __auto_type strata_t2266_ = imm(0); __auto_type strata_t2267_ = mem(4, 0); ins2(strata_t2265_, "orq", strata_t2266_, strata_t2267_); }));
         left = (left - 4096);
     }
     if (left > 0) {
-        (({ __auto_type strata_t1373_ = x; __auto_type strata_t1374_ = str_concat(str_concat("subq $", str_from_int(left)), ", %rsp"); out(strata_t1373_, strata_t1374_); }));
+        (({ __auto_type strata_t2268_ = x; __auto_type strata_t2269_ = imm(left); __auto_type strata_t2270_ = rsp(); ins2(strata_t2268_, "subq", strata_t2269_, strata_t2270_); }));
     }
     int64_t fs = 0;
     for (int64_t k = 0; k < saved.len; k++) {
-        if (({ __auto_type strata_t1375_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t1376_ = x64_int_regs(); (strata_t1375_ >= strata_t1376_); })) {
-            (({ __auto_type strata_t1377_ = x; __auto_type strata_t1378_ = str_concat((({ __auto_type strata_t1379_ = str_concat(str_concat("movups ", reg_name(((int64_t*)(saved).data)[k])), ", "); __auto_type strata_t1380_ = str_from_int((x->save_base + (16 * fs))); str_concat(strata_t1379_, strata_t1380_); })), "(%rbp)"); out(strata_t1377_, strata_t1378_); }));
+        if (({ __auto_type strata_t2271_ = ((int64_t*)(saved).data)[k]; __auto_type strata_t2272_ = x64_int_regs(); (strata_t2271_ >= strata_t2272_); })) {
+            (({ __auto_type strata_t2273_ = x; __auto_type strata_t2274_ = alloc_reg(((int64_t*)(saved).data)[k]); __auto_type strata_t2275_ = mem(5, (x->save_base + (16 * fs))); ins2(strata_t2273_, "movups", strata_t2274_, strata_t2275_); }));
             fs += 1;
         }
     }
     const char* epilogue = str_concat(".Lret", str_from_int(x->fnum));
     int64_t k = 0;
     while (k < f->code.len) {
-        emit_ins(x, f, k, epilogue);
+        arch_x64__emit_ins(x, f, k, epilogue);
         if ((((((((Ins*)(f->code).data)[k].op == OCmp) && ((k + 1) < f->code.len)) && (((Ins*)(f->code).data)[(k + 1)].op == OBr)) && (((Ins*)(f->code).data)[(k + 1)].a == ((Ins*)(f->code).data)[k].dst)) && (((int64_t*)(x->nuse).data)[((Ins*)(f->code).data)[k].dst] == 1)) && (((int64_t*)(x->lazy).data)[((Ins*)(f->code).data)[k].dst] == 0)) {
             k += 1;
         }
         k += 1;
     }
-    out_label(x, epilogue);
+    arch_x64__label(x, epilogue);
     fs = 0;
     for (int64_t k2 = 0; k2 < saved.len; k2++) {
-        if (({ __auto_type strata_t1381_ = ((int64_t*)(saved).data)[k2]; __auto_type strata_t1382_ = x64_int_regs(); (strata_t1381_ >= strata_t1382_); })) {
-            (({ __auto_type strata_t1383_ = x; __auto_type strata_t1384_ = (({ __auto_type strata_t1385_ = str_concat(str_concat("movups ", str_from_int((x->save_base + (16 * fs)))), "(%rbp), "); __auto_type strata_t1386_ = reg_name(((int64_t*)(saved).data)[k2]); str_concat(strata_t1385_, strata_t1386_); })); out(strata_t1383_, strata_t1384_); }));
+        if (({ __auto_type strata_t2276_ = ((int64_t*)(saved).data)[k2]; __auto_type strata_t2277_ = x64_int_regs(); (strata_t2276_ >= strata_t2277_); })) {
+            (({ __auto_type strata_t2278_ = x; __auto_type strata_t2279_ = mem(5, (x->save_base + (16 * fs))); __auto_type strata_t2280_ = alloc_reg(((int64_t*)(saved).data)[k2]); ins2(strata_t2278_, "movups", strata_t2279_, strata_t2280_); }));
             fs += 1;
         }
     }
     if (nint > 0) {
-        (({ __auto_type strata_t1387_ = x; __auto_type strata_t1388_ = str_concat(str_concat("leaq ", str_from_int((0 - (8 * nint)))), "(%rbp), %rsp"); out(strata_t1387_, strata_t1388_); }));
+        (({ __auto_type strata_t2281_ = x; __auto_type strata_t2282_ = mem(5, (0 - (8 * nint))); __auto_type strata_t2283_ = rsp(); ins2(strata_t2281_, "leaq", strata_t2282_, strata_t2283_); }));
         int64_t r = (saved.len - 1);
         while (r >= 0) {
-            if (({ __auto_type strata_t1389_ = ((int64_t*)(saved).data)[r]; __auto_type strata_t1390_ = x64_int_regs(); (strata_t1389_ < strata_t1390_); })) {
-                (({ __auto_type strata_t1391_ = x; __auto_type strata_t1392_ = str_concat("popq ", reg_name(((int64_t*)(saved).data)[r])); out(strata_t1391_, strata_t1392_); }));
+            if (({ __auto_type strata_t2284_ = ((int64_t*)(saved).data)[r]; __auto_type strata_t2285_ = x64_int_regs(); (strata_t2284_ < strata_t2285_); })) {
+                (({ __auto_type strata_t2286_ = x; __auto_type strata_t2287_ = alloc_reg(((int64_t*)(saved).data)[r]); ins1(strata_t2286_, "popq", strata_t2287_); }));
             }
             r -= 1;
         }
-        out(x, "popq %rbp");
+        (({ __auto_type strata_t2288_ = x; __auto_type strata_t2289_ = rbp(); ins1(strata_t2288_, "popq", strata_t2289_); }));
     } else {
-        out(x, "leave");
+        ins0(x, "leave");
     }
-    out(x, "ret");
+    ins0(x, "ret");
     x->fnum += 1;
 }
 
 void x64_begin(X64* x) {
-    ({ const char* _e = "# Generated by stratac (x86-64, Windows). Do not edit.\n"; arr_push(&(x->out), &_e); });
-    out(x, ".text");
+    const char* conv = "Windows x64";
+    if (sysv_mode) {
+        conv = "System V";
+    }
+    if (!x->direct) {
+        ({ const char* _e = str_concat(str_concat("# Generated by stratac (x86-64, ", conv), "). Do not edit.\n"); arr_push(&(x->out), &_e); });
+    }
+    arch_x64__dline(x, ".text");
 }
 
 void x64_global(X64* x, IrGlobal g) {
@@ -11762,11 +16709,11 @@ void x64_global(X64* x, IrGlobal g) {
         a = (a * 2);
         p += 1;
     }
-    (({ __auto_type strata_t1393_ = x; __auto_type strata_t1394_ = str_concat(".p2align ", str_from_int(p)); out(strata_t1393_, strata_t1394_); }));
+    (({ __auto_type strata_t2290_ = x; __auto_type strata_t2291_ = str_concat(".p2align ", str_from_int(p)); arch_x64__dline(strata_t2290_, strata_t2291_); }));
     if (g.global) {
-        out(x, str_concat(".globl ", g.sym));
+        arch_x64__dline(x, str_concat(".globl ", g.sym));
     }
-    out_label(x, g.sym);
+    arch_x64__label(x, g.sym);
     if (g.kind == 1) {
         const char* d = ".quad ";
         if (g.size == 4) {
@@ -11778,82 +16725,62 @@ void x64_global(X64* x, IrGlobal g) {
         if (g.size == 1) {
             d = ".byte ";
         }
-        (({ __auto_type strata_t1395_ = x; __auto_type strata_t1396_ = (({ __auto_type strata_t1397_ = d; __auto_type strata_t1398_ = str_from_int(g.ival); str_concat(strata_t1397_, strata_t1398_); })); out(strata_t1395_, strata_t1396_); }));
+        (({ __auto_type strata_t2292_ = x; __auto_type strata_t2293_ = (({ __auto_type strata_t2294_ = d; __auto_type strata_t2295_ = str_from_int(g.ival); str_concat(strata_t2294_, strata_t2295_); })); arch_x64__dline(strata_t2292_, strata_t2293_); }));
     } else 
     if (g.kind == 2) {
         if (g.ty == KF64) {
-            out(x, str_concat(".double ", g.text));
+            arch_x64__dline(x, str_concat(".double ", g.text));
         } else {
-            out(x, str_concat(".float ", g.text));
+            arch_x64__dline(x, str_concat(".float ", g.text));
         }
     } else 
     if (g.kind == 3) {
-        out(x, str_concat(".quad ", g.text));
+        arch_x64__dline(x, str_concat(".quad ", g.text));
     } else 
     if (g.kind == 4) {
-        out(x, ".zero 24");
-        (({ __auto_type strata_t1399_ = x; __auto_type strata_t1400_ = str_concat(".quad ", str_from_int(g.ival)); out(strata_t1399_, strata_t1400_); }));
+        arch_x64__dline(x, ".zero 24");
+        (({ __auto_type strata_t2296_ = x; __auto_type strata_t2297_ = str_concat(".quad ", str_from_int(g.ival)); arch_x64__dline(strata_t2296_, strata_t2297_); }));
     } else {
-        (({ __auto_type strata_t1401_ = x; __auto_type strata_t1402_ = str_concat(".zero ", str_from_int(g.size)); out(strata_t1401_, strata_t1402_); }));
+        (({ __auto_type strata_t2298_ = x; __auto_type strata_t2299_ = str_concat(".zero ", str_from_int(g.size)); arch_x64__dline(strata_t2298_, strata_t2299_); }));
     }
 }
 
-const char* x64_finish(X64* x, IrProgram* prog) {
+void x64_data(X64* x, IrProgram* prog) {
     if (prog->globals.len > 0) {
-        out(x, ".data");
+        arch_x64__dline(x, ".data");
         for (int64_t k = 0; k < prog->globals.len; k++) {
             x64_global(x, ((IrGlobal*)(prog->globals).data)[k]);
         }
     }
     if ((prog->strings.len > 0) || (x->data.len > 0)) {
-        out(x, ".section .rdata,\"dr\"");
+        arch_x64__dline(x, ".section .rdata,\"dr\"");
         for (int64_t k = 0; k < prog->strings.len; k++) {
-            ({ const char* _e = str_concat((({ __auto_type strata_t1403_ = str_concat(((IrData*)(prog->strings).data)[k].sym, ":\n\t.asciz \""); __auto_type strata_t1404_ = as_text(((IrData*)(prog->strings).data)[k].text); str_concat(strata_t1403_, strata_t1404_); })), "\"\n"); arr_push(&(x->out), &_e); });
+            arch_x64__label(x, ((IrData*)(prog->strings).data)[k].sym);
+            (({ __auto_type strata_t2300_ = x; __auto_type strata_t2301_ = str_concat(str_concat(".asciz \"", arch_x64__as_text(((IrData*)(prog->strings).data)[k].text)), "\""); arch_x64__dline(strata_t2300_, strata_t2301_); }));
         }
         for (int64_t k = 0; k < x->data.len; k++) {
-            ({ const char* _e = ((const char**)(x->data).data)[k]; arr_push(&(x->out), &_e); });
+            const char* d = ((const char**)(x->data).data)[k];
+            if (d[(str_len(d) - 1)] == ':') {
+                (({ __auto_type strata_t2302_ = x; __auto_type strata_t2303_ = str_sub(d, 0, (str_len(d) - 1)); arch_x64__label(strata_t2302_, strata_t2303_); }));
+            } else {
+                arch_x64__dline(x, d);
+            }
         }
     }
+}
+
+const char* x64_finish(X64* x, IrProgram* prog) {
+    x64_data(x, prog);
     return strata_join((&x->out));
 }
 
-const char* native_target_why(const char* os, const char* arch) {
-    if (str_eq(os, "windows") && str_eq(arch, "x86_64")) {
-        return "";
-    }
-    return str_concat(str_concat(str_concat(str_concat("the native backend targets x86-64 Windows so far (this is ", arch), " "), os), ")");
-}
-
-NativeResult native_compile(Program prog, bool with_main, bool optimize_code) {
-    Lower* l = new_lower();
-    if (!lower_program(l, prog, with_main)) {
-        return (NativeResult){false, l->err, "", ""};
-    }
-    X64 x = new_x64();
-    x64_begin((&x));
-    Array irt = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    for (int64_t i = 0; i < l->prog.funcs.len; i++) {
-        IrFunc* f = (&((IrFunc*)(l->prog.funcs).data)[i]);
-        Array regs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-        if (optimize_code) {
-            optimize(f);
-            regs = (({ __auto_type strata_t1405_ = f; __auto_type strata_t1406_ = x64_regs(); __auto_type strata_t1407_ = x64_lazy(f); alloc_regs(strata_t1405_, strata_t1406_, strata_t1407_); }));
-        }
-        x64_function((&x), f, regs);
-    }
-    const char* asm_text = x64_finish((&x), (&l->prog));
-    return (({ __auto_type strata_t1408_ = asm_text; __auto_type strata_t1409_ = ir_program_text((&l->prog)); (NativeResult){true, "", strata_t1408_, strata_t1409_}; }));
+ObjFile x64_finish_object(X64* x, IrProgram* prog) {
+    x64_data(x, prog);
+    return asm_finish((&x->as));
 }
 
 Opnd no_opnd(void) {
     return (Opnd){0, 0, 0, 0, 0, ""};
-}
-
-void x64asm__fail(Asm* a, const char* msg) {
-    if (a->o.ok) {
-        a->o.err = str_concat(str_concat(str_concat(str_concat(str_concat(str_concat("line ", str_from_int(a->line)), ": "), msg), " ("), a->text), ")");
-    }
-    a->o.ok = false;
 }
 
 int64_t legacy_reg(const char* s) {
@@ -11968,10 +16895,10 @@ bool parse_reg(const char* name, Opnd* o) {
         o->size = 16;
         return ((v >= 0) && (v < 16));
     }
-    if (((n >= 2) && (name[0] == 'r')) && x64asm__is_digit(name[1])) {
+    if (((n >= 2) && (name[0] == 'r')) && asm_digit(name[1])) {
         int64_t k = 1;
         int64_t v = 0;
-        while ((k < n) && x64asm__is_digit(name[k])) {
+        while ((k < n) && asm_digit(name[k])) {
             v = ((v * 10) + (((int64_t)(name[k])) - ((int64_t)('0'))));
             k += 1;
         }
@@ -12004,90 +16931,24 @@ bool parse_reg(const char* name, Opnd* o) {
     return true;
 }
 
-bool x64asm__is_space(char c) {
-    return (((c == ' ') || (c == '\t')) || (c == '\r'));
-}
-
-const char* x64asm__trim(const char* s) {
-    int64_t i = 0;
-    int64_t j = str_len(s);
-    while ((i < j) && x64asm__is_space(s[i])) {
-        i += 1;
-    }
-    while ((j > i) && x64asm__is_space(s[(j - 1)])) {
-        j -= 1;
-    }
-    return str_sub(s, i, (j - i));
-}
-
-bool x64asm__is_digit(char c) {
-    return ((c >= '0') && (c <= '9'));
-}
-
-int64_t parse_num(Asm* a, const char* s) {
-    int64_t i = 0;
-    bool neg = false;
-    if ((str_len(s) > 0) && (s[0] == '-')) {
-        neg = true;
-        i = 1;
-    } else 
-    if ((str_len(s) > 0) && (s[0] == '+')) {
-        i = 1;
-    }
-    uint64_t v = 0;
-    if (((str_len(s) > (i + 2)) && (s[i] == '0')) && ((s[(i + 1)] == 'x') || (s[(i + 1)] == 'X'))) {
-        i += 2;
-        while (i < str_len(s)) {
-            char c = s[i];
-            uint64_t d = 0;
-            if ((c >= '0') && (c <= '9')) {
-                d = ((uint64_t)((((int64_t)(c)) - ((int64_t)('0')))));
-            } else 
-            if ((c >= 'a') && (c <= 'f')) {
-                d = ((uint64_t)(((((int64_t)(c)) - ((int64_t)('a'))) + 10)));
-            } else 
-            if ((c >= 'A') && (c <= 'F')) {
-                d = ((uint64_t)(((((int64_t)(c)) - ((int64_t)('A'))) + 10)));
-            } else {
-                x64asm__fail(a, str_concat("bad number ", s));
-            }
-            v = ((v * 16) + d);
-            i += 1;
-        }
-    } else {
-        if (i >= str_len(s)) {
-            x64asm__fail(a, str_concat("bad number ", s));
-        }
-        while (i < str_len(s)) {
-            if (!x64asm__is_digit(s[i])) {
-                x64asm__fail(a, str_concat("bad number ", s));
-            }
-            v = ((v * 10) + ((uint64_t)((((int64_t)(s[i])) - ((int64_t)('0'))))));
-            i += 1;
-        }
-    }
-    int64_t r = ((int64_t)(v));
-    if (neg) {
-        return (0 - r);
-    }
-    return r;
-}
-
 Opnd parse_opnd(Asm* a, const char* s) {
     Opnd o = no_opnd();
     if (str_len(s) == 0) {
-        x64asm__fail(a, "missing operand");
+        asm_fail(a, "missing operand");
         return o;
+    }
+    if (s[0] == '*') {
+        return (({ __auto_type strata_t2304_ = a; __auto_type strata_t2305_ = str_sub(s, 1, (str_len(s) - 1)); parse_opnd(strata_t2304_, strata_t2305_); }));
     }
     if (s[0] == '%') {
         if (!parse_reg(str_sub(s, 1, (str_len(s) - 1)), (&o))) {
-            x64asm__fail(a, str_concat("unknown register ", s));
+            asm_fail(a, str_concat("unknown register ", s));
         }
         return o;
     }
     if (s[0] == '$') {
         o.kind = 2;
-        o.imm = (({ __auto_type strata_t1410_ = a; __auto_type strata_t1411_ = str_sub(s, 1, (str_len(s) - 1)); parse_num(strata_t1410_, strata_t1411_); }));
+        o.imm = (({ __auto_type strata_t2306_ = a; __auto_type strata_t2307_ = str_sub(s, 1, (str_len(s) - 1)); asm_num(strata_t2306_, strata_t2307_); }));
         return o;
     }
     int64_t p = (0 - 1);
@@ -12103,7 +16964,7 @@ Opnd parse_opnd(Asm* a, const char* s) {
     }
     o.kind = 3;
     if (s[(str_len(s) - 1)] != ')') {
-        x64asm__fail(a, str_concat("bad memory operand ", s));
+        asm_fail(a, str_concat("bad memory operand ", s));
         return o;
     }
     const char* inner = str_sub(s, (p + 1), ((str_len(s) - p) - 2));
@@ -12112,15 +16973,15 @@ Opnd parse_opnd(Asm* a, const char* s) {
     } else {
         Opnd r = no_opnd();
         if (((str_len(inner) < 2) || (!parse_reg(str_sub(inner, 1, (str_len(inner) - 1)), (&r)))) || (r.size != 8)) {
-            x64asm__fail(a, str_concat("bad base register ", inner));
+            asm_fail(a, str_concat("bad base register ", inner));
             return o;
         }
         o.base = r.reg;
     }
     const char* d = str_sub(s, 0, p);
     if (str_len(d) > 0) {
-        if ((x64asm__is_digit(d[0]) || (d[0] == '-')) || (d[0] == '+')) {
-            o.imm = parse_num(a, d);
+        if ((asm_digit(d[0]) || (d[0] == '-')) || (d[0] == '+')) {
+            o.imm = asm_num(a, d);
         } else {
             int64_t q = (0 - 1);
             for (int64_t i = 1; i < str_len(d); i++) {
@@ -12132,68 +16993,11 @@ Opnd parse_opnd(Asm* a, const char* s) {
                 o.sym = d;
             } else {
                 o.sym = str_sub(d, 0, q);
-                o.imm = (({ __auto_type strata_t1412_ = a; __auto_type strata_t1413_ = str_sub(d, q, (str_len(d) - q)); parse_num(strata_t1412_, strata_t1413_); }));
+                o.imm = (({ __auto_type strata_t2308_ = a; __auto_type strata_t2309_ = str_sub(d, q, (str_len(d) - q)); asm_num(strata_t2308_, strata_t2309_); }));
             }
         }
     }
     return o;
-}
-
-Array split_operands(const char* s) {
-    Array r = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    int64_t depth = 0;
-    bool quoted = false;
-    int64_t start = 0;
-    for (int64_t i = 0; i < str_len(s); i++) {
-        char c = s[i];
-        if (c == '"') {
-            quoted = (!quoted);
-        } else 
-        if ((!quoted) && (c == '(')) {
-            depth += 1;
-        } else 
-        if ((!quoted) && (c == ')')) {
-            depth -= 1;
-        } else 
-        if (((!quoted) && (depth == 0)) && (c == ',')) {
-            ({ const char* _e = x64asm__trim(str_sub(s, start, (i - start))); arr_push(&(r), &_e); });
-            start = (i + 1);
-        }
-    }
-    const char* last = x64asm__trim(str_sub(s, start, (str_len(s) - start)));
-    if (str_len(last) > 0) {
-        ({ const char* _e = last; arr_push(&(r), &_e); });
-    }
-    return r;
-}
-
-int64_t pos(Asm* a) {
-    if (a->sec == 2) {
-        return a->o.rdata.len;
-    }
-    if (a->sec == 3) {
-        return a->o.data.len;
-    }
-    return a->o.text.len;
-}
-
-void byte(Asm* a, int64_t v) {
-    if (a->sec == 2) {
-        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.rdata), &_e); });
-    } else 
-    if (a->sec == 3) {
-        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.data), &_e); });
-    } else {
-        ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(a->o.text), &_e); });
-    }
-}
-
-void bytes_le(Asm* a, int64_t v, int64_t n) {
-    uint64_t x = ((uint64_t)(v));
-    for (int64_t i = 0; i < n; i++) {
-        byte(a, ((int64_t)((x & ((uint64_t)(255))))));
-        x = (x >> ((uint64_t)(8)));
-    }
 }
 
 bool fits8(int64_t v) {
@@ -12209,12 +17013,8 @@ bool byte_needs_rex(Opnd o) {
 }
 
 void enc(Asm* a, int64_t prefix, bool w, int64_t op1, int64_t op2, int64_t op3, int64_t regf, bool regb, Opnd rm, int64_t isz, int64_t imm) {
-    if (a->sec != 1) {
-        x64asm__fail(a, "instruction outside .text");
-        return;
-    }
     if (prefix != 0) {
-        byte(a, prefix);
+        asm_byte(a, prefix);
     }
     int64_t rex = 0;
     if (w) {
@@ -12231,31 +17031,31 @@ void enc(Asm* a, int64_t prefix, bool w, int64_t op1, int64_t op2, int64_t op3, 
     }
     bool need = (((rex != 0) || byte_needs_rex(rm)) || ((regb && (regf >= 4)) && (regf < 8)));
     if (need) {
-        byte(a, (64 | rex));
+        asm_byte(a, (64 | rex));
     }
-    byte(a, op1);
+    asm_byte(a, op1);
     if (op2 >= 0) {
-        byte(a, op2);
+        asm_byte(a, op2);
     }
     if (op3 >= 0) {
-        byte(a, op3);
+        asm_byte(a, op3);
     }
     int64_t r = ((regf & 7) * 8);
     if (rm.kind == 1) {
-        byte(a, ((192 | r) | (rm.reg & 7)));
+        asm_byte(a, ((192 | r) | (rm.reg & 7)));
     } else 
     if ((rm.kind == 3) && (rm.base < 0)) {
-        byte(a, (5 | r));
+        asm_byte(a, (5 | r));
         if (!str_eq(rm.sym, "")) {
-            ({ Fix _e = (Fix){a->o.text.len, rm.sym, rm.imm, isz, 1}; arr_push(&(a->fixes), &_e); });
-            bytes_le(a, 0, 4);
+            asm_fix(a, rm.sym, rm.imm, isz);
+            asm_bytes(a, 0, 4);
         } else {
-            bytes_le(a, rm.imm, 4);
+            asm_bytes(a, rm.imm, 4);
         }
     } else 
     if (rm.kind == 3) {
         if (!str_eq(rm.sym, "")) {
-            x64asm__fail(a, "a symbol needs %rip");
+            asm_fail(a, "a symbol needs %rip");
         }
         int64_t b7 = (rm.base & 7);
         int64_t d = rm.imm;
@@ -12270,27 +17070,27 @@ void enc(Asm* a, int64_t prefix, bool w, int64_t op1, int64_t op2, int64_t op3, 
         if (b7 == 4) {
             low = 4;
         }
-        byte(a, (((mode * 64) | r) | low));
+        asm_byte(a, (((mode * 64) | r) | low));
         if (b7 == 4) {
-            byte(a, 36);
+            asm_byte(a, 36);
         }
         if (mode == 1) {
-            byte(a, d);
+            asm_byte(a, d);
         } else 
         if (mode == 2) {
-            bytes_le(a, d, 4);
+            asm_bytes(a, d, 4);
         }
     } else {
-        x64asm__fail(a, "expected a register or memory operand");
+        asm_fail(a, "expected a register or memory operand");
     }
     if (isz > 0) {
-        bytes_le(a, imm, isz);
+        asm_bytes(a, imm, isz);
     }
 }
 
 void rel32(Asm* a, const char* label) {
-    ({ Fix _e = (Fix){a->o.text.len, label, 0, 0, 1}; arr_push(&(a->fixes), &_e); });
-    bytes_le(a, 0, 4);
+    asm_fix(a, label, 0, 0);
+    asm_bytes(a, 0, 4);
 }
 
 int64_t cc_code(const char* c) {
@@ -12379,7 +17179,7 @@ void alu(Asm* a, int64_t d, int64_t size, Opnd src, Opnd dst) {
                 isz = 2;
             }
             if ((size == 8) && (!fits32s(src.imm))) {
-                x64asm__fail(a, "immediate too large");
+                asm_fail(a, "immediate too large");
             }
             enc(a, pre, w, 129, (0 - 1), (0 - 1), d, false, dst, isz, src.imm);
         }
@@ -12398,7 +17198,7 @@ void alu(Asm* a, int64_t d, int64_t size, Opnd src, Opnd dst) {
         }
         enc(a, pre, w, op, (0 - 1), (0 - 1), dst.reg, (size == 1), src, 0, 0);
     } else {
-        x64asm__fail(a, "unsupported operands");
+        asm_fail(a, "unsupported operands");
     }
 }
 
@@ -12425,7 +17225,7 @@ void mov(Asm* a, int64_t size, Opnd src, Opnd dst) {
             isz = 1;
         }
         if ((size == 8) && (!fits32s(src.imm))) {
-            x64asm__fail(a, "immediate too large (movabsq)");
+            asm_fail(a, "immediate too large (movabsq)");
         }
         int64_t op = 199;
         if (size == 1) {
@@ -12447,17 +17247,17 @@ void mov(Asm* a, int64_t size, Opnd src, Opnd dst) {
         }
         enc(a, pre, w, op, (0 - 1), (0 - 1), dst.reg, (size == 1), src, 0, 0);
     } else {
-        x64asm__fail(a, "unsupported mov");
+        asm_fail(a, "unsupported mov");
     }
 }
 
-void need(Asm* a, Array ops, int64_t n) {
-    if (ops.len != n) {
-        (({ __auto_type strata_t1414_ = a; __auto_type strata_t1415_ = str_concat(str_concat("expected ", str_from_int(n)), " operand(s)"); x64asm__fail(strata_t1414_, strata_t1415_); }));
+void need(Asm* a, int64_t have, int64_t n) {
+    if (have != n) {
+        (({ __auto_type strata_t2310_ = a; __auto_type strata_t2311_ = str_concat(str_concat("expected ", str_from_int(n)), " operand(s)"); asm_fail(strata_t2310_, strata_t2311_); }));
     }
 }
 
-void instruction(Asm* a, const char* mn, Array ops) {
+void x64_instruction(Asm* a, const char* mn, Array ops) {
     int64_t n = ops.len;
     Opnd x = no_opnd();
     Opnd y = no_opnd();
@@ -12467,41 +17267,58 @@ void instruction(Asm* a, const char* mn, Array ops) {
     if (n > 1) {
         y = parse_opnd(a, ((const char**)(ops).data)[1]);
     }
+    if (n > 2) {
+        asm_fail(a, "too many operands");
+    }
     if (!a->o.ok) {
         return;
     }
+    x64_encode(a, mn, n, x, y);
+}
+
+void x64_encode(Asm* a, const char* mn, int64_t n, Opnd x, Opnd y) {
     int64_t ml = str_len(mn);
     char last = mn[(ml - 1)];
     if (str_eq(mn, "ret")) {
-        byte(a, 195);
+        asm_byte(a, 195);
         return;
     }
     if (str_eq(mn, "leave")) {
-        byte(a, 201);
+        asm_byte(a, 201);
         return;
     }
     if (str_eq(mn, "cqto")) {
-        byte(a, 72);
-        byte(a, 153);
+        asm_byte(a, 72);
+        asm_byte(a, 153);
+        return;
+    }
+    if (str_eq(mn, "syscall")) {
+        asm_byte(a, 15);
+        asm_byte(a, 5);
         return;
     }
     if (str_eq(mn, "jmp")) {
-        need(a, ops, 1);
-        byte(a, 233);
+        need(a, n, 1);
+        asm_byte(a, 233);
         rel32(a, x.sym);
         return;
     }
+    if (str_eq(mn, "call") && (x.kind == 1)) {
+        need(a, n, 1);
+        enc(a, 0, false, 255, (0 - 1), (0 - 1), 2, false, x, 0, 0);
+        return;
+    }
     if (str_eq(mn, "call")) {
-        need(a, ops, 1);
-        byte(a, 232);
+        need(a, n, 1);
+        asm_byte(a, 232);
         rel32(a, x.sym);
         return;
     }
     if ((ml >= 2) && (mn[0] == 'j')) {
         int64_t cc = cc_code(str_sub(mn, 1, (ml - 1)));
         if (((cc >= 0) && (n == 1)) && (x.kind == 4)) {
-            byte(a, 15);
-            byte(a, (128 + cc));
+            asm_byte(a, 15);
+            asm_byte(a, (128 + cc));
             rel32(a, x.sym);
             return;
         }
@@ -12514,14 +17331,14 @@ void instruction(Asm* a, const char* mn, Array ops) {
         }
     }
     if (str_eq(mn, "pushq") || str_eq(mn, "popq")) {
-        need(a, ops, 1);
+        need(a, n, 1);
         if (x.reg >= 8) {
-            byte(a, 65);
+            asm_byte(a, 65);
         }
         if (str_eq(mn, "pushq")) {
-            byte(a, (80 + (x.reg & 7)));
+            asm_byte(a, (80 + (x.reg & 7)));
         } else {
-            byte(a, (88 + (x.reg & 7)));
+            asm_byte(a, (88 + (x.reg & 7)));
         }
         return;
     }
@@ -12548,25 +17365,25 @@ void instruction(Asm* a, const char* mn, Array ops) {
             d = 7;
         }
         if ((d >= 0) && (sz > 0)) {
-            need(a, ops, 2);
+            need(a, n, 2);
             alu(a, d, sz, x, y);
             return;
         }
     }
     if (((str_eq(mn, "movq") || str_eq(mn, "movl")) || str_eq(mn, "movw")) || str_eq(mn, "movb")) {
-        need(a, ops, 2);
-        (({ __auto_type strata_t1416_ = a; __auto_type strata_t1417_ = size_of(last); mov(strata_t1416_, strata_t1417_, x, y); }));
+        need(a, n, 2);
+        (({ __auto_type strata_t2312_ = a; __auto_type strata_t2313_ = size_of(last); mov(strata_t2312_, strata_t2313_, x, y); }));
         return;
     }
     if (str_eq(mn, "movabsq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         if (y.reg >= 8) {
-            byte(a, 73);
+            asm_byte(a, 73);
         } else {
-            byte(a, 72);
+            asm_byte(a, 72);
         }
-        byte(a, (184 + (y.reg & 7)));
-        bytes_le(a, x.imm, 8);
+        asm_byte(a, (184 + (y.reg & 7)));
+        asm_bytes(a, x.imm, 8);
         return;
     }
     if (str_eq(mn, "movsbq")) {
@@ -12598,12 +17415,12 @@ void instruction(Asm* a, const char* mn, Array ops) {
         return;
     }
     if (str_eq(mn, "leaq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 0, true, 141, (0 - 1), (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "movd")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         if (x.size == 16) {
             enc(a, 102, false, 15, 126, (0 - 1), x.reg, false, y, 0, 0);
         } else {
@@ -12612,7 +17429,7 @@ void instruction(Asm* a, const char* mn, Array ops) {
         return;
     }
     if (str_eq(mn, "imulq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         if (x.kind == 2) {
             if (fits8(x.imm)) {
                 enc(a, 0, true, 107, (0 - 1), (0 - 1), y.reg, false, y, 1, x.imm);
@@ -12645,7 +17462,7 @@ void instruction(Asm* a, const char* mn, Array ops) {
         return;
     }
     if ((str_eq(mn, "shlq") || str_eq(mn, "shrq")) || str_eq(mn, "sarq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         int64_t d = 4;
         if (str_eq(mn, "shrq")) {
             d = 5;
@@ -12659,12 +17476,12 @@ void instruction(Asm* a, const char* mn, Array ops) {
         if (((x.kind == 1) && (x.reg == 1)) && (x.size == 1)) {
             enc(a, 0, true, 211, (0 - 1), (0 - 1), d, false, y, 0, 0);
         } else {
-            x64asm__fail(a, "a shift count must be $imm or %cl");
+            asm_fail(a, "a shift count must be $imm or %cl");
         }
         return;
     }
     if (str_eq(mn, "btcq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 0, true, 15, 186, (0 - 1), 7, false, y, 1, x.imm);
         return;
     }
@@ -12676,7 +17493,7 @@ void instruction(Asm* a, const char* mn, Array ops) {
         pre = 242;
     }
     if (str_eq(mn, "movss") || str_eq(mn, "movsd")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         if (y.kind == 1) {
             enc(a, pre, false, 15, 16, (0 - 1), y.reg, false, x, 0, 0);
         } else {
@@ -12685,12 +17502,12 @@ void instruction(Asm* a, const char* mn, Array ops) {
         return;
     }
     if (str_eq(mn, "movaps")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 0, false, 15, 40, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "movups")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         if (y.kind == 1) {
             enc(a, 0, false, 15, 16, (0 - 1), y.reg, false, x, 0, 0);
         } else {
@@ -12714,352 +17531,172 @@ void instruction(Asm* a, const char* mn, Array ops) {
             op = 94;
         }
         if (op >= 0) {
-            need(a, ops, 2);
+            need(a, n, 2);
             enc(a, pre, false, 15, op, (0 - 1), y.reg, false, x, 0, 0);
             return;
         }
     }
     if (str_eq(mn, "sqrtss") || str_eq(mn, "sqrtsd")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, pre, false, 15, 81, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "ucomiss")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 0, false, 15, 46, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "ucomisd")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 102, false, 15, 46, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "cvtsi2ssq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 243, true, 15, 42, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "cvtsi2sdq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 242, true, 15, 42, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "cvttss2siq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 243, true, 15, 44, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "cvttsd2siq")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 242, true, 15, 44, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "cvtss2sd")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 243, false, 15, 90, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
     if (str_eq(mn, "cvtsd2ss")) {
-        need(a, ops, 2);
+        need(a, n, 2);
         enc(a, 242, false, 15, 90, (0 - 1), y.reg, false, x, 0, 0);
         return;
     }
-    x64asm__fail(a, str_concat("unknown instruction ", mn));
+    asm_fail(a, str_concat("unknown instruction ", mn));
 }
 
-void x64asm__align_to(Asm* a, int64_t n) {
-    int64_t fill = 0;
-    if (a->sec == 1) {
-        fill = 144;
-    }
-    while ((pos(a) % n) != 0) {
-        byte(a, fill);
-    }
-}
-
-void asciz(Asm* a, const char* q) {
-    if (((str_len(q) < 2) || (q[0] != '"')) || (q[(str_len(q) - 1)] != '"')) {
-        x64asm__fail(a, "expected a quoted string");
-        return;
-    }
-    int64_t i = 1;
-    int64_t end = (str_len(q) - 1);
-    while (i < end) {
-        char c = q[i];
-        if ((c == '\\') && ((i + 1) < end)) {
-            char e = q[(i + 1)];
-            i += 2;
-            if (e == 'n') {
-                byte(a, 10);
-            } else 
-            if (e == 't') {
-                byte(a, 9);
-            } else 
-            if (e == 'r') {
-                byte(a, 13);
-            } else 
-            if (e == 'b') {
-                byte(a, 8);
-            } else 
-            if (e == 'f') {
-                byte(a, 12);
-            } else 
-            if ((e >= '0') && (e <= '7')) {
-                int64_t v = (((int64_t)(e)) - ((int64_t)('0')));
-                int64_t k = 0;
-                while ((((k < 2) && (i < end)) && (q[i] >= '0')) && (q[i] <= '7')) {
-                    v = ((v * 8) + (((int64_t)(q[i])) - ((int64_t)('0'))));
-                    i += 1;
-                    k += 1;
-                }
-                byte(a, v);
-            } else {
-                byte(a, ((int64_t)(e)));
-            }
-        } else {
-            byte(a, ((int64_t)(c)));
-            i += 1;
-        }
-    }
-    byte(a, 0);
-}
-
-void directive(Asm* a, const char* s) {
-    int64_t sp = (0 - 1);
-    for (int64_t i = 0; i < str_len(s); i++) {
-        if ((sp < 0) && x64asm__is_space(s[i])) {
-            sp = i;
-        }
-    }
-    const char* name = s;
-    const char* arg = "";
-    if (sp >= 0) {
-        name = str_sub(s, 0, sp);
-        arg = x64asm__trim(str_sub(s, sp, (str_len(s) - sp)));
-    }
-    if (str_eq(name, ".text")) {
-        a->sec = 1;
+void x64_fixup(Asm* a, Fix f, int64_t li) {
+    if ((li >= 0) && (((int64_t*)(a->lsec).data)[li] == 1)) {
+        asm_patch(a, f.pos, ((((int64_t*)(a->loff).data)[li] + f.addend) - ((f.pos + 4) + f.after)), 4);
     } else 
-    if (str_eq(name, ".data")) {
-        a->sec = 3;
-    } else 
-    if (str_eq(name, ".section")) {
-        if ((str_len(arg) >= 6) && str_eq(str_sub(arg, 0, 6), ".rdata")) {
-            a->sec = 2;
-        } else 
-        if ((str_len(arg) >= 5) && str_eq(str_sub(arg, 0, 5), ".text")) {
-            a->sec = 1;
-        } else 
-        if ((str_len(arg) >= 5) && str_eq(str_sub(arg, 0, 5), ".data")) {
-            a->sec = 3;
-        } else {
-            x64asm__fail(a, str_concat("unknown section ", arg));
-        }
-    } else 
-    if (((str_eq(name, ".quad") || str_eq(name, ".long")) || str_eq(name, ".short")) || str_eq(name, ".byte")) {
-        int64_t n = 8;
-        if (str_eq(name, ".long")) {
-            n = 4;
-        } else 
-        if (str_eq(name, ".short")) {
-            n = 2;
-        } else 
-        if (str_eq(name, ".byte")) {
-            n = 1;
-        }
-        if ((str_len(arg) > 0) && ((x64asm__is_digit(arg[0]) || (arg[0] == '-')) || (arg[0] == '+'))) {
-            (({ __auto_type strata_t1418_ = a; __auto_type strata_t1419_ = parse_num(a, arg); bytes_le(strata_t1418_, strata_t1419_, n); }));
-        } else 
-        if ((n == 8) && (a->sec == 3)) {
-            const char* sym = arg;
-            int64_t off = 0;
-            int64_t q = (0 - 1);
-            for (int64_t i = 1; i < str_len(arg); i++) {
-                if ((q < 0) && ((arg[i] == '+') || (arg[i] == '-'))) {
-                    q = i;
-                }
-            }
-            if (q > 0) {
-                sym = str_sub(arg, 0, q);
-                off = (({ __auto_type strata_t1420_ = a; __auto_type strata_t1421_ = str_sub(arg, q, (str_len(arg) - q)); parse_num(strata_t1420_, strata_t1421_); }));
-            }
-            ({ Fix _e = (Fix){a->o.data.len, sym, off, 0, 3}; arr_push(&(a->fixes), &_e); });
-            bytes_le(a, 0, 8);
-        } else {
-            x64asm__fail(a, "a symbol needs .quad in .data");
-        }
-    } else 
-    if (str_eq(name, ".zero")) {
-        int64_t n = parse_num(a, arg);
-        for (int64_t i = 0; i < n; i++) {
-            byte(a, 0);
-        }
-    } else 
-    if (str_eq(name, ".globl")) {
-        ({ const char* _e = arg; arr_push(&(a->globals), &_e); });
-    } else 
-    if (str_eq(name, ".p2align")) {
-        int64_t p = parse_num(a, arg);
-        int64_t n = 1;
-        for (int64_t k = 0; k < p; k++) {
-            n = (n * 2);
-        }
-        x64asm__align_to(a, n);
-    } else 
-    if (str_eq(name, ".asciz")) {
-        asciz(a, arg);
-    } else 
-    if (str_eq(name, ".float")) {
-        (({ __auto_type strata_t1422_ = a; __auto_type strata_t1423_ = strata_f32_bits(arg); bytes_le(strata_t1422_, strata_t1423_, 4); }));
-    } else 
-    if (str_eq(name, ".double")) {
-        (({ __auto_type strata_t1424_ = a; __auto_type strata_t1425_ = strata_f64_bits(arg); bytes_le(strata_t1424_, strata_t1425_, 8); }));
+    if (li >= 0) {
+        asm_patch(a, f.pos, (((int64_t*)(a->loff).data)[li] + f.addend), 4);
+        ({ ObjReloc _e = (ObjReloc){1, f.pos, (0 - ((int64_t*)(a->lsec).data)[li]), f.after, 0}; arr_push(&(a->o.relocs), &_e); });
     } else {
-        x64asm__fail(a, str_concat("unknown directive ", name));
+        asm_patch(a, f.pos, f.addend, 4);
+        ({ ObjReloc _e = (({ __auto_type strata_t2314_ = f.pos; __auto_type strata_t2315_ = asm_symbol(a, f.label, 0, 0); (ObjReloc){1, strata_t2314_, strata_t2315_, f.after, 0}; })); arr_push(&(a->o.relocs), &_e); });
     }
 }
 
-void define_label(Asm* a, const char* name) {
-    idx_add((&a->lidx), name, a->lnames.len);
-    ({ const char* _e = name; arr_push(&(a->lnames), &_e); });
-    ({ int64_t _e = a->sec; arr_push(&(a->lsec), &_e); });
-    ({ int64_t _e = pos(a); arr_push(&(a->loff), &_e); });
+int64_t x64_nop(void) {
+    return 144;
 }
 
-int64_t find_label(Asm* a, const char* name) {
-    int64_t found = (0 - 1);
-    int64_t k = idx_first((&a->lidx), name);
-    while ((k >= 0) && (found < 0)) {
-        if (str_eq(((const char**)(a->lnames).data)[k], name)) {
-            found = k;
-        }
-        k = idx_next((&a->lidx), k);
-    }
-    return found;
+int64_t view_object(void) {
+    return 0;
 }
 
-int64_t symbol_index(Asm* a, const char* name, int64_t section, int64_t value) {
-    int64_t found = (0 - 1);
-    int64_t k = idx_first((&a->sidx), name);
-    while ((k >= 0) && (found < 0)) {
-        if (str_eq(((ObjSymbol*)(a->o.symbols).data)[k].name, name)) {
-            found = k;
-        }
-        k = idx_next((&a->sidx), k);
-    }
-    if (found >= 0) {
-        return found;
-    }
-    idx_add((&a->sidx), name, a->o.symbols.len);
-    bool global = (section == 0);
-    for (int64_t i = 0; i < a->globals.len; i++) {
-        if (str_eq(((const char**)(a->globals).data)[i], name)) {
-            global = true;
-        }
-    }
-    ({ ObjSymbol _e = (ObjSymbol){name, section, value, global}; arr_push(&(a->o.symbols), &_e); });
-    return (a->o.symbols.len - 1);
+int64_t view_asm(void) {
+    return 1;
 }
 
-void patch64_data(Asm* a, int64_t at, int64_t v) {
-    uint64_t x = ((uint64_t)(v));
-    for (int64_t i = 0; i < 8; i++) {
-        ((uint8_t*)(a->o.data).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
-        x = (x >> ((uint64_t)(8)));
-    }
+int64_t view_ir(void) {
+    return 2;
 }
 
-void patch32(Asm* a, int64_t at, int64_t v) {
-    uint64_t x = ((uint64_t)(v));
-    for (int64_t i = 0; i < 4; i++) {
-        ((uint8_t*)(a->o.text).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
-        x = (x >> ((uint64_t)(8)));
+const char* arch_name(const char* host_arch) {
+    if (str_eq(host_arch, "x86_64")) {
+        return "x64";
     }
+    return host_arch;
 }
 
-ObjFile assemble_x64(const char* src) {
-    int64_t lines = 1;
-    int64_t n = str_len(src);
-    for (int64_t i = 0; i < n; i++) {
-        if (src[i] == '\n') {
-            lines += 1;
+const char* native_target_why(const char* os, const char* arch) {
+    if ((str_eq(os, "windows") || str_eq(os, "linux")) && str_eq(arch, "x86_64")) {
+        return "";
+    }
+    if (str_eq(os, "macos") && str_eq(arch, "arm64")) {
+        return "";
+    }
+    return str_concat(str_concat(str_concat(str_concat("the native backend targets x86-64 Windows and Linux and ARM64 macOS so far (this is ", arch), " "), os), ")");
+}
+
+NativeResult native_compile(Program prog, bool with_main, bool optimize_code, int64_t view) {
+    Lower* l = new_lower();
+    Array t0 = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array r0 = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array d0 = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array rl0 = ({ Array _a = arr_make(sizeof(ObjReloc)); _a; });
+    Array sy0 = ({ Array _a = arr_make(sizeof(ObjSymbol)); _a; });
+    ObjFile none = (ObjFile){false, "", t0, r0, d0, rl0, sy0};
+    if (!lower_program(l, prog, with_main)) {
+        return (NativeResult){false, l->err, none, ""};
+    }
+    if (str_eq(target_arch(), "arm64")) {
+        return native_arm64(l, optimize_code, view, none);
+    }
+    int64_t size = 0;
+    for (int64_t i = 0; i < l->prog.funcs.len; i++) {
+        size += ((IrFunc*)(l->prog.funcs).data)[i].code.len;
+    }
+    X64 x = new_x64((({ __auto_type strata_t2316_ = view; __auto_type strata_t2317_ = view_object(); (strata_t2316_ == strata_t2317_); })), (size + 64));
+    x64_begin((&x));
+    Array irt = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t i = 0; i < l->prog.funcs.len; i++) {
+        IrFunc* f = (&((IrFunc*)(l->prog.funcs).data)[i]);
+        Array regs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+        if (optimize_code) {
+            optimize(f);
+            regs = (({ __auto_type strata_t2318_ = f; __auto_type strata_t2319_ = x64_regs(); __auto_type strata_t2320_ = x64_lazy(f); alloc_regs(strata_t2318_, strata_t2319_, strata_t2320_); }));
         }
+        x64_function((&x), f, regs);
     }
-    Array t = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
-    Array r = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
-    Array dt = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
-    Array rl = ({ Array _a = arr_make(sizeof(ObjReloc)); _a; });
-    Array sy = ({ Array _a = arr_make(sizeof(ObjSymbol)); _a; });
-    Array ln = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    Array ls = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    Array lo = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    Array gl = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    Array fx = ({ Array _a = arr_make(sizeof(Fix)); _a; });
-    Asm a = (({ __auto_type strata_t1426_ = (ObjFile){true, "", t, r, dt, rl, sy}; __auto_type strata_t1427_ = ln; __auto_type strata_t1428_ = ls; __auto_type strata_t1429_ = lo; __auto_type strata_t1430_ = new_idx(((lines / 2) + 16)); __auto_type strata_t1431_ = gl; __auto_type strata_t1432_ = fx; __auto_type strata_t1433_ = new_idx(((lines / 8) + 16)); (Asm){strata_t1426_, 1, strata_t1427_, strata_t1428_, strata_t1429_, strata_t1430_, strata_t1431_, strata_t1432_, strata_t1433_, 0, ""}; }));
-    int64_t start = 0;
-    int64_t i = 0;
-    while ((i <= n) && a.o.ok) {
-        if ((i == n) || (src[i] == '\n')) {
-            a.line += 1;
-            const char* s = x64asm__trim(str_sub(src, start, (i - start)));
-            a.text = s;
-            if ((str_len(s) > 0) && (s[0] != '#')) {
-                if (s[(str_len(s) - 1)] == ':') {
-                    (({ __auto_type strata_t1434_ = (&a); __auto_type strata_t1435_ = str_sub(s, 0, (str_len(s) - 1)); define_label(strata_t1434_, strata_t1435_); }));
-                } else 
-                if (s[0] == '.') {
-                    directive((&a), s);
-                } else {
-                    int64_t sp = (0 - 1);
-                    for (int64_t k = 0; k < str_len(s); k++) {
-                        if ((sp < 0) && x64asm__is_space(s[k])) {
-                            sp = k;
-                        }
-                    }
-                    if (sp < 0) {
-                        (({ __auto_type strata_t1436_ = (&a); __auto_type strata_t1437_ = s; __auto_type strata_t1438_ = split_operands(""); instruction(strata_t1436_, strata_t1437_, strata_t1438_); }));
-                    } else {
-                        (({ __auto_type strata_t1439_ = (&a); __auto_type strata_t1440_ = str_sub(s, 0, sp); __auto_type strata_t1441_ = split_operands(str_sub(s, sp, (str_len(s) - sp))); instruction(strata_t1439_, strata_t1440_, strata_t1441_); }));
-                    }
-                }
-            }
-            start = (i + 1);
+    if (({ __auto_type strata_t2321_ = view; __auto_type strata_t2322_ = view_ir(); (strata_t2321_ == strata_t2322_); })) {
+        return (({ __auto_type strata_t2323_ = none; __auto_type strata_t2324_ = ir_program_text((&l->prog)); (NativeResult){true, "", strata_t2323_, strata_t2324_}; }));
+    }
+    if (({ __auto_type strata_t2325_ = view; __auto_type strata_t2326_ = view_asm(); (strata_t2325_ == strata_t2326_); })) {
+        return (({ __auto_type strata_t2327_ = none; __auto_type strata_t2328_ = x64_finish((&x), (&l->prog)); (NativeResult){true, "", strata_t2327_, strata_t2328_}; }));
+    }
+    ObjFile o = x64_finish_object((&x), (&l->prog));
+    if (!o.ok) {
+        return (NativeResult){false, str_concat("internal error in the assembler: ", o.err), none, ""};
+    }
+    return (NativeResult){true, "", o, ""};
+}
+
+NativeResult native_arm64(Lower* l, bool optimize_code, int64_t view, ObjFile none) {
+    A64 x = new_a64();
+    arm64_begin((&x));
+    for (int64_t i = 0; i < l->prog.funcs.len; i++) {
+        IrFunc* f = (&((IrFunc*)(l->prog.funcs).data)[i]);
+        Array regs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+        if (optimize_code) {
+            optimize(f);
+            regs = (({ __auto_type strata_t2329_ = f; __auto_type strata_t2330_ = arm64_regs(); __auto_type strata_t2331_ = arm64_lazy(f); alloc_regs(strata_t2329_, strata_t2330_, strata_t2331_); }));
         }
-        i += 1;
+        arm64_function((&x), f, regs);
     }
-    if (!a.o.ok) {
-        return a.o;
+    if (({ __auto_type strata_t2332_ = view; __auto_type strata_t2333_ = view_ir(); (strata_t2332_ == strata_t2333_); })) {
+        return (({ __auto_type strata_t2334_ = none; __auto_type strata_t2335_ = ir_program_text((&l->prog)); (NativeResult){true, "", strata_t2334_, strata_t2335_}; }));
     }
-    for (int64_t k = 0; k < a.lnames.len; k++) {
-        const char* nm = ((const char**)(a.lnames).data)[k];
-        if (((((int64_t*)(a.lsec).data)[k] == 1) || (((int64_t*)(a.lsec).data)[k] == 3)) && (!(((str_len(nm) > 1) && (nm[0] == '.')) && (nm[1] == 'L')))) {
-            symbol_index((&a), nm, ((int64_t*)(a.lsec).data)[k], ((int64_t*)(a.loff).data)[k]);
-        }
+    const char* text = arm64_finish((&x), (&l->prog));
+    if (({ __auto_type strata_t2336_ = view; __auto_type strata_t2337_ = view_asm(); (strata_t2336_ == strata_t2337_); })) {
+        return (NativeResult){true, "", none, text};
     }
-    for (int64_t k = 0; k < a.fixes.len; k++) {
-        Fix f = ((Fix*)(a.fixes).data)[k];
-        int64_t li = find_label((&a), f.label);
-        if (f.section == 3) {
-            if (li >= 0) {
-                patch64_data((&a), f.pos, (((int64_t*)(a.loff).data)[li] + f.addend));
-                ({ ObjReloc _e = (ObjReloc){3, f.pos, (0 - ((int64_t*)(a.lsec).data)[li]), 0, 1}; arr_push(&(a.o.relocs), &_e); });
-            } else {
-                patch64_data((&a), f.pos, f.addend);
-                ({ ObjReloc _e = (({ __auto_type strata_t1442_ = f.pos; __auto_type strata_t1443_ = symbol_index((&a), f.label, 0, 0); (ObjReloc){3, strata_t1442_, strata_t1443_, 0, 1}; })); arr_push(&(a.o.relocs), &_e); });
-            }
-        } else 
-        if ((li >= 0) && (((int64_t*)(a.lsec).data)[li] == 1)) {
-            patch32((&a), f.pos, ((((int64_t*)(a.loff).data)[li] + f.addend) - ((f.pos + 4) + f.after)));
-        } else 
-        if (li >= 0) {
-            patch32((&a), f.pos, (((int64_t*)(a.loff).data)[li] + f.addend));
-            ({ ObjReloc _e = (ObjReloc){1, f.pos, (0 - ((int64_t*)(a.lsec).data)[li]), f.after, 0}; arr_push(&(a.o.relocs), &_e); });
-        } else {
-            patch32((&a), f.pos, f.addend);
-            ({ ObjReloc _e = (({ __auto_type strata_t1444_ = f.pos; __auto_type strata_t1445_ = symbol_index((&a), f.label, 0, 0); (ObjReloc){1, strata_t1444_, strata_t1445_, f.after, 0}; })); arr_push(&(a.o.relocs), &_e); });
-        }
+    ObjFile o = assemble(text, "arm64");
+    if (!o.ok) {
+        return (NativeResult){false, str_concat("internal error in the assembler: ", o.err), none, ""};
     }
-    return a.o;
+    return (NativeResult){true, "", o, ""};
 }
 
 void u8put(Out* o, int64_t v) {
@@ -13286,7 +17923,7 @@ int64_t rd16(Array b, int64_t at) {
 }
 
 int64_t rd32(Array b, int64_t at) {
-    return (({ __auto_type strata_t1446_ = rd16(b, at); __auto_type strata_t1447_ = (rd16(b, (at + 2)) << 16); (strata_t1446_ | strata_t1447_); }));
+    return (({ __auto_type strata_t2338_ = rd16(b, at); __auto_type strata_t2339_ = (rd16(b, (at + 2)) << 16); (strata_t2338_ | strata_t2339_); }));
 }
 
 const char* rdstr(Array b, int64_t at, int64_t max) {
@@ -13318,7 +17955,7 @@ Linker* new_linker(void) {
     ({ const char* _e = str_concat(sys, "\\msvcrt.dll"); arr_push(&(dp), &_e); });
     ({ const char* _e = "kernel32.dll"; arr_push(&(dl), &_e); });
     ({ const char* _e = str_concat(sys, "\\kernel32.dll"); arr_push(&(dp), &_e); });
-    return ({ Linker _v = (({ __auto_type strata_t1448_ = o; __auto_type strata_t1449_ = s; __auto_type strata_t1450_ = gn; __auto_type strata_t1451_ = gs; __auto_type strata_t1452_ = gv; __auto_type strata_t1453_ = new_idx(4096); __auto_type strata_t1454_ = im; __auto_type strata_t1455_ = id; __auto_type strata_t1456_ = new_idx(1024); __auto_type strata_t1457_ = dl; __auto_type strata_t1458_ = dp; __auto_type strata_t1459_ = en; __auto_type strata_t1460_ = ed; __auto_type strata_t1461_ = new_idx(8192); (Linker){true, "", strata_t1448_, strata_t1449_, strata_t1450_, strata_t1451_, strata_t1452_, strata_t1453_, strata_t1454_, strata_t1455_, strata_t1456_, strata_t1457_, strata_t1458_, strata_t1459_, strata_t1460_, strata_t1461_, false, a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0, false, fx}; })); Linker* _p = (Linker*)arena_alloc(strata_heap(), sizeof(Linker)); *_p = _v; _p; });
+    return ({ Linker _v = (({ __auto_type strata_t2340_ = o; __auto_type strata_t2341_ = s; __auto_type strata_t2342_ = gn; __auto_type strata_t2343_ = gs; __auto_type strata_t2344_ = gv; __auto_type strata_t2345_ = new_idx(4096); __auto_type strata_t2346_ = im; __auto_type strata_t2347_ = id; __auto_type strata_t2348_ = new_idx(1024); __auto_type strata_t2349_ = dl; __auto_type strata_t2350_ = dp; __auto_type strata_t2351_ = en; __auto_type strata_t2352_ = ed; __auto_type strata_t2353_ = new_idx(8192); (Linker){true, "", strata_t2340_, strata_t2341_, strata_t2342_, strata_t2343_, strata_t2344_, strata_t2345_, strata_t2346_, strata_t2347_, strata_t2348_, strata_t2349_, strata_t2350_, strata_t2351_, strata_t2352_, strata_t2353_, false, a, b, c, d, t, r, dt, 0, 0, 0, 0, 0, 0, false, fx}; })); Linker* _p = (Linker*)arena_alloc(strata_heap(), sizeof(Linker)); *_p = _v; _p; });
 }
 
 int64_t out_of(Linker* l, const char* name, int64_t flags) {
@@ -13376,7 +18013,7 @@ void link_add(Linker* l, const char* name, Array b) {
             nm = rdstr(b, (strat + off), 4096);
         }
         int64_t flags = rd32(b, (h + 36));
-        ({ LSec _e = (({ __auto_type strata_t1462_ = oi; __auto_type strata_t1463_ = nm; __auto_type strata_t1464_ = flags; __auto_type strata_t1465_ = rd32(b, (h + 16)); __auto_type strata_t1466_ = rd32(b, (h + 20)); __auto_type strata_t1467_ = rd16(b, (h + 32)); __auto_type strata_t1468_ = rd32(b, (h + 24)); __auto_type strata_t1469_ = out_of(l, nm, flags); (LSec){strata_t1462_, strata_t1463_, strata_t1464_, strata_t1465_, strata_t1466_, strata_t1467_, strata_t1468_, strata_t1469_, 0}; })); arr_push(&(l->secs), &_e); });
+        ({ LSec _e = (({ __auto_type strata_t2354_ = oi; __auto_type strata_t2355_ = nm; __auto_type strata_t2356_ = flags; __auto_type strata_t2357_ = rd32(b, (h + 16)); __auto_type strata_t2358_ = rd32(b, (h + 20)); __auto_type strata_t2359_ = rd16(b, (h + 32)); __auto_type strata_t2360_ = rd32(b, (h + 24)); __auto_type strata_t2361_ = out_of(l, nm, flags); (LSec){strata_t2354_, strata_t2355_, strata_t2356_, strata_t2357_, strata_t2358_, strata_t2359_, strata_t2360_, strata_t2361_, 0}; })); arr_push(&(l->secs), &_e); });
     }
     Array syms = ({ Array _a = arr_make(sizeof(LSym)); _a; });
     int64_t k = 0;
@@ -13384,7 +18021,7 @@ void link_add(Linker* l, const char* name, Array b) {
         int64_t at = (symat + (18 * k));
         const char* nm = "";
         if (rd32(b, at) == 0) {
-            nm = (({ __auto_type strata_t1470_ = b; __auto_type strata_t1471_ = (({ __auto_type strata_t1472_ = strat; __auto_type strata_t1473_ = rd32(b, (at + 4)); (strata_t1472_ + strata_t1473_); })); rdstr(strata_t1470_, strata_t1471_, 4096); }));
+            nm = (({ __auto_type strata_t2362_ = b; __auto_type strata_t2363_ = (({ __auto_type strata_t2364_ = strat; __auto_type strata_t2365_ = rd32(b, (at + 4)); (strata_t2364_ + strata_t2365_); })); rdstr(strata_t2362_, strata_t2363_, 4096); }));
         } else {
             nm = rdstr(b, at, 8);
         }
@@ -13393,7 +18030,7 @@ void link_add(Linker* l, const char* name, Array b) {
             sec = (sec - 65536);
         }
         int64_t naux = ((int64_t)(((uint8_t*)(b).data)[(at + 17)]));
-        ({ LSym _e = (({ __auto_type strata_t1474_ = nm; __auto_type strata_t1475_ = rd32(b, (at + 8)); (LSym){strata_t1474_, strata_t1475_, sec, ((int64_t)(((uint8_t*)(b).data)[(at + 16)]))}; })); arr_push(&(syms), &_e); });
+        ({ LSym _e = (({ __auto_type strata_t2366_ = nm; __auto_type strata_t2367_ = rd32(b, (at + 8)); (LSym){strata_t2366_, strata_t2367_, sec, ((int64_t)(((uint8_t*)(b).data)[(at + 16)]))}; })); arr_push(&(syms), &_e); });
         for (int64_t q = 0; q < naux; q++) {
             ({ LSym _e = (LSym){"", 0, (0 - 99), 0}; arr_push(&(syms), &_e); });
         }
@@ -13403,7 +18040,7 @@ void link_add(Linker* l, const char* name, Array b) {
     for (int64_t i = 0; i < syms.len; i++) {
         LSym s = ((LSym*)(syms).data)[i];
         if ((s.cls == 2) && (s.section > 0)) {
-            if (pelink__find_global(l, s.name) >= 0) {
+            if (os_windows__find_global(l, s.name) >= 0) {
                 lk_fail(l, str_concat(str_concat(str_concat(str_concat("'", s.name), "' is defined twice ("), name), ")"));
             }
             idx_add((&l->gidx), s.name, l->gname.len);
@@ -13417,7 +18054,7 @@ void link_add(Linker* l, const char* name, Array b) {
     }
 }
 
-int64_t pelink__find_global(Linker* l, const char* name) {
+int64_t os_windows__find_global(Linker* l, const char* name) {
     int64_t found = (0 - 1);
     int64_t k = idx_first((&l->gidx), name);
     while ((k >= 0) && (found < 0)) {
@@ -13504,17 +18141,17 @@ bool link_library(Linker* l, const char* name, Array dirs) {
 int64_t rva_to_file(Array b, int64_t rva) {
     int64_t pe = rd32(b, 60);
     int64_t nsec = rd16(b, (pe + 6));
-    int64_t sh = (({ __auto_type strata_t1476_ = (pe + 24); __auto_type strata_t1477_ = rd16(b, (pe + 20)); (strata_t1476_ + strata_t1477_); }));
+    int64_t sh = (({ __auto_type strata_t2368_ = (pe + 24); __auto_type strata_t2369_ = rd16(b, (pe + 20)); (strata_t2368_ + strata_t2369_); }));
     int64_t r = (0 - 1);
     for (int64_t k = 0; k < nsec; k++) {
         int64_t h = (sh + (40 * k));
         int64_t va = rd32(b, (h + 12));
         int64_t vs = rd32(b, (h + 8));
-        if (({ __auto_type strata_t1478_ = vs; __auto_type strata_t1479_ = rd32(b, (h + 16)); (strata_t1478_ < strata_t1479_); })) {
+        if (({ __auto_type strata_t2370_ = vs; __auto_type strata_t2371_ = rd32(b, (h + 16)); (strata_t2370_ < strata_t2371_); })) {
             vs = rd32(b, (h + 16));
         }
         if ((rva >= va) && (rva < (va + vs))) {
-            r = (({ __auto_type strata_t1480_ = (rva - va); __auto_type strata_t1481_ = rd32(b, (h + 20)); (strata_t1480_ + strata_t1481_); }));
+            r = (({ __auto_type strata_t2372_ = (rva - va); __auto_type strata_t2373_ = rd32(b, (h + 20)); (strata_t2372_ + strata_t2373_); }));
         }
     }
     return r;
@@ -13536,9 +18173,9 @@ void load_exports(Linker* l) {
             int64_t ed = rva_to_file(b, expdir);
             if (ed >= 0) {
                 int64_t n = rd32(b, (ed + 24));
-                int64_t names = (({ __auto_type strata_t1482_ = b; __auto_type strata_t1483_ = rd32(b, (ed + 32)); rva_to_file(strata_t1482_, strata_t1483_); }));
+                int64_t names = (({ __auto_type strata_t2374_ = b; __auto_type strata_t2375_ = rd32(b, (ed + 32)); rva_to_file(strata_t2374_, strata_t2375_); }));
                 for (int64_t i = 0; i < n; i++) {
-                    const char* nm = (({ __auto_type strata_t1484_ = b; __auto_type strata_t1485_ = (({ __auto_type strata_t1486_ = b; __auto_type strata_t1487_ = rd32(b, (names + (4 * i))); rva_to_file(strata_t1486_, strata_t1487_); })); rdstr(strata_t1484_, strata_t1485_, 512); }));
+                    const char* nm = (({ __auto_type strata_t2376_ = b; __auto_type strata_t2377_ = (({ __auto_type strata_t2378_ = b; __auto_type strata_t2379_ = rd32(b, (names + (4 * i))); rva_to_file(strata_t2378_, strata_t2379_); })); rdstr(strata_t2376_, strata_t2377_, 512); }));
                     idx_add((&l->expidx), nm, l->exp_name.len);
                     ({ const char* _e = nm; arr_push(&(l->exp_name), &_e); });
                     ({ int64_t _e = d; arr_push(&(l->exp_dll), &_e); });
@@ -13592,7 +18229,7 @@ void find_imports(Linker* l) {
             for (int64_t r = 0; r < n; r++) {
                 int64_t symi = rd32(o.b, ((at + (10 * r)) + 4));
                 LSym y = ((LSym*)(o.syms).data)[symi];
-                if (((y.section == 0) && (pelink__find_global(l, y.name) < 0)) && (!str_eq(y.name, "__ImageBase"))) {
+                if (((y.section == 0) && (os_windows__find_global(l, y.name) < 0)) && (!str_eq(y.name, "__ImageBase"))) {
                     const char* base = import_base(y.name);
                     if (find_import(l, base) < 0) {
                         int64_t d = dll_of(l, base);
@@ -13609,7 +18246,7 @@ void find_imports(Linker* l) {
     }
 }
 
-int64_t pelink__align_up(int64_t n, int64_t a) {
+int64_t os_windows__align_up(int64_t n, int64_t a) {
     return ((((n + a) - 1) / a) * a);
 }
 
@@ -13642,7 +18279,7 @@ ImpLayout import_layout(Linker* l, int64_t start) {
             used += 1;
         }
     }
-    int64_t idt = pelink__align_up(start, 8);
+    int64_t idt = os_windows__align_up(start, 8);
     int64_t ilt = (idt + (20 * (used + 1)));
     int64_t slots = 0;
     for (int64_t d = 0; d < l->dlls.len; d++) {
@@ -13655,7 +18292,7 @@ ImpLayout import_layout(Linker* l, int64_t start) {
     int64_t names = (iat + (8 * slots));
     int64_t p = names;
     for (int64_t i = 0; i < l->imp.len; i++) {
-        p = pelink__align_up((((p + 2) + str_len(((const char**)(l->imp).data)[i])) + 1), 2);
+        p = os_windows__align_up((((p + 2) + str_len(((const char**)(l->imp).data)[i])) + 1), 2);
     }
     int64_t dn = p;
     for (int64_t d = 0; d < l->dlls.len; d++) {
@@ -13698,7 +18335,7 @@ int64_t symbol_rva(Linker* l, ImpLayout il, int64_t oi, int64_t symi) {
         return ((((int64_t*)(l->orva).data)[s.out] + s.at) + y.value);
     }
     if (y.section == 0) {
-        int64_t g = pelink__find_global(l, y.name);
+        int64_t g = os_windows__find_global(l, y.name);
         if (g >= 0) {
             LSec s = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
             return ((((int64_t*)(l->orva).data)[s.out] + s.at) + ((int64_t*)(l->gval).data)[g]);
@@ -13706,7 +18343,7 @@ int64_t symbol_rva(Linker* l, ImpLayout il, int64_t oi, int64_t symi) {
         if (str_eq(y.name, "__ImageBase")) {
             return 0;
         }
-        int64_t i = (({ __auto_type strata_t1488_ = l; __auto_type strata_t1489_ = import_base(y.name); find_import(strata_t1488_, strata_t1489_); }));
+        int64_t i = (({ __auto_type strata_t2380_ = l; __auto_type strata_t2381_ = import_base(y.name); find_import(strata_t2380_, strata_t2381_); }));
         if (i < 0) {
             lk_fail(l, str_concat(str_concat("undefined symbol '", y.name), "'"));
             return 0;
@@ -13767,25 +18404,25 @@ void apply_relocs(Linker* l, ImpLayout il, int64_t si, Array* out) {
         int64_t prva = (((int64_t*)(l->orva).data)[s.out] + p);
         int64_t sv = symbol_rva(l, il, s.obj, symi);
         if ((typ >= 4) && (typ <= 9)) {
-            (({ __auto_type strata_t1490_ = out; __auto_type strata_t1491_ = p; __auto_type strata_t1492_ = ((rd32(out[0], p) + sv) - ((prva + 4) + (typ - 4))); put32(strata_t1490_, strata_t1491_, strata_t1492_); }));
+            (({ __auto_type strata_t2382_ = out; __auto_type strata_t2383_ = p; __auto_type strata_t2384_ = ((rd32(out[0], p) + sv) - ((prva + 4) + (typ - 4))); put32(strata_t2382_, strata_t2383_, strata_t2384_); }));
         } else 
         if (typ == 1) {
-            (({ __auto_type strata_t1493_ = out; __auto_type strata_t1494_ = p; __auto_type strata_t1495_ = ((({ __auto_type strata_t1496_ = get64(out[0], p); __auto_type strata_t1497_ = image_base(l); (strata_t1496_ + strata_t1497_); })) + sv); put64(strata_t1493_, strata_t1494_, strata_t1495_); }));
+            (({ __auto_type strata_t2385_ = out; __auto_type strata_t2386_ = p; __auto_type strata_t2387_ = ((({ __auto_type strata_t2388_ = get64(out[0], p); __auto_type strata_t2389_ = image_base(l); (strata_t2388_ + strata_t2389_); })) + sv); put64(strata_t2385_, strata_t2386_, strata_t2387_); }));
             if (l->dll) {
                 ({ int64_t _e = prva; arr_push(&(l->fix64), &_e); });
             }
         } else 
         if (typ == 3) {
-            (({ __auto_type strata_t1498_ = out; __auto_type strata_t1499_ = p; __auto_type strata_t1500_ = (rd32(out[0], p) + sv); put32(strata_t1498_, strata_t1499_, strata_t1500_); }));
+            (({ __auto_type strata_t2390_ = out; __auto_type strata_t2391_ = p; __auto_type strata_t2392_ = (rd32(out[0], p) + sv); put32(strata_t2390_, strata_t2391_, strata_t2392_); }));
         } else 
         if (typ == 2) {
             if (l->dll) {
                 lk_fail(l, str_concat(str_concat("a 32-bit absolute address in ", o.name), " (a dll can't be relocated with it)"));
             }
-            (({ __auto_type strata_t1501_ = out; __auto_type strata_t1502_ = p; __auto_type strata_t1503_ = ((({ __auto_type strata_t1504_ = rd32(out[0], p); __auto_type strata_t1505_ = image_base(l); (strata_t1504_ + strata_t1505_); })) + sv); put32(strata_t1501_, strata_t1502_, strata_t1503_); }));
+            (({ __auto_type strata_t2393_ = out; __auto_type strata_t2394_ = p; __auto_type strata_t2395_ = ((({ __auto_type strata_t2396_ = rd32(out[0], p); __auto_type strata_t2397_ = image_base(l); (strata_t2396_ + strata_t2397_); })) + sv); put32(strata_t2393_, strata_t2394_, strata_t2395_); }));
         } else 
         if (typ != 0) {
-            (({ __auto_type strata_t1506_ = l; __auto_type strata_t1507_ = str_concat(str_concat(str_concat("unsupported relocation type ", str_from_int(typ)), " in "), o.name); lk_fail(strata_t1506_, strata_t1507_); }));
+            (({ __auto_type strata_t2398_ = l; __auto_type strata_t2399_ = str_concat(str_concat(str_concat("unsupported relocation type ", str_from_int(typ)), " in "), o.name); lk_fail(strata_t2398_, strata_t2399_); }));
         }
     }
 }
@@ -13895,16 +18532,16 @@ Array reloc_blocks(Array fix) {
 bool link_image(Linker* l, const char* path, bool dll, Array exports) {
     l->dll = dll;
     if (!dll) {
-        ObjFile st = assemble_x64(startup_asm());
+        ObjFile st = assemble(startup_asm(), "x64");
         if (!st.ok) {
             lk_fail(l, str_concat("startup: ", st.err));
             return false;
         }
-        (({ __auto_type strata_t1508_ = l; __auto_type strata_t1509_ = coff_bytes((&st)); link_add(strata_t1508_, "startup", strata_t1509_); }));
+        (({ __auto_type strata_t2400_ = l; __auto_type strata_t2401_ = coff_bytes((&st)); link_add(strata_t2400_, "startup", strata_t2401_); }));
         if (!l->ok) {
             return false;
         }
-        if (pelink__find_global(l, "main") < 0) {
+        if (os_windows__find_global(l, "main") < 0) {
             lk_fail(l, "no main");
             return false;
         }
@@ -13914,7 +18551,7 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
     }
     Array ex = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 0; i < exports.len; i++) {
-        if (pelink__find_global(l, ((const char**)(exports).data)[i]) < 0) {
+        if (os_windows__find_global(l, ((const char**)(exports).data)[i]) < 0) {
             lk_fail(l, str_concat(str_concat("exported function '", ((const char**)(exports).data)[i]), "' isn't defined"));
         }
         ({ const char* _e = ((const char**)(exports).data)[i]; arr_push(&(ex), &_e); });
@@ -13939,14 +18576,14 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
     for (int64_t si = 0; si < l->secs.len; si++) {
         int64_t out = ((LSec*)(l->secs).data)[si].out;
         if (out >= 0) {
-            int64_t at = (({ __auto_type strata_t1510_ = ((int64_t*)(l->osize).data)[out]; __auto_type strata_t1511_ = sec_align(((LSec*)(l->secs).data)[si].flags); pelink__align_up(strata_t1510_, strata_t1511_); }));
+            int64_t at = (({ __auto_type strata_t2402_ = ((int64_t*)(l->osize).data)[out]; __auto_type strata_t2403_ = sec_align(((LSec*)(l->secs).data)[si].flags); os_windows__align_up(strata_t2402_, strata_t2403_); }));
             ((LSec*)(l->secs).data)[si].at = at;
             ((int64_t*)(l->osize).data)[out] = (at + ((LSec*)(l->secs).data)[si].size);
         }
     }
-    l->thunks_at = pelink__align_up(((int64_t*)(l->osize).data)[0], 16);
+    l->thunks_at = os_windows__align_up(((int64_t*)(l->osize).data)[0], 16);
     ((int64_t*)(l->osize).data)[0] = (l->thunks_at + (8 * l->imp.len));
-    l->imports_at = pelink__align_up(((int64_t*)(l->osize).data)[1], 16);
+    l->imports_at = os_windows__align_up(((int64_t*)(l->osize).data)[1], 16);
     ImpLayout il = import_layout(l, l->imports_at);
     if (l->imp.len > 0) {
         ((int64_t*)(l->osize).data)[1] = il.end;
@@ -13957,7 +18594,7 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
             dllname = str_sub(path, (i + 1), ((str_len(path) - i) - 1));
         }
     }
-    int64_t exp_at = pelink__align_up(((int64_t*)(l->osize).data)[1], 4);
+    int64_t exp_at = os_windows__align_up(((int64_t*)(l->osize).data)[1], 4);
     int64_t exp_funcs = (exp_at + 40);
     int64_t exp_names = (exp_funcs + (4 * ex.len));
     int64_t exp_ords = (exp_names + (4 * ex.len));
@@ -13993,16 +18630,16 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
     if (has_reloc) {
         nout += 1;
     }
-    int64_t headers = pelink__align_up(((((64 + 4) + 20) + 240) + (40 * nout)), 512);
+    int64_t headers = os_windows__align_up(((((64 + 4) + 20) + 240) + (40 * nout)), 512);
     int64_t rva = 4096;
     int64_t fp = headers;
     for (int64_t o = 0; o < 4; o++) {
         if (((int64_t*)(l->osize).data)[o] > 0) {
             ((int64_t*)(l->orva).data)[o] = rva;
-            rva = pelink__align_up((rva + ((int64_t*)(l->osize).data)[o]), 4096);
+            rva = os_windows__align_up((rva + ((int64_t*)(l->osize).data)[o]), 4096);
             if (o != 3) {
                 ((int64_t*)(l->ofile).data)[o] = fp;
-                ((int64_t*)(l->oraw).data)[o] = pelink__align_up(((int64_t*)(l->osize).data)[o], 512);
+                ((int64_t*)(l->oraw).data)[o] = os_windows__align_up(((int64_t*)(l->osize).data)[o], 512);
                 fp = (fp + ((int64_t*)(l->oraw).data)[o]);
             }
         }
@@ -14058,9 +18695,9 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
         reloc = reloc_blocks(l->fix64);
         ((int64_t*)(l->osize).data)[4] = reloc.len;
         ((int64_t*)(l->orva).data)[4] = rva;
-        rva = pelink__align_up((rva + reloc.len), 4096);
+        rva = os_windows__align_up((rva + reloc.len), 4096);
         ((int64_t*)(l->ofile).data)[4] = fp;
-        ((int64_t*)(l->oraw).data)[4] = pelink__align_up(reloc.len, 512);
+        ((int64_t*)(l->oraw).data)[4] = os_windows__align_up(reloc.len, 512);
         fp = (fp + ((int64_t*)(l->oraw).data)[4]);
     }
     int64_t image_size = rva;
@@ -14068,7 +18705,7 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
         int64_t at = (l->thunks_at + (8 * i));
         ((uint8_t*)(text).data)[at] = ((uint8_t)(255));
         ((uint8_t*)(text).data)[(at + 1)] = ((uint8_t)(37));
-        (({ __auto_type strata_t1512_ = (&text); __auto_type strata_t1513_ = (at + 2); __auto_type strata_t1514_ = (iat_slot(l, il, i) - ((((int64_t*)(l->orva).data)[0] + at) + 6)); put32(strata_t1512_, strata_t1513_, strata_t1514_); }));
+        (({ __auto_type strata_t2404_ = (&text); __auto_type strata_t2405_ = (at + 2); __auto_type strata_t2406_ = (iat_slot(l, il, i) - ((((int64_t*)(l->orva).data)[0] + at) + 6)); put32(strata_t2404_, strata_t2405_, strata_t2406_); }));
     }
     int64_t idt_rva = 0;
     int64_t idt_size = 0;
@@ -14087,7 +18724,7 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
             for (int64_t c = 0; c < str_len(((const char**)(l->imp).data)[i]); c++) {
                 ((uint8_t*)(rdata).data)[((p + 2) + c)] = ((uint8_t)(((int64_t)(((const char**)(l->imp).data)[i][c]))));
             }
-            p = pelink__align_up((((p + 2) + str_len(((const char**)(l->imp).data)[i])) + 1), 2);
+            p = os_windows__align_up((((p + 2) + str_len(((const char**)(l->imp).data)[i])) + 1), 2);
         }
         for (int64_t d = 0; d < l->dlls.len; d++) {
             int64_t cnt = imports_of(l, d);
@@ -14135,7 +18772,7 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
         put32((&rdata), (exp_at + 32), (base + exp_names));
         put32((&rdata), (exp_at + 36), (base + exp_ords));
         for (int64_t i = 0; i < ex.len; i++) {
-            int64_t g = pelink__find_global(l, ((const char**)(ex).data)[i]);
+            int64_t g = os_windows__find_global(l, ((const char**)(ex).data)[i]);
             LSec gs = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
             put32((&rdata), (exp_funcs + (4 * i)), ((((int64_t*)(l->orva).data)[gs.out] + gs.at) + ((int64_t*)(l->gval).data)[g]));
             put32((&rdata), (exp_names + (4 * i)), (base + sp));
@@ -14151,7 +18788,7 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
     }
     int64_t entry = 0;
     if (!dll) {
-        int64_t g = pelink__find_global(l, "_strata_start");
+        int64_t g = os_windows__find_global(l, "_strata_start");
         LSec es = ((LSec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
         entry = ((((int64_t*)(l->orva).data)[es.out] + es.at) + ((int64_t*)(l->gval).data)[g]);
     }
@@ -14177,11 +18814,11 @@ bool link_image(Linker* l, const char* path, bool dll, Array exports) {
     p8((&o), 0);
     p32((&o), ((int64_t*)(l->oraw).data)[0]);
     p32((&o), ((((int64_t*)(l->oraw).data)[1] + ((int64_t*)(l->oraw).data)[2]) + ((int64_t*)(l->oraw).data)[4]));
-    (({ __auto_type strata_t1515_ = (&o); __auto_type strata_t1516_ = pelink__align_up(((int64_t*)(l->osize).data)[3], 512); p32(strata_t1515_, strata_t1516_); }));
+    (({ __auto_type strata_t2407_ = (&o); __auto_type strata_t2408_ = os_windows__align_up(((int64_t*)(l->osize).data)[3], 512); p32(strata_t2407_, strata_t2408_); }));
     p32((&o), entry);
     p32((&o), ((int64_t*)(l->orva).data)[0]);
-    (({ __auto_type strata_t1517_ = (&o); __auto_type strata_t1518_ = (image_base(l) & 4294967295); p32(strata_t1517_, strata_t1518_); }));
-    (({ __auto_type strata_t1519_ = (&o); __auto_type strata_t1520_ = (image_base(l) >> 32); p32(strata_t1519_, strata_t1520_); }));
+    (({ __auto_type strata_t2409_ = (&o); __auto_type strata_t2410_ = (image_base(l) & 4294967295); p32(strata_t2409_, strata_t2410_); }));
+    (({ __auto_type strata_t2411_ = (&o); __auto_type strata_t2412_ = (image_base(l) >> 32); p32(strata_t2411_, strata_t2412_); }));
     p32((&o), 4096);
     p32((&o), 512);
     p16((&o), 6);
@@ -14412,7 +19049,7 @@ CSec csec(const char* name, int64_t size, int64_t align_code) {
     }
     Array ra = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     Array rs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
-    return (({ __auto_type strata_t1521_ = name; __auto_type strata_t1522_ = d; __auto_type strata_t1523_ = idata_flags(align_code); (CSec){strata_t1521_, strata_t1522_, strata_t1523_, ra, rs}; }));
+    return (({ __auto_type strata_t2413_ = name; __auto_type strata_t2414_ = d; __auto_type strata_t2415_ = idata_flags(align_code); (CSec){strata_t2413_, strata_t2414_, strata_t2415_, ra, rs}; }));
 }
 
 void ar_header(Bytes* o, const char* name, int64_t size) {
@@ -14421,7 +19058,7 @@ void ar_header(Bytes* o, const char* name, int64_t size) {
     ibpad(o, "0", 6);
     ibpad(o, "0", 6);
     ibpad(o, "0", 8);
-    (({ __auto_type strata_t1524_ = o; __auto_type strata_t1525_ = str_from_int(size); ibpad(strata_t1524_, strata_t1525_, 10); }));
+    (({ __auto_type strata_t2416_ = o; __auto_type strata_t2417_ = str_from_int(size); ibpad(strata_t2416_, strata_t2417_, 10); }));
     ib8(o, 96);
     ib8(o, 10);
 }
@@ -14457,29 +19094,29 @@ Array import_library(const char* dll, Array names) {
     }
     ({ CSec _e = d6; arr_push(&(s1), &_e); });
     Array y1 = ({ Array _a = arr_make(sizeof(CSym)); _a; });
-    ({ CSym _e = (({ __auto_type strata_t1526_ = str_concat("__IMPORT_DESCRIPTOR_", lib); __auto_type strata_t1527_ = ext(); (CSym){strata_t1526_, 0, 1, strata_t1527_}; })); arr_push(&(y1), &_e); });
+    ({ CSym _e = (({ __auto_type strata_t2418_ = str_concat("__IMPORT_DESCRIPTOR_", lib); __auto_type strata_t2419_ = ext(); (CSym){strata_t2418_, 0, 1, strata_t2419_}; })); arr_push(&(y1), &_e); });
     ({ CSym _e = (CSym){".idata$2", 3221225536, 1, sect()}; arr_push(&(y1), &_e); });
     ({ CSym _e = (CSym){".idata$6", 0, 2, 3}; arr_push(&(y1), &_e); });
     ({ CSym _e = (CSym){".idata$4", 3221225536, 0, sect()}; arr_push(&(y1), &_e); });
     ({ CSym _e = (CSym){".idata$5", 3221225536, 0, sect()}; arr_push(&(y1), &_e); });
     ({ CSym _e = (CSym){"__NULL_IMPORT_DESCRIPTOR", 0, 0, ext()}; arr_push(&(y1), &_e); });
-    ({ CSym _e = (({ __auto_type strata_t1528_ = str_concat(lib, "_NULL_THUNK_DATA"); __auto_type strata_t1529_ = ext(); (CSym){strata_t1528_, 0, 0, strata_t1529_}; })); arr_push(&(y1), &_e); });
-    ({ Member _e = (({ __auto_type strata_t1530_ = dll; __auto_type strata_t1531_ = coff_object(s1, y1); (Member){strata_t1530_, strata_t1531_}; })); arr_push(&(mem), &_e); });
+    ({ CSym _e = (({ __auto_type strata_t2420_ = str_concat(lib, "_NULL_THUNK_DATA"); __auto_type strata_t2421_ = ext(); (CSym){strata_t2420_, 0, 0, strata_t2421_}; })); arr_push(&(y1), &_e); });
+    ({ Member _e = (({ __auto_type strata_t2422_ = dll; __auto_type strata_t2423_ = coff_object(s1, y1); (Member){strata_t2422_, strata_t2423_}; })); arr_push(&(mem), &_e); });
     ({ const char* _e = str_concat("__IMPORT_DESCRIPTOR_", lib); arr_push(&(sym_name), &_e); });
     ({ int64_t _e = 0; arr_push(&(sym_member), &_e); });
     Array s2 = ({ Array _a = arr_make(sizeof(CSec)); _a; });
     ({ CSec _e = csec(".idata$3", 20, 3); arr_push(&(s2), &_e); });
     Array y2 = ({ Array _a = arr_make(sizeof(CSym)); _a; });
     ({ CSym _e = (CSym){"__NULL_IMPORT_DESCRIPTOR", 0, 1, ext()}; arr_push(&(y2), &_e); });
-    ({ Member _e = (({ __auto_type strata_t1532_ = dll; __auto_type strata_t1533_ = coff_object(s2, y2); (Member){strata_t1532_, strata_t1533_}; })); arr_push(&(mem), &_e); });
+    ({ Member _e = (({ __auto_type strata_t2424_ = dll; __auto_type strata_t2425_ = coff_object(s2, y2); (Member){strata_t2424_, strata_t2425_}; })); arr_push(&(mem), &_e); });
     ({ const char* _e = "__NULL_IMPORT_DESCRIPTOR"; arr_push(&(sym_name), &_e); });
     ({ int64_t _e = 1; arr_push(&(sym_member), &_e); });
     Array s3 = ({ Array _a = arr_make(sizeof(CSec)); _a; });
     ({ CSec _e = csec(".idata$5", 8, 4); arr_push(&(s3), &_e); });
     ({ CSec _e = csec(".idata$4", 8, 4); arr_push(&(s3), &_e); });
     Array y3 = ({ Array _a = arr_make(sizeof(CSym)); _a; });
-    ({ CSym _e = (({ __auto_type strata_t1534_ = str_concat(lib, "_NULL_THUNK_DATA"); __auto_type strata_t1535_ = ext(); (CSym){strata_t1534_, 0, 1, strata_t1535_}; })); arr_push(&(y3), &_e); });
-    ({ Member _e = (({ __auto_type strata_t1536_ = dll; __auto_type strata_t1537_ = coff_object(s3, y3); (Member){strata_t1536_, strata_t1537_}; })); arr_push(&(mem), &_e); });
+    ({ CSym _e = (({ __auto_type strata_t2426_ = str_concat(lib, "_NULL_THUNK_DATA"); __auto_type strata_t2427_ = ext(); (CSym){strata_t2426_, 0, 1, strata_t2427_}; })); arr_push(&(y3), &_e); });
+    ({ Member _e = (({ __auto_type strata_t2428_ = dll; __auto_type strata_t2429_ = coff_object(s3, y3); (Member){strata_t2428_, strata_t2429_}; })); arr_push(&(mem), &_e); });
     ({ const char* _e = str_concat(lib, "_NULL_THUNK_DATA"); arr_push(&(sym_name), &_e); });
     ({ int64_t _e = 2; arr_push(&(sym_member), &_e); });
     for (int64_t i = 0; i < names.len; i++) {
@@ -14518,14 +19155,14 @@ Array import_library(const char* dll, Array names) {
     }
     int64_t first_size = ((4 + (4 * nsym)) + strs);
     int64_t second_size = ((((4 + (4 * mem.len)) + 4) + (2 * nsym)) + strs);
-    int64_t at = (({ __auto_type strata_t1538_ = (((8 + 60) + even(first_size)) + 60); __auto_type strata_t1539_ = even(second_size); (strata_t1538_ + strata_t1539_); }));
+    int64_t at = (({ __auto_type strata_t2430_ = (((8 + 60) + even(first_size)) + 60); __auto_type strata_t2431_ = even(second_size); (strata_t2430_ + strata_t2431_); }));
     if (longnames.b.len > 0) {
-        at = (({ __auto_type strata_t1540_ = (at + 60); __auto_type strata_t1541_ = even(longnames.b.len); (strata_t1540_ + strata_t1541_); }));
+        at = (({ __auto_type strata_t2432_ = (at + 60); __auto_type strata_t2433_ = even(longnames.b.len); (strata_t2432_ + strata_t2433_); }));
     }
     Array off = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     for (int64_t m = 0; m < mem.len; m++) {
         ({ int64_t _e = at; arr_push(&(off), &_e); });
-        at = (({ __auto_type strata_t1542_ = (at + 60); __auto_type strata_t1543_ = even(((Member*)(mem).data)[m].data.len); (strata_t1542_ + strata_t1543_); }));
+        at = (({ __auto_type strata_t2434_ = (at + 60); __auto_type strata_t2435_ = even(((Member*)(mem).data)[m].data.len); (strata_t2434_ + strata_t2435_); }));
     }
     Array order = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
     for (int64_t k = 0; k < nsym; k++) {
@@ -14600,6 +19237,2844 @@ bool name_before(const char* a, const char* b) {
     return (str_len(a) < str_len(b));
 }
 
+void e8(EOut* o, int64_t v) {
+    ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(o->b), &_e); });
+}
+
+void e16(EOut* o, int64_t v) {
+    e8(o, v);
+    e8(o, (v >> 8));
+}
+
+void e32(EOut* o, int64_t v) {
+    e16(o, v);
+    e16(o, (v >> 16));
+}
+
+void e64(EOut* o, int64_t v) {
+    e32(o, v);
+    e32(o, (v >> 32));
+}
+
+void ezero(EOut* o, int64_t n) {
+    for (int64_t i = 0; i < n; i++) {
+        e8(o, 0);
+    }
+}
+
+void ebytes(EOut* o, Array b) {
+    for (int64_t i = 0; i < b.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(b).data)[i]; arr_push(&(o->b), &_e); });
+    }
+}
+
+void epad(EOut* o, int64_t align) {
+    while ((o->b.len % align) != 0) {
+        e8(o, 0);
+    }
+}
+
+int64_t rd8(Array b, int64_t at) {
+    return ((int64_t)(((uint8_t*)(b).data)[at]));
+}
+
+int64_t rd16le(Array b, int64_t at) {
+    return (({ __auto_type strata_t2436_ = rd8(b, at); __auto_type strata_t2437_ = (rd8(b, (at + 1)) << 8); (strata_t2436_ | strata_t2437_); }));
+}
+
+int64_t rd32le(Array b, int64_t at) {
+    return (({ __auto_type strata_t2438_ = rd16le(b, at); __auto_type strata_t2439_ = (rd16le(b, (at + 2)) << 16); (strata_t2438_ | strata_t2439_); }));
+}
+
+int64_t rd64le(Array b, int64_t at) {
+    uint64_t lo = (((uint64_t)(rd32le(b, at))) & ((uint64_t)(4294967295)));
+    uint64_t hi = (((uint64_t)(rd32le(b, (at + 4)))) & ((uint64_t)(4294967295)));
+    return ((int64_t)((lo | (hi << ((uint64_t)(32))))));
+}
+
+int64_t rd32s(Array b, int64_t at) {
+    int64_t v = (rd32le(b, at) & 4294967295);
+    if (v >= 2147483648) {
+        return (v - 4294967296);
+    }
+    return v;
+}
+
+int64_t strtab_add(StrTab* t, const char* s) {
+    int64_t at = t->b.len;
+    for (int64_t i = 0; i < str_len(s); i++) {
+        ({ uint8_t _e = ((uint8_t)(((int64_t)(s[i])))); arr_push(&(t->b), &_e); });
+    }
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(t->b), &_e); });
+    return at;
+}
+
+void elf_header(EOut* o, int64_t type, int64_t entry, int64_t phoff, int64_t phnum, int64_t shoff, int64_t shnum, int64_t shstrndx) {
+    e8(o, 127);
+    e8(o, 69);
+    e8(o, 76);
+    e8(o, 70);
+    e8(o, 2);
+    e8(o, 1);
+    e8(o, 1);
+    e8(o, 0);
+    ezero(o, 8);
+    e16(o, type);
+    e16(o, 62);
+    e32(o, 1);
+    e64(o, entry);
+    e64(o, phoff);
+    e64(o, shoff);
+    e32(o, 0);
+    e16(o, 64);
+    e16(o, 56);
+    e16(o, phnum);
+    e16(o, 64);
+    e16(o, shnum);
+    e16(o, shstrndx);
+}
+
+void sec_header(EOut* o, int64_t name, int64_t type, int64_t flags, int64_t offset, int64_t size, int64_t linked, int64_t info, int64_t align, int64_t entsize) {
+    e32(o, name);
+    e32(o, type);
+    e64(o, flags);
+    e64(o, 0);
+    e64(o, offset);
+    e64(o, size);
+    e32(o, linked);
+    e32(o, info);
+    e64(o, align);
+    e64(o, entsize);
+}
+
+Array elf_bytes(ObjFile* f) {
+    Array stb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    StrTab strtab = (StrTab){stb};
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(strtab.b), &_e); });
+    Array map = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < f->symbols.len; i++) {
+        ({ int64_t _e = 0; arr_push(&(map), &_e); });
+    }
+    Array sb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    EOut sym = (EOut){sb};
+    ezero((&sym), 24);
+    for (int64_t s = 1; s < 4; s++) {
+        e32((&sym), 0);
+        e8((&sym), 3);
+        e8((&sym), 0);
+        e16((&sym), s);
+        e64((&sym), 0);
+        e64((&sym), 0);
+    }
+    int64_t n = 4;
+    for (int64_t pass = 0; pass < 2; pass++) {
+        for (int64_t i = 0; i < f->symbols.len; i++) {
+            ObjSymbol s = ((ObjSymbol*)(f->symbols).data)[i];
+            if (((pass == 0) && (!s.global)) || ((pass == 1) && s.global)) {
+                int64_t typ = 0;
+                if (s.section == 1) {
+                    typ = 2;
+                } else 
+                if ((s.section == 2) || (s.section == 3)) {
+                    typ = 1;
+                }
+                int64_t bind = 0;
+                if (s.global) {
+                    bind = 1;
+                }
+                (({ __auto_type strata_t2440_ = (&sym); __auto_type strata_t2441_ = strtab_add((&strtab), s.name); e32(strata_t2440_, strata_t2441_); }));
+                e8((&sym), ((bind * 16) + typ));
+                e8((&sym), 0);
+                e16((&sym), s.section);
+                e64((&sym), s.value);
+                e64((&sym), 0);
+                ((int64_t*)(map).data)[i] = n;
+                n += 1;
+            }
+        }
+    }
+    int64_t first_global = 4;
+    for (int64_t i = 0; i < f->symbols.len; i++) {
+        if (!((ObjSymbol*)(f->symbols).data)[i].global) {
+            first_global += 1;
+        }
+    }
+    Array text = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = 0; i < f->text.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(f->text).data)[i]; arr_push(&(text), &_e); });
+    }
+    Array data = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = 0; i < f->data.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(f->data).data)[i]; arr_push(&(data), &_e); });
+    }
+    Array rtb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    EOut rt = (EOut){rtb};
+    Array rdb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    EOut rd = (EOut){rdb};
+    for (int64_t i = 0; i < f->relocs.len; i++) {
+        ObjReloc r = ((ObjReloc*)(f->relocs).data)[i];
+        int64_t esym = 0;
+        bool external = false;
+        if (r.symbol >= 0) {
+            esym = ((int64_t*)(map).data)[r.symbol];
+            external = (((ObjSymbol*)(f->symbols).data)[r.symbol].section == 0);
+        } else {
+            esym = (0 - r.symbol);
+        }
+        if (r.section == 1) {
+            int64_t addend = ((rd32s(text, r.offset) - 4) - r.after);
+            for (int64_t k = 0; k < 4; k++) {
+                ((uint8_t*)(text).data)[(r.offset + k)] = ((uint8_t)(0));
+            }
+            int64_t typ = 2;
+            if (external && (r.after == 0)) {
+                typ = 4;
+            }
+            e64((&rt), r.offset);
+            e64((&rt), ((esym * 4294967296) + typ));
+            e64((&rt), addend);
+        } else {
+            int64_t addend = rd64le(data, r.offset);
+            for (int64_t k = 0; k < 8; k++) {
+                ((uint8_t*)(data).data)[(r.offset + k)] = ((uint8_t)(0));
+            }
+            e64((&rd), r.offset);
+            e64((&rd), ((esym * 4294967296) + 1));
+            e64((&rd), addend);
+        }
+    }
+    Array shb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    StrTab shstr = (StrTab){shb};
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(shstr.b), &_e); });
+    int64_t n_text = strtab_add((&shstr), ".text");
+    int64_t n_rodata = strtab_add((&shstr), ".rodata");
+    int64_t n_data = strtab_add((&shstr), ".data");
+    int64_t n_rtext = strtab_add((&shstr), ".rela.text");
+    int64_t n_rdata = strtab_add((&shstr), ".rela.data");
+    int64_t n_symtab = strtab_add((&shstr), ".symtab");
+    int64_t n_strtab = strtab_add((&shstr), ".strtab");
+    int64_t n_shstr = strtab_add((&shstr), ".shstrtab");
+    int64_t n_stack = strtab_add((&shstr), ".note.GNU-stack");
+    Array ob = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    EOut o = (EOut){ob};
+    ezero((&o), 64);
+    epad((&o), 16);
+    int64_t off_text = o.b.len;
+    ebytes((&o), text);
+    epad((&o), 16);
+    int64_t off_rodata = o.b.len;
+    ebytes((&o), f->rdata);
+    epad((&o), 16);
+    int64_t off_data = o.b.len;
+    ebytes((&o), data);
+    epad((&o), 8);
+    int64_t off_rtext = o.b.len;
+    ebytes((&o), rt.b);
+    int64_t off_rdata = o.b.len;
+    ebytes((&o), rd.b);
+    int64_t off_sym = o.b.len;
+    ebytes((&o), sym.b);
+    int64_t off_str = o.b.len;
+    ebytes((&o), strtab.b);
+    int64_t off_shstr = o.b.len;
+    ebytes((&o), shstr.b);
+    epad((&o), 8);
+    int64_t shoff = o.b.len;
+    ezero((&o), 64);
+    sec_header((&o), n_text, 1, 6, off_text, text.len, 0, 0, 16, 0);
+    sec_header((&o), n_rodata, 1, 2, off_rodata, f->rdata.len, 0, 0, 16, 0);
+    sec_header((&o), n_data, 1, 3, off_data, data.len, 0, 0, 16, 0);
+    sec_header((&o), n_rtext, 4, 64, off_rtext, rt.b.len, 6, 1, 8, 24);
+    sec_header((&o), n_rdata, 4, 64, off_rdata, rd.b.len, 6, 3, 8, 24);
+    sec_header((&o), n_symtab, 2, 0, off_sym, sym.b.len, 7, first_global, 8, 24);
+    sec_header((&o), n_strtab, 3, 0, off_str, strtab.b.len, 0, 0, 1, 0);
+    sec_header((&o), n_shstr, 3, 0, off_shstr, shstr.b.len, 0, 0, 1, 0);
+    sec_header((&o), n_stack, 1, 0, off_shstr, 0, 0, 0, 1, 0);
+    Array hb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    EOut h = (EOut){hb};
+    elf_header((&h), 1, 0, 0, 0, shoff, 10, 8);
+    for (int64_t i = 0; i < 64; i++) {
+        ((uint8_t*)(o.b).data)[i] = ((uint8_t*)(h.b).data)[i];
+    }
+    return o.b;
+}
+
+bool write_elf(const char* path, ObjFile* f) {
+    Array b = elf_bytes(f);
+    return strata_write_bytes(path, (&b));
+}
+
+ElfLinker* new_elf_linker(void) {
+    Array o = ({ Array _a = arr_make(sizeof(EObj)); _a; });
+    Array s = ({ Array _a = arr_make(sizeof(ESec)); _a; });
+    Array gn = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array gs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array gv = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array a = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array b = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array nd = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array im = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    return ({ ElfLinker _v = (({ __auto_type strata_t2442_ = o; __auto_type strata_t2443_ = s; __auto_type strata_t2444_ = gn; __auto_type strata_t2445_ = gs; __auto_type strata_t2446_ = gv; __auto_type strata_t2447_ = new_idx(4096); (ElfLinker){true, "", strata_t2442_, strata_t2443_, strata_t2444_, strata_t2445_, strata_t2446_, strata_t2447_, a, b, nd, im}; })); ElfLinker* _p = (ElfLinker*)arena_alloc(strata_heap(), sizeof(ElfLinker)); *_p = _v; _p; });
+}
+
+void ek_fail(ElfLinker* l, const char* msg) {
+    if (l->ok) {
+        l->err = msg;
+    }
+    l->ok = false;
+}
+
+const char* cstr_at(Array b, int64_t at) {
+    return strata_bytes_cstr((&b), at, 4096);
+}
+
+int64_t out_class(const char* name, int64_t type, int64_t flags) {
+    if ((flags & 2) == 0) {
+        return (0 - 1);
+    }
+    if (type == 8) {
+        return 3;
+    }
+    if ((flags & 4) != 0) {
+        return 0;
+    }
+    if ((flags & 1) != 0) {
+        return 2;
+    }
+    return 1;
+}
+
+int64_t find_eglobal(ElfLinker* l, const char* name) {
+    int64_t found = (0 - 1);
+    int64_t k = idx_first((&l->gidx), name);
+    while ((k >= 0) && (found < 0)) {
+        if (str_eq(((const char**)(l->gname).data)[k], name)) {
+            found = k;
+        }
+        k = idx_next((&l->gidx), k);
+    }
+    return found;
+}
+
+void elf_add(ElfLinker* l, const char* name, Array b) {
+    if ((((b.len < 64) || (rd32le(b, 0) != 1179403647)) || (rd16le(b, 18) != 62)) || (rd16le(b, 16) != 1)) {
+        ek_fail(l, str_concat(name, " is not an x86-64 ELF object"));
+        return;
+    }
+    int64_t shoff = rd64le(b, 40);
+    int64_t shnum = rd16le(b, 60);
+    int64_t shstrndx = rd16le(b, 62);
+    int64_t strsec_off = rd64le(b, ((shoff + (64 * shstrndx)) + 24));
+    int64_t first = l->secs.len;
+    int64_t oi = l->objs.len;
+    int64_t symtab = (0 - 1);
+    Array syms = ({ Array _a = arr_make(sizeof(ESym)); _a; });
+    Array ra = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array rn = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array rt = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t k = 0; k < shnum; k++) {
+        int64_t h = (shoff + (64 * k));
+        const char* nm = (({ __auto_type strata_t2448_ = b; __auto_type strata_t2449_ = (({ __auto_type strata_t2450_ = strsec_off; __auto_type strata_t2451_ = rd32le(b, h); (strata_t2450_ + strata_t2451_); })); cstr_at(strata_t2448_, strata_t2449_); }));
+        int64_t type = rd32le(b, (h + 4));
+        int64_t flags = rd64le(b, (h + 8));
+        int64_t off = rd64le(b, (h + 24));
+        int64_t size = rd64le(b, (h + 32));
+        int64_t al = rd64le(b, (h + 48));
+        if (al < 1) {
+            al = 1;
+        }
+        int64_t cls = (0 - 1);
+        if (k > 0) {
+            cls = out_class(nm, type, flags);
+        }
+        ({ ESec _e = (ESec){oi, nm, cls, off, size, al, 0}; arr_push(&(l->secs), &_e); });
+        if (type == 2) {
+            symtab = k;
+        }
+        if (type == 4) {
+            ({ int64_t _e = off; arr_push(&(ra), &_e); });
+            ({ int64_t _e = (size / 24); arr_push(&(rn), &_e); });
+            ({ int64_t _e = rd32le(b, (h + 44)); arr_push(&(rt), &_e); });
+        }
+    }
+    if (symtab >= 0) {
+        int64_t h = (shoff + (64 * symtab));
+        int64_t off = rd64le(b, (h + 24));
+        int64_t n = (rd64le(b, (h + 32)) / 24);
+        int64_t stroff = (({ __auto_type strata_t2452_ = b; __auto_type strata_t2453_ = ((({ __auto_type strata_t2454_ = shoff; __auto_type strata_t2455_ = (64 * rd32le(b, (h + 40))); (strata_t2454_ + strata_t2455_); })) + 24); rd64le(strata_t2452_, strata_t2453_); }));
+        for (int64_t i = 0; i < n; i++) {
+            int64_t at = (off + (24 * i));
+            const char* nm = (({ __auto_type strata_t2456_ = b; __auto_type strata_t2457_ = (({ __auto_type strata_t2458_ = stroff; __auto_type strata_t2459_ = rd32le(b, at); (strata_t2458_ + strata_t2459_); })); cstr_at(strata_t2456_, strata_t2457_); }));
+            int64_t info = rd8(b, (at + 4));
+            ({ ESym _e = (({ __auto_type strata_t2460_ = nm; __auto_type strata_t2461_ = rd64le(b, (at + 8)); __auto_type strata_t2462_ = rd16le(b, (at + 6)); (ESym){strata_t2460_, strata_t2461_, strata_t2462_, (info / 16)}; })); arr_push(&(syms), &_e); });
+        }
+    }
+    ({ EObj _e = (EObj){name, b, first, shnum, syms, ra, rn, rt}; arr_push(&(l->objs), &_e); });
+    for (int64_t i = 0; i < syms.len; i++) {
+        ESym s = ((ESym*)(syms).data)[i];
+        if (((s.bind == 1) && (s.shndx != 0)) && (s.shndx < 65280)) {
+            if (find_eglobal(l, s.name) >= 0) {
+                ek_fail(l, str_concat(str_concat(str_concat(str_concat("'", s.name), "' is defined twice ("), name), ")"));
+            }
+            idx_add((&l->gidx), s.name, l->gname.len);
+            ({ const char* _e = s.name; arr_push(&(l->gname), &_e); });
+            ({ int64_t _e = (first + s.shndx); arr_push(&(l->gsec), &_e); });
+            ({ int64_t _e = s.value; arr_push(&(l->gval), &_e); });
+        }
+    }
+}
+
+int64_t esym_addr(ElfLinker* l, int64_t oi, int64_t si) {
+    EObj o = ((EObj*)(l->objs).data)[oi];
+    ESym s = ((ESym*)(o.syms).data)[si];
+    if (s.shndx == 65521) {
+        return s.value;
+    }
+    if (s.shndx != 0) {
+        ESec sec = ((ESec*)(l->secs).data)[(o.first + s.shndx)];
+        if (sec.out < 0) {
+            ek_fail(l, str_concat(str_concat(str_concat(str_concat("a reference to the dropped section ", sec.name), " ("), o.name), ")"));
+            return 0;
+        }
+        return ((((int64_t*)(l->oaddr).data)[sec.out] + sec.at) + s.value);
+    }
+    int64_t g = find_eglobal(l, s.name);
+    if (g < 0) {
+        ek_fail(l, str_concat(str_concat(str_concat(str_concat("undefined symbol '", s.name), "' (in "), o.name), ")"));
+        return 0;
+    }
+    if (((int64_t*)(l->gsec).data)[g] < 0) {
+        return ((int64_t*)(l->gval).data)[g];
+    }
+    ESec gs = ((ESec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
+    return ((((int64_t*)(l->oaddr).data)[gs.out] + gs.at) + ((int64_t*)(l->gval).data)[g]);
+}
+
+void put32le(Array* b, int64_t at, int64_t v) {
+    for (int64_t i = 0; i < 4; i++) {
+        ((uint8_t*)(b[0]).data)[(at + i)] = ((uint8_t)(((v >> (8 * i)) & 255)));
+    }
+}
+
+void put64le(Array* b, int64_t at, int64_t v) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < 8; i++) {
+        ((uint8_t*)(b[0]).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+int64_t ealign(int64_t n, int64_t a) {
+    return ((((n + a) - 1) / a) * a);
+}
+
+const char* known_soname(const char* name) {
+    if (str_eq(name, "c")) {
+        return "libc.so.6";
+    }
+    if (str_eq(name, "m")) {
+        return "libm.so.6";
+    }
+    if (str_eq(name, "dl")) {
+        return "libdl.so.2";
+    }
+    if (str_eq(name, "pthread")) {
+        return "libpthread.so.0";
+    }
+    if (str_eq(name, "rt")) {
+        return "librt.so.1";
+    }
+    if (str_eq(name, "X11")) {
+        return "libX11.so.6";
+    }
+    if (str_eq(name, "Xext")) {
+        return "libXext.so.6";
+    }
+    if (str_eq(name, "Xrandr")) {
+        return "libXrandr.so.2";
+    }
+    if (str_eq(name, "Xi")) {
+        return "libXi.so.6";
+    }
+    if (str_eq(name, "Xcursor")) {
+        return "libXcursor.so.1";
+    }
+    if (str_eq(name, "GL")) {
+        return "libGL.so.1";
+    }
+    if (str_eq(name, "EGL")) {
+        return "libEGL.so.1";
+    }
+    if (str_eq(name, "asound")) {
+        return "libasound.so.2";
+    }
+    if (str_eq(name, "raylib")) {
+        return "libraylib.so.550";
+    }
+    return "";
+}
+
+const char* soname_of(Array b) {
+    if ((b.len < 64) || (rd32le(b, 0) != 1179403647)) {
+        return "";
+    }
+    int64_t shoff = rd64le(b, 40);
+    int64_t shnum = rd16le(b, 60);
+    for (int64_t k = 0; k < shnum; k++) {
+        int64_t h = (shoff + (64 * k));
+        if (rd32le(b, (h + 4)) == 6) {
+            int64_t off = rd64le(b, (h + 24));
+            int64_t size = rd64le(b, (h + 32));
+            int64_t stroff = (({ __auto_type strata_t2463_ = b; __auto_type strata_t2464_ = ((({ __auto_type strata_t2465_ = shoff; __auto_type strata_t2466_ = (64 * rd32le(b, (h + 40))); (strata_t2465_ + strata_t2466_); })) + 24); rd64le(strata_t2463_, strata_t2464_); }));
+            int64_t e = 0;
+            while ((e + 16) <= size) {
+                if (rd64le(b, (off + e)) == 14) {
+                    return (({ __auto_type strata_t2467_ = b; __auto_type strata_t2468_ = (({ __auto_type strata_t2469_ = stroff; __auto_type strata_t2470_ = rd64le(b, ((off + e) + 8)); (strata_t2469_ + strata_t2470_); })); cstr_at(strata_t2467_, strata_t2468_); }));
+                }
+                e += 16;
+            }
+        }
+    }
+    return "";
+}
+
+bool elf_library(ElfLinker* l, const char* name, Array dirs) {
+    Array where = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t i = 0; i < dirs.len; i++) {
+        ({ const char* _e = ((const char**)(dirs).data)[i]; arr_push(&(where), &_e); });
+    }
+    ({ const char* _e = "/lib/x86_64-linux-gnu"; arr_push(&(where), &_e); });
+    ({ const char* _e = "/usr/lib/x86_64-linux-gnu"; arr_push(&(where), &_e); });
+    ({ const char* _e = "/lib64"; arr_push(&(where), &_e); });
+    ({ const char* _e = "/usr/lib64"; arr_push(&(where), &_e); });
+    ({ const char* _e = "/usr/local/lib"; arr_push(&(where), &_e); });
+    ({ const char* _e = "/usr/lib"; arr_push(&(where), &_e); });
+    ({ const char* _e = "/lib"; arr_push(&(where), &_e); });
+    const char* so = "";
+    if (str_eq(strata_host_os(), "linux")) {
+        int64_t w = 0;
+        while (str_eq(so, "") && (w < where.len)) {
+            const char* p = str_concat(str_concat(str_concat(((const char**)(where).data)[w], "/lib"), name), ".so");
+            if (strata_file_exists(p)) {
+                so = soname_of(strata_read_bytes(p));
+            }
+            w += 1;
+        }
+    }
+    if (str_eq(so, "")) {
+        so = known_soname(name);
+    }
+    if (str_eq(so, "")) {
+        so = str_concat(str_concat("lib", name), ".so");
+    }
+    bool have = false;
+    for (int64_t i = 0; i < l->needed.len; i++) {
+        if (str_eq(((const char**)(l->needed).data)[i], so)) {
+            have = true;
+        }
+    }
+    if (!have) {
+        ({ const char* _e = so; arr_push(&(l->needed), &_e); });
+    }
+    return true;
+}
+
+int64_t elf_hash(const char* s) {
+    int64_t h = 0;
+    for (int64_t i = 0; i < str_len(s); i++) {
+        h = ((h << 4) + ((int64_t)(s[i])));
+        int64_t g = (h & 4026531840);
+        if (g != 0) {
+            h = (h ^ (g >> 24));
+        }
+        h = (h & 268435455);
+    }
+    return h;
+}
+
+const char* start_stub(bool dynamic) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = "\t.text\n\t.globl _start\n_start:\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tmovq 0(%rsp), %rdi\n\tleaq 8(%rsp), %rsi\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tandq $-16, %rsp\n"; arr_push(&(p), &_e); });
+    if (dynamic) {
+        ({ const char* _e = "\tpushq %rdi\n\tpushq %rsi\n"; arr_push(&(p), &_e); });
+        ({ const char* _e = "\tleaq srt_os_flush(%rip), %rdi\n\txorl %esi, %esi\n\txorl %edx, %edx\n\tcall __cxa_atexit\n"; arr_push(&(p), &_e); });
+        ({ const char* _e = "\tpopq %rsi\n\tpopq %rdi\n"; arr_push(&(p), &_e); });
+    }
+    ({ const char* _e = "\tcall main\n\tmovl %eax, %edi\n"; arr_push(&(p), &_e); });
+    if (dynamic) {
+        ({ const char* _e = "\tcall exit\n"; arr_push(&(p), &_e); });
+    } else {
+        ({ const char* _e = "\tcall srt_os_exit\n"; arr_push(&(p), &_e); });
+    }
+    return strata_join((&p));
+}
+
+const char* syscall_stub(void) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = "\t.text\n\t.globl srt_syscall\nsrt_syscall:\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tmovq %rdi, %rax\n\tmovq %rsi, %rdi\n\tmovq %rdx, %rsi\n\tmovq %rcx, %rdx\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tmovq %r8, %r10\n\tmovq %r9, %r8\n\tmovq 8(%rsp), %r9\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tsyscall\n\tret\n"; arr_push(&(p), &_e); });
+    return strata_join((&p));
+}
+
+void find_elf_imports(ElfLinker* l) {
+    for (int64_t oi = 0; oi < l->objs.len; oi++) {
+        EObj o = ((EObj*)(l->objs).data)[oi];
+        for (int64_t r = 0; r < o.rela_at.len; r++) {
+            ESec tgt = ((ESec*)(l->secs).data)[(o.first + ((int64_t*)(o.rela_to).data)[r])];
+            if (tgt.out >= 0) {
+                for (int64_t k = 0; k < ((int64_t*)(o.rela_n).data)[r]; k++) {
+                    int64_t info = rd64le(o.b, ((((int64_t*)(o.rela_at).data)[r] + (24 * k)) + 8));
+                    int64_t si = ((int64_t)((((uint64_t)(info)) >> ((uint64_t)(32)))));
+                    ESym s = ((ESym*)(o.syms).data)[si];
+                    if (((s.shndx == 0) && (!str_eq(s.name, ""))) && (find_eglobal(l, s.name) < 0)) {
+                        bool have = false;
+                        for (int64_t i = 0; i < l->imports.len; i++) {
+                            if (str_eq(((const char**)(l->imports).data)[i], s.name)) {
+                                have = true;
+                            }
+                        }
+                        if (!have) {
+                            ({ const char* _e = s.name; arr_push(&(l->imports), &_e); });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+bool elf_link_exe(ElfLinker* l, const char* path) {
+    Array none = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    return elf_link(l, path, false, none);
+}
+
+bool elf_link_so(ElfLinker* l, const char* path, Array exports) {
+    return elf_link(l, path, true, exports);
+}
+
+int64_t count_abs(ElfLinker* l) {
+    int64_t n = 0;
+    for (int64_t oi = 0; oi < l->objs.len; oi++) {
+        EObj o = ((EObj*)(l->objs).data)[oi];
+        for (int64_t r = 0; r < o.rela_at.len; r++) {
+            if (((ESec*)(l->secs).data)[(o.first + ((int64_t*)(o.rela_to).data)[r])].out >= 0) {
+                for (int64_t k = 0; k < ((int64_t*)(o.rela_n).data)[r]; k++) {
+                    if ((rd64le(o.b, ((((int64_t*)(o.rela_at).data)[r] + (24 * k)) + 8)) & 4294967295) == 1) {
+                        n += 1;
+                    }
+                }
+            }
+        }
+    }
+    return n;
+}
+
+void sec_add(SecTab* t, int64_t name, int64_t typ, int64_t flags, int64_t off, int64_t size, int64_t lnk, int64_t info, int64_t align, int64_t entsize) {
+    ({ int64_t _e = name; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = typ; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = flags; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = off; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = size; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = lnk; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = info; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = align; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = entsize; arr_push(&(t->h), &_e); });
+    ({ int64_t _e = 0; arr_push(&(t->h), &_e); });
+}
+
+bool elf_link(ElfLinker* l, const char* path, bool shared, Array exports) {
+    if ((!shared) && (find_eglobal(l, "main") < 0)) {
+        ek_fail(l, "no main");
+        return false;
+    }
+    for (int64_t k = 0; k < 4; k++) {
+        ({ int64_t _e = 0; arr_push(&(l->osize), &_e); });
+        ({ int64_t _e = 0; arr_push(&(l->oaddr), &_e); });
+    }
+    ObjFile sc = assemble(syscall_stub(), "x64");
+    if (!sc.ok) {
+        ek_fail(l, str_concat("syscall: ", sc.err));
+        return false;
+    }
+    (({ __auto_type strata_t2471_ = l; __auto_type strata_t2472_ = elf_bytes((&sc)); elf_add(strata_t2471_, "syscall", strata_t2472_); }));
+    find_elf_imports(l);
+    bool dynamic = (shared || (l->imports.len > 0));
+    if (!shared) {
+        ObjFile st = assemble(start_stub((l->imports.len > 0)), "x64");
+        if (!st.ok) {
+            ek_fail(l, str_concat("start: ", st.err));
+            return false;
+        }
+        (({ __auto_type strata_t2473_ = l; __auto_type strata_t2474_ = elf_bytes((&st)); elf_add(strata_t2473_, "start", strata_t2474_); }));
+    }
+    if (!l->ok) {
+        return false;
+    }
+    for (int64_t i = 0; i < exports.len; i++) {
+        if (find_eglobal(l, ((const char**)(exports).data)[i]) < 0) {
+            ek_fail(l, str_concat(str_concat("exported function '", ((const char**)(exports).data)[i]), "' isn't defined"));
+        }
+    }
+    if (!l->ok) {
+        return false;
+    }
+    l->imports = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    find_elf_imports(l);
+    if (l->imports.len > 0) {
+        Array none = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+        elf_library(l, "c", none);
+    }
+    int64_t ni = l->imports.len;
+    int64_t ne = exports.len;
+    bool fini = (shared && (find_eglobal(l, "srt_os_flush") >= 0));
+    int64_t nrel = ni;
+    if (shared) {
+        nrel = (({ __auto_type strata_t2475_ = ni; __auto_type strata_t2476_ = count_abs(l); (strata_t2475_ + strata_t2476_); }));
+    }
+    if (fini) {
+        nrel += 1;
+    }
+    for (int64_t si = 0; si < l->secs.len; si++) {
+        int64_t out = ((ESec*)(l->secs).data)[si].out;
+        if (out >= 0) {
+            int64_t at = ealign(((int64_t*)(l->osize).data)[out], ((ESec*)(l->secs).data)[si].align);
+            ((ESec*)(l->secs).data)[si].at = at;
+            ((int64_t*)(l->osize).data)[out] = (at + ((ESec*)(l->secs).data)[si].size);
+        }
+    }
+    int64_t stubs_at = ealign(((int64_t*)(l->osize).data)[0], 16);
+    ((int64_t*)(l->osize).data)[0] = (stubs_at + (8 * ni));
+    const char* interp = "/lib64/ld-linux-x86-64.so.2";
+    Array dsb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    StrTab dynstr = (StrTab){dsb};
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(dynstr.b), &_e); });
+    Array need_off = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < l->needed.len; i++) {
+        ({ int64_t _e = strtab_add((&dynstr), ((const char**)(l->needed).data)[i]); arr_push(&(need_off), &_e); });
+    }
+    Array name_off = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < ni; i++) {
+        ({ int64_t _e = strtab_add((&dynstr), ((const char**)(l->imports).data)[i]); arr_push(&(name_off), &_e); });
+    }
+    for (int64_t i = 0; i < ne; i++) {
+        ({ int64_t _e = strtab_add((&dynstr), ((const char**)(exports).data)[i]); arr_push(&(name_off), &_e); });
+    }
+    const char* soname = path;
+    for (int64_t i = 0; i < str_len(path); i++) {
+        if ((path[i] == '/') || (path[i] == '\\')) {
+            soname = str_sub(path, (i + 1), ((str_len(path) - i) - 1));
+        }
+    }
+    int64_t soname_off = 0;
+    if (shared) {
+        soname_off = strtab_add((&dynstr), soname);
+    }
+    int64_t nsym = ((ni + ne) + 1);
+    int64_t nbucket = 1;
+    if (ne > 0) {
+        nbucket = ne;
+    }
+    int64_t base = 4194304;
+    if (shared) {
+        base = 0;
+    }
+    int64_t nph = 4;
+    if (dynamic) {
+        nph = 5;
+    }
+    if (dynamic && (!shared)) {
+        nph = 7;
+    }
+    int64_t at = (64 + (56 * nph));
+    int64_t interp_off = at;
+    int64_t hash_off = 0;
+    int64_t dynsym_off = 0;
+    int64_t dynstr_off = 0;
+    int64_t rela_off = 0;
+    if (dynamic) {
+        if (!shared) {
+            at = ((interp_off + str_len(interp)) + 1);
+        }
+        at = ealign(at, 8);
+        hash_off = at;
+        at = (hash_off + (4 * ((2 + nbucket) + nsym)));
+        at = ealign(at, 8);
+        dynsym_off = at;
+        at = (dynsym_off + (24 * nsym));
+        dynstr_off = at;
+        at = (dynstr_off + dynstr.b.len);
+        at = ealign(at, 8);
+        rela_off = at;
+        at = (rela_off + (24 * nrel));
+    }
+    int64_t text_off = ealign(at, 16);
+    int64_t ro_off = ealign((text_off + ((int64_t*)(l->osize).data)[0]), 4096);
+    int64_t data_off = ealign((ro_off + ((int64_t*)(l->osize).data)[1]), 4096);
+    int64_t got_at = ealign(((int64_t*)(l->osize).data)[2], 8);
+    int64_t fini_at = (got_at + (8 * ni));
+    int64_t dyn_at = fini_at;
+    if (fini) {
+        dyn_at = (fini_at + 8);
+    }
+    int64_t ndyn = (l->needed.len + 13);
+    if (shared) {
+        ndyn += 3;
+    }
+    int64_t data_size = ((int64_t*)(l->osize).data)[2];
+    if (dynamic) {
+        data_size = (dyn_at + (16 * ndyn));
+    }
+    int64_t bss_at = ealign(data_size, 16);
+    ((int64_t*)(l->oaddr).data)[0] = (base + text_off);
+    ((int64_t*)(l->oaddr).data)[1] = (base + ro_off);
+    ((int64_t*)(l->oaddr).data)[2] = (base + data_off);
+    ((int64_t*)(l->oaddr).data)[3] = ((base + data_off) + bss_at);
+    int64_t got_addr = ((base + data_off) + got_at);
+    int64_t stubs_addr = (((int64_t*)(l->oaddr).data)[0] + stubs_at);
+    for (int64_t i = 0; i < ni; i++) {
+        idx_add((&l->gidx), ((const char**)(l->imports).data)[i], l->gname.len);
+        ({ const char* _e = ((const char**)(l->imports).data)[i]; arr_push(&(l->gname), &_e); });
+        ({ int64_t _e = (0 - 1); arr_push(&(l->gsec), &_e); });
+        ({ int64_t _e = (stubs_addr + (8 * i)); arr_push(&(l->gval), &_e); });
+    }
+    Array text = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array ro = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array data = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = 0; i < ((int64_t*)(l->osize).data)[0]; i++) {
+        ({ uint8_t _e = ((uint8_t)(204)); arr_push(&(text), &_e); });
+    }
+    for (int64_t i = 0; i < ((int64_t*)(l->osize).data)[1]; i++) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(ro), &_e); });
+    }
+    for (int64_t i = 0; i < data_size; i++) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(data), &_e); });
+    }
+    for (int64_t si = 0; si < l->secs.len; si++) {
+        ESec s = ((ESec*)(l->secs).data)[si];
+        if ((s.out >= 0) && (s.out != 3)) {
+            Array src = ((EObj*)(l->objs).data)[s.obj].b;
+            for (int64_t i = 0; i < s.size; i++) {
+                if (s.out == 0) {
+                    ((uint8_t*)(text).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                } else 
+                if (s.out == 1) {
+                    ((uint8_t*)(ro).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                } else {
+                    ((uint8_t*)(data).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                }
+            }
+        }
+    }
+    for (int64_t i = 0; i < ni; i++) {
+        int64_t p = (stubs_at + (8 * i));
+        ((uint8_t*)(text).data)[p] = ((uint8_t)(255));
+        ((uint8_t*)(text).data)[(p + 1)] = ((uint8_t)(37));
+        put32le((&text), (p + 2), ((got_addr + (8 * i)) - ((((int64_t*)(l->oaddr).data)[0] + p) + 6)));
+    }
+    Array rel_at = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array rel_val = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t oi = 0; oi < l->objs.len; oi++) {
+        EObj o = ((EObj*)(l->objs).data)[oi];
+        for (int64_t r = 0; r < o.rela_at.len; r++) {
+            ESec tgt = ((ESec*)(l->secs).data)[(o.first + ((int64_t*)(o.rela_to).data)[r])];
+            if (tgt.out >= 0) {
+                for (int64_t k = 0; k < ((int64_t*)(o.rela_n).data)[r]; k++) {
+                    int64_t ra = (((int64_t*)(o.rela_at).data)[r] + (24 * k));
+                    int64_t off = rd64le(o.b, ra);
+                    int64_t info = rd64le(o.b, (ra + 8));
+                    int64_t addend = rd64le(o.b, (ra + 16));
+                    int64_t typ = (info & 4294967295);
+                    int64_t si = ((int64_t)((((uint64_t)(info)) >> ((uint64_t)(32)))));
+                    int64_t sv = esym_addr(l, oi, si);
+                    int64_t p = (tgt.at + off);
+                    int64_t pa = (((int64_t*)(l->oaddr).data)[tgt.out] + p);
+                    if (tgt.out == 3) {
+                        ek_fail(l, "relocations in .bss");
+                    } else 
+                    if (typ == 1) {
+                        if (tgt.out == 0) {
+                            put64le((&text), p, (sv + addend));
+                        } else 
+                        if (tgt.out == 1) {
+                            put64le((&ro), p, (sv + addend));
+                        } else {
+                            put64le((&data), p, (sv + addend));
+                        }
+                        if (shared) {
+                            ({ int64_t _e = pa; arr_push(&(rel_at), &_e); });
+                            ({ int64_t _e = (sv + addend); arr_push(&(rel_val), &_e); });
+                        }
+                    } else 
+                    if ((((typ == 2) || (typ == 4)) || (typ == 10)) || (typ == 11)) {
+                        if (shared && ((typ == 10) || (typ == 11))) {
+                            ek_fail(l, str_concat(str_concat("a 32-bit absolute address in ", o.name), " (a shared library can't be moved with it)"));
+                        }
+                        int64_t v = (sv + addend);
+                        if ((typ == 2) || (typ == 4)) {
+                            v = (v - pa);
+                        }
+                        if (tgt.out == 0) {
+                            put32le((&text), p, v);
+                        } else 
+                        if (tgt.out == 1) {
+                            put32le((&ro), p, v);
+                        } else {
+                            put32le((&data), p, v);
+                        }
+                    } else 
+                    if (typ != 0) {
+                        (({ __auto_type strata_t2477_ = l; __auto_type strata_t2478_ = str_concat(str_concat(str_concat("unsupported relocation type ", str_from_int(typ)), " in "), o.name); ek_fail(strata_t2477_, strata_t2478_); }));
+                    }
+                }
+            }
+        }
+    }
+    if (!l->ok) {
+        return false;
+    }
+    int64_t fini_addr = ((base + data_off) + fini_at);
+    if (fini) {
+        int64_t fg = find_eglobal(l, "srt_os_flush");
+        ESec fs = ((ESec*)(l->secs).data)[((int64_t*)(l->gsec).data)[fg]];
+        int64_t fv = ((((int64_t*)(l->oaddr).data)[fs.out] + fs.at) + ((int64_t*)(l->gval).data)[fg]);
+        put64le((&data), fini_at, fv);
+        ({ int64_t _e = fini_addr; arr_push(&(rel_at), &_e); });
+        ({ int64_t _e = fv; arr_push(&(rel_val), &_e); });
+    }
+    if (dynamic) {
+        int64_t d = dyn_at;
+        for (int64_t i = 0; i < l->needed.len; i++) {
+            put64le((&data), d, 1);
+            put64le((&data), (d + 8), ((int64_t*)(need_off).data)[i]);
+            d += 16;
+        }
+        if (shared) {
+            put64le((&data), d, 14);
+            put64le((&data), (d + 8), soname_off);
+            d += 16;
+        }
+        if (fini) {
+            put64le((&data), d, 26);
+            put64le((&data), (d + 8), fini_addr);
+            d += 16;
+            put64le((&data), d, 28);
+            put64le((&data), (d + 8), 8);
+            d += 16;
+        }
+        put64le((&data), d, 4);
+        put64le((&data), (d + 8), (base + hash_off));
+        d += 16;
+        put64le((&data), d, 5);
+        put64le((&data), (d + 8), (base + dynstr_off));
+        d += 16;
+        put64le((&data), d, 6);
+        put64le((&data), (d + 8), (base + dynsym_off));
+        d += 16;
+        put64le((&data), d, 10);
+        put64le((&data), (d + 8), dynstr.b.len);
+        d += 16;
+        put64le((&data), d, 11);
+        put64le((&data), (d + 8), 24);
+        d += 16;
+        put64le((&data), d, 7);
+        put64le((&data), (d + 8), (base + rela_off));
+        d += 16;
+        put64le((&data), d, 8);
+        put64le((&data), (d + 8), (24 * nrel));
+        d += 16;
+        put64le((&data), d, 9);
+        put64le((&data), (d + 8), 24);
+        d += 16;
+        put64le((&data), d, 30);
+        put64le((&data), (d + 8), 8);
+        d += 16;
+        put64le((&data), d, 1879048187);
+        put64le((&data), (d + 8), 1);
+        d += 16;
+        if (!shared) {
+            put64le((&data), d, 21);
+            put64le((&data), (d + 8), 0);
+            d += 16;
+        }
+        put64le((&data), d, 0);
+        put64le((&data), (d + 8), 0);
+    }
+    int64_t entry = 0;
+    if (!shared) {
+        int64_t g = find_eglobal(l, "_start");
+        ESec es = ((ESec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
+        entry = ((((int64_t*)(l->oaddr).data)[es.out] + es.at) + ((int64_t*)(l->gval).data)[g]);
+    }
+    Array shb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    StrTab shstr = (StrTab){shb};
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(shstr.b), &_e); });
+    Array shh = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    SecTab sh = (SecTab){shh};
+    if (dynamic) {
+        int64_t dynsym_idx = 2;
+        if (!shared) {
+            dynsym_idx = 3;
+            (({ __auto_type strata_t2479_ = (&sh); __auto_type strata_t2480_ = strtab_add((&shstr), ".interp"); sec_add(strata_t2479_, strata_t2480_, 1, 2, interp_off, (str_len(interp) + 1), 0, 0, 1, 0); }));
+        }
+        (({ __auto_type strata_t2481_ = (&sh); __auto_type strata_t2482_ = strtab_add((&shstr), ".hash"); sec_add(strata_t2481_, strata_t2482_, 5, 2, hash_off, (4 * ((2 + nbucket) + nsym)), dynsym_idx, 0, 8, 4); }));
+        (({ __auto_type strata_t2483_ = (&sh); __auto_type strata_t2484_ = strtab_add((&shstr), ".dynsym"); sec_add(strata_t2483_, strata_t2484_, 11, 2, dynsym_off, (24 * nsym), (dynsym_idx + 1), 1, 8, 24); }));
+        (({ __auto_type strata_t2485_ = (&sh); __auto_type strata_t2486_ = strtab_add((&shstr), ".dynstr"); sec_add(strata_t2485_, strata_t2486_, 3, 2, dynstr_off, dynstr.b.len, 0, 0, 1, 0); }));
+        (({ __auto_type strata_t2487_ = (&sh); __auto_type strata_t2488_ = strtab_add((&shstr), ".rela.dyn"); sec_add(strata_t2487_, strata_t2488_, 4, 2, rela_off, (24 * nrel), dynsym_idx, 0, 8, 24); }));
+    }
+    int64_t text_idx = ((sh.h.len / 10) + 1);
+    (({ __auto_type strata_t2489_ = (&sh); __auto_type strata_t2490_ = strtab_add((&shstr), ".text"); sec_add(strata_t2489_, strata_t2490_, 1, 6, text_off, ((int64_t*)(l->osize).data)[0], 0, 0, 16, 0); }));
+    (({ __auto_type strata_t2491_ = (&sh); __auto_type strata_t2492_ = strtab_add((&shstr), ".rodata"); sec_add(strata_t2491_, strata_t2492_, 1, 2, ro_off, ((int64_t*)(l->osize).data)[1], 0, 0, 16, 0); }));
+    if (dynamic) {
+        (({ __auto_type strata_t2493_ = (&sh); __auto_type strata_t2494_ = strtab_add((&shstr), ".data"); sec_add(strata_t2493_, strata_t2494_, 1, 3, data_off, dyn_at, 0, 0, 16, 0); }));
+        (({ __auto_type strata_t2495_ = (&sh); __auto_type strata_t2496_ = strtab_add((&shstr), ".dynamic"); sec_add(strata_t2495_, strata_t2496_, 6, 3, (data_off + dyn_at), (16 * ndyn), (text_idx - 2), 0, 8, 16); }));
+    } else {
+        (({ __auto_type strata_t2497_ = (&sh); __auto_type strata_t2498_ = strtab_add((&shstr), ".data"); sec_add(strata_t2497_, strata_t2498_, 1, 3, data_off, data_size, 0, 0, 16, 0); }));
+    }
+    (({ __auto_type strata_t2499_ = (&sh); __auto_type strata_t2500_ = strtab_add((&shstr), ".bss"); sec_add(strata_t2499_, strata_t2500_, 8, 3, (data_off + bss_at), ((int64_t*)(l->osize).data)[3], 0, 0, 16, 0); }));
+    int64_t shstr_idx = ((sh.h.len / 10) + 1);
+    int64_t shstr_off = (data_off + data_size);
+    (({ __auto_type strata_t2501_ = (&sh); __auto_type strata_t2502_ = strtab_add((&shstr), ".shstrtab"); sec_add(strata_t2501_, strata_t2502_, 3, 0, shstr_off, 0, 0, 0, 1, 0); }));
+    ((int64_t*)(sh.h).data)[(sh.h.len - 6)] = shstr.b.len;
+    int64_t shoff = ealign((shstr_off + shstr.b.len), 8);
+    Array fb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    EOut o = (EOut){fb};
+    int64_t etype = 2;
+    if (shared) {
+        etype = 3;
+    }
+    elf_header((&o), etype, entry, 64, nph, shoff, (shstr_idx + 1), shstr_idx);
+    if (dynamic && (!shared)) {
+        e32((&o), 6);
+        e32((&o), 4);
+        e64((&o), 64);
+        e64((&o), (base + 64));
+        e64((&o), (base + 64));
+        e64((&o), (56 * nph));
+        e64((&o), (56 * nph));
+        e64((&o), 8);
+        e32((&o), 3);
+        e32((&o), 4);
+        e64((&o), interp_off);
+        e64((&o), (base + interp_off));
+        e64((&o), (base + interp_off));
+        e64((&o), (str_len(interp) + 1));
+        e64((&o), (str_len(interp) + 1));
+        e64((&o), 1);
+    }
+    e32((&o), 1);
+    e32((&o), 5);
+    e64((&o), 0);
+    e64((&o), base);
+    e64((&o), base);
+    e64((&o), (text_off + ((int64_t*)(l->osize).data)[0]));
+    e64((&o), (text_off + ((int64_t*)(l->osize).data)[0]));
+    e64((&o), 4096);
+    e32((&o), 1);
+    e32((&o), 4);
+    e64((&o), ro_off);
+    e64((&o), (base + ro_off));
+    e64((&o), (base + ro_off));
+    e64((&o), ((int64_t*)(l->osize).data)[1]);
+    e64((&o), ((int64_t*)(l->osize).data)[1]);
+    e64((&o), 4096);
+    e32((&o), 1);
+    e32((&o), 6);
+    e64((&o), data_off);
+    e64((&o), (base + data_off));
+    e64((&o), (base + data_off));
+    e64((&o), data_size);
+    e64((&o), (bss_at + ((int64_t*)(l->osize).data)[3]));
+    e64((&o), 4096);
+    if (dynamic) {
+        e32((&o), 2);
+        e32((&o), 6);
+        e64((&o), (data_off + dyn_at));
+        e64((&o), ((base + data_off) + dyn_at));
+        e64((&o), ((base + data_off) + dyn_at));
+        e64((&o), (16 * ndyn));
+        e64((&o), (16 * ndyn));
+        e64((&o), 8);
+    }
+    e32((&o), 1685382481);
+    e32((&o), 6);
+    e64((&o), 0);
+    e64((&o), 0);
+    e64((&o), 0);
+    e64((&o), 0);
+    e64((&o), 0);
+    e64((&o), 16);
+    if (dynamic) {
+        if (!shared) {
+            for (int64_t i = 0; i < str_len(interp); i++) {
+                e8((&o), ((int64_t)(interp[i])));
+            }
+            e8((&o), 0);
+        }
+        while (o.b.len < hash_off) {
+            e8((&o), 0);
+        }
+        e32((&o), nbucket);
+        e32((&o), nsym);
+        Array bucket = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+        for (int64_t i = 0; i < nbucket; i++) {
+            ({ int64_t _e = 0; arr_push(&(bucket), &_e); });
+        }
+        Array chain = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+        for (int64_t i = 0; i < nsym; i++) {
+            ({ int64_t _e = 0; arr_push(&(chain), &_e); });
+        }
+        for (int64_t i = 1; i < nsym; i++) {
+            const char* nm = "";
+            if (i <= ni) {
+                nm = ((const char**)(l->imports).data)[(i - 1)];
+            } else {
+                nm = ((const char**)(exports).data)[((i - 1) - ni)];
+            }
+            int64_t b = (elf_hash(nm) % nbucket);
+            ((int64_t*)(chain).data)[i] = ((int64_t*)(bucket).data)[b];
+            ((int64_t*)(bucket).data)[b] = i;
+        }
+        for (int64_t i = 0; i < nbucket; i++) {
+            e32((&o), ((int64_t*)(bucket).data)[i]);
+        }
+        for (int64_t i = 0; i < nsym; i++) {
+            e32((&o), ((int64_t*)(chain).data)[i]);
+        }
+        while (o.b.len < dynsym_off) {
+            e8((&o), 0);
+        }
+        ezero((&o), 24);
+        for (int64_t i = 0; i < ni; i++) {
+            e32((&o), ((int64_t*)(name_off).data)[i]);
+            e8((&o), 18);
+            e8((&o), 0);
+            e16((&o), 0);
+            e64((&o), 0);
+            e64((&o), 0);
+        }
+        for (int64_t i = 0; i < ne; i++) {
+            int64_t g = find_eglobal(l, ((const char**)(exports).data)[i]);
+            ESec gs = ((ESec*)(l->secs).data)[((int64_t*)(l->gsec).data)[g]];
+            e32((&o), ((int64_t*)(name_off).data)[(ni + i)]);
+            e8((&o), 18);
+            e8((&o), 0);
+            e16((&o), text_idx);
+            e64((&o), ((((int64_t*)(l->oaddr).data)[gs.out] + gs.at) + ((int64_t*)(l->gval).data)[g]));
+            e64((&o), 0);
+        }
+        ebytes((&o), dynstr.b);
+        while (o.b.len < rela_off) {
+            e8((&o), 0);
+        }
+        for (int64_t i = 0; i < ni; i++) {
+            e64((&o), (got_addr + (8 * i)));
+            e64((&o), (((i + 1) * 4294967296) + 6));
+            e64((&o), 0);
+        }
+        for (int64_t i = 0; i < rel_at.len; i++) {
+            e64((&o), ((int64_t*)(rel_at).data)[i]);
+            e64((&o), 8);
+            e64((&o), ((int64_t*)(rel_val).data)[i]);
+        }
+    }
+    while (o.b.len < text_off) {
+        e8((&o), 0);
+    }
+    ebytes((&o), text);
+    while (o.b.len < ro_off) {
+        e8((&o), 0);
+    }
+    ebytes((&o), ro);
+    while (o.b.len < data_off) {
+        e8((&o), 0);
+    }
+    ebytes((&o), data);
+    ebytes((&o), shstr.b);
+    while (o.b.len < shoff) {
+        e8((&o), 0);
+    }
+    ezero((&o), 64);
+    for (int64_t i = 0; i < (sh.h.len / 10); i++) {
+        int64_t k = (10 * i);
+        int64_t addr = 0;
+        if ((((int64_t*)(sh.h).data)[(k + 2)] & 2) != 0) {
+            addr = (base + ((int64_t*)(sh.h).data)[(k + 3)]);
+        }
+        e32((&o), ((int64_t*)(sh.h).data)[k]);
+        e32((&o), ((int64_t*)(sh.h).data)[(k + 1)]);
+        e64((&o), ((int64_t*)(sh.h).data)[(k + 2)]);
+        e64((&o), addr);
+        e64((&o), ((int64_t*)(sh.h).data)[(k + 3)]);
+        e64((&o), ((int64_t*)(sh.h).data)[(k + 4)]);
+        e32((&o), ((int64_t*)(sh.h).data)[(k + 5)]);
+        e32((&o), ((int64_t*)(sh.h).data)[(k + 6)]);
+        e64((&o), ((int64_t*)(sh.h).data)[(k + 7)]);
+        e64((&o), ((int64_t*)(sh.h).data)[(k + 8)]);
+    }
+    if (!strata_write_bytes(path, (&o.b))) {
+        ek_fail(l, str_concat("cannot write ", path));
+        return false;
+    }
+    if ((!str_eq(strata_host_os(), "windows")) && (!shared)) {
+        Array chmod = ({ Array _a = arr_make(sizeof(const char*)); { const char* _e = "chmod"; arr_push(&_a, &_e); } { const char* _e = "+x"; arr_push(&_a, &_e); } { const char* _e = path; arr_push(&_a, &_e); } _a; });
+        strata_run_argv((&chmod));
+    }
+    return true;
+}
+
+void m8(MOut* o, int64_t v) {
+    ({ uint8_t _e = ((uint8_t)((v & 255))); arr_push(&(o->b), &_e); });
+}
+
+void m16(MOut* o, int64_t v) {
+    m8(o, v);
+    m8(o, (v >> 8));
+}
+
+void m32(MOut* o, int64_t v) {
+    m16(o, v);
+    m16(o, (v >> 16));
+}
+
+void m64(MOut* o, int64_t v) {
+    m32(o, v);
+    m32(o, (v >> 32));
+}
+
+void mzero(MOut* o, int64_t n) {
+    for (int64_t i = 0; i < n; i++) {
+        m8(o, 0);
+    }
+}
+
+void mbytes(MOut* o, Array b) {
+    for (int64_t i = 0; i < b.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(b).data)[i]; arr_push(&(o->b), &_e); });
+    }
+}
+
+void mpad(MOut* o, int64_t align) {
+    while ((o->b.len % align) != 0) {
+        m8(o, 0);
+    }
+}
+
+void mbe32(MOut* o, int64_t v) {
+    m8(o, (v >> 24));
+    m8(o, (v >> 16));
+    m8(o, (v >> 8));
+    m8(o, v);
+}
+
+void mbe64(MOut* o, int64_t v) {
+    mbe32(o, (v >> 32));
+    mbe32(o, v);
+}
+
+void mname16(MOut* o, const char* s) {
+    for (int64_t i = 0; i < 16; i++) {
+        if (i < str_len(s)) {
+            m8(o, ((int64_t)(s[i])));
+        } else {
+            m8(o, 0);
+        }
+    }
+}
+
+void uleb(MOut* o, int64_t v) {
+    uint64_t x = ((uint64_t)(v));
+    bool more = true;
+    while (more) {
+        int64_t b = ((int64_t)((x & ((uint64_t)(127)))));
+        x = (x >> ((uint64_t)(7)));
+        if (x != ((uint64_t)(0))) {
+            m8(o, (b | 128));
+        } else {
+            m8(o, b);
+            more = false;
+        }
+    }
+}
+
+int64_t md8(Array b, int64_t at) {
+    return ((int64_t)(((uint8_t*)(b).data)[at]));
+}
+
+int64_t md16(Array b, int64_t at) {
+    return (({ __auto_type strata_t2503_ = md8(b, at); __auto_type strata_t2504_ = (md8(b, (at + 1)) << 8); (strata_t2503_ | strata_t2504_); }));
+}
+
+int64_t md32(Array b, int64_t at) {
+    return (({ __auto_type strata_t2505_ = md16(b, at); __auto_type strata_t2506_ = (md16(b, (at + 2)) << 16); (strata_t2505_ | strata_t2506_); }));
+}
+
+int64_t md64(Array b, int64_t at) {
+    uint64_t lo = (((uint64_t)(md32(b, at))) & ((uint64_t)(4294967295)));
+    uint64_t hi = (((uint64_t)(md32(b, (at + 4)))) & ((uint64_t)(4294967295)));
+    return ((int64_t)((lo | (hi << ((uint64_t)(32))))));
+}
+
+void mput32(Array* b, int64_t at, int64_t v) {
+    for (int64_t i = 0; i < 4; i++) {
+        ((uint8_t*)(b[0]).data)[(at + i)] = ((uint8_t)(((v >> (8 * i)) & 255)));
+    }
+}
+
+void mput64(Array* b, int64_t at, int64_t v) {
+    uint64_t x = ((uint64_t)(v));
+    for (int64_t i = 0; i < 8; i++) {
+        ((uint8_t*)(b[0]).data)[(at + i)] = ((uint8_t)(((int64_t)((x & ((uint64_t)(255)))))));
+        x = (x >> ((uint64_t)(8)));
+    }
+}
+
+int64_t malign(int64_t n, int64_t a) {
+    return ((((n + a) - 1) / a) * a);
+}
+
+int64_t mstr_add(MStr* t, const char* s) {
+    int64_t at = t->b.len;
+    for (int64_t i = 0; i < str_len(s); i++) {
+        ({ uint8_t _e = ((uint8_t)(((int64_t)(s[i])))); arr_push(&(t->b), &_e); });
+    }
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(t->b), &_e); });
+    return at;
+}
+
+const char* macho_name(const char* s) {
+    if (((str_len(s) > 1) && (s[0] == '.')) && (s[1] == 'L')) {
+        return str_concat("l", s);
+    }
+    return str_concat("_", s);
+}
+
+const char* strata_name(const char* s) {
+    if ((str_len(s) > 0) && (s[0] == '_')) {
+        return str_sub(s, 1, (str_len(s) - 1));
+    }
+    return s;
+}
+
+int64_t cpu_arm64(void) {
+    return 16777228;
+}
+
+int64_t sec_align_text(void) {
+    return 4;
+}
+
+int64_t sec_align_const(void) {
+    return 16;
+}
+
+int64_t sec_align_data(void) {
+    return 16;
+}
+
+Array macho_bytes(ObjFile* f) {
+    int64_t ntext = f->text.len;
+    int64_t a_const = (({ __auto_type strata_t2507_ = ntext; __auto_type strata_t2508_ = sec_align_const(); malign(strata_t2507_, strata_t2508_); }));
+    int64_t a_data = (({ __auto_type strata_t2509_ = (a_const + f->rdata.len); __auto_type strata_t2510_ = sec_align_data(); malign(strata_t2509_, strata_t2510_); }));
+    int64_t vmsize = (a_data + f->data.len);
+    Array order = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array newidx = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < f->symbols.len; i++) {
+        ({ int64_t _e = 0; arr_push(&(newidx), &_e); });
+    }
+    for (int64_t pass = 0; pass < 3; pass++) {
+        for (int64_t i = 0; i < f->symbols.len; i++) {
+            ObjSymbol s = ((ObjSymbol*)(f->symbols).data)[i];
+            int64_t kind = 2;
+            if (s.section != 0) {
+                if (s.global) {
+                    kind = 1;
+                } else {
+                    kind = 0;
+                }
+            }
+            if (kind == pass) {
+                ((int64_t*)(newidx).data)[i] = order.len;
+                ({ int64_t _e = i; arr_push(&(order), &_e); });
+            }
+        }
+    }
+    int64_t nlocal = 0;
+    int64_t nextdef = 0;
+    for (int64_t i = 0; i < f->symbols.len; i++) {
+        if (((ObjSymbol*)(f->symbols).data)[i].section != 0) {
+            if (((ObjSymbol*)(f->symbols).data)[i].global) {
+                nextdef += 1;
+            } else {
+                nlocal += 1;
+            }
+        }
+    }
+    int64_t nundef = ((f->symbols.len - nlocal) - nextdef);
+    Array rt_b = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut rt = (MOut){rt_b};
+    Array rd_b = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut rd = (MOut){rd_b};
+    int64_t nrt = 0;
+    int64_t nrd = 0;
+    Array data = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = 0; i < f->data.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(f->data).data)[i]; arr_push(&(data), &_e); });
+    }
+    for (int64_t k = 0; k < f->relocs.len; k++) {
+        ObjReloc r = ((ObjReloc*)(f->relocs).data)[k];
+        int64_t symnum = 0;
+        int64_t ext = 0;
+        if (r.symbol >= 0) {
+            symnum = ((int64_t*)(newidx).data)[r.symbol];
+            ext = 1;
+        } else {
+            symnum = (0 - r.symbol);
+            int64_t base = 0;
+            if (r.symbol == (0 - 2)) {
+                base = a_const;
+            } else 
+            if (r.symbol == (0 - 3)) {
+                base = a_data;
+            }
+            if (r.section == 3) {
+                (({ __auto_type strata_t2511_ = (&data); __auto_type strata_t2512_ = r.offset; __auto_type strata_t2513_ = (md64(data, r.offset) + base); mput64(strata_t2511_, strata_t2512_, strata_t2513_); }));
+            }
+        }
+        int64_t typ = 0;
+        int64_t pcrel = 0;
+        int64_t len = 2;
+        if (r.kind == 1) {
+            typ = 0;
+            len = 3;
+        } else 
+        if (r.kind == 2) {
+            typ = 2;
+            pcrel = 1;
+        } else 
+        if (r.kind == 3) {
+            typ = 3;
+            pcrel = 1;
+        } else 
+        if (r.kind == 4) {
+            typ = 4;
+        }
+        int64_t info = ((((symnum | (pcrel << 24)) | (len << 25)) | (ext << 27)) | (typ << 28));
+        if (r.section == 3) {
+            m32((&rd), r.offset);
+            m32((&rd), info);
+            nrd += 1;
+        } else {
+            m32((&rt), r.offset);
+            m32((&rt), info);
+            nrt += 1;
+        }
+    }
+    Array strs_b = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MStr strs = (MStr){strs_b};
+    ({ uint8_t _e = ((uint8_t)(32)); arr_push(&(strs.b), &_e); });
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(strs.b), &_e); });
+    Array syms_b = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut syms = (MOut){syms_b};
+    for (int64_t j = 0; j < order.len; j++) {
+        ObjSymbol s = ((ObjSymbol*)(f->symbols).data)[((int64_t*)(order).data)[j]];
+        (({ __auto_type strata_t2514_ = (&syms); __auto_type strata_t2515_ = (({ __auto_type strata_t2516_ = (&strs); __auto_type strata_t2517_ = macho_name(s.name); mstr_add(strata_t2516_, strata_t2517_); })); m32(strata_t2514_, strata_t2515_); }));
+        int64_t typ = 1;
+        int64_t sect = 0;
+        int64_t value = 0;
+        if (s.section != 0) {
+            typ = 14;
+            if (s.global) {
+                typ = 15;
+            }
+            sect = s.section;
+            value = s.value;
+            if (s.section == 2) {
+                value += a_const;
+            } else 
+            if (s.section == 3) {
+                value += a_data;
+            }
+        }
+        m8((&syms), typ);
+        m8((&syms), sect);
+        m16((&syms), 0);
+        m64((&syms), value);
+    }
+    while ((strs.b.len % 8) != 0) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(strs.b), &_e); });
+    }
+    int64_t ncmds = 4;
+    int64_t seg_size = (72 + (80 * 3));
+    int64_t sizeofcmds = (((seg_size + 24) + 24) + 80);
+    int64_t off_text = (32 + sizeofcmds);
+    int64_t off_const = (off_text + a_const);
+    int64_t off_data = (off_text + a_data);
+    int64_t off_rt = malign((off_text + vmsize), 8);
+    int64_t off_rd = (off_rt + (8 * nrt));
+    int64_t off_sym = (off_rd + (8 * nrd));
+    int64_t off_str = (off_sym + (16 * order.len));
+    Array o_b = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut o = (MOut){o_b};
+    m32((&o), 4277009103);
+    (({ __auto_type strata_t2518_ = (&o); __auto_type strata_t2519_ = cpu_arm64(); m32(strata_t2518_, strata_t2519_); }));
+    m32((&o), 0);
+    m32((&o), 1);
+    m32((&o), ncmds);
+    m32((&o), sizeofcmds);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 25);
+    m32((&o), seg_size);
+    mname16((&o), "");
+    m64((&o), 0);
+    m64((&o), vmsize);
+    m64((&o), off_text);
+    m64((&o), vmsize);
+    m32((&o), 7);
+    m32((&o), 7);
+    m32((&o), 3);
+    m32((&o), 0);
+    mname16((&o), "__text");
+    mname16((&o), "__TEXT");
+    m64((&o), 0);
+    m64((&o), ntext);
+    m32((&o), off_text);
+    m32((&o), 2);
+    m32((&o), off_rt);
+    m32((&o), nrt);
+    m32((&o), (0 - 2147482624));
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    mname16((&o), "__const");
+    mname16((&o), "__TEXT");
+    m64((&o), a_const);
+    m64((&o), f->rdata.len);
+    m32((&o), off_const);
+    m32((&o), 4);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    mname16((&o), "__data");
+    mname16((&o), "__DATA");
+    m64((&o), a_data);
+    m64((&o), f->data.len);
+    m32((&o), off_data);
+    m32((&o), 4);
+    m32((&o), off_rd);
+    m32((&o), nrd);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 50);
+    m32((&o), 24);
+    m32((&o), 1);
+    m32((&o), 720896);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 2);
+    m32((&o), 24);
+    m32((&o), off_sym);
+    m32((&o), order.len);
+    m32((&o), off_str);
+    m32((&o), strs.b.len);
+    m32((&o), 11);
+    m32((&o), 80);
+    m32((&o), 0);
+    m32((&o), nlocal);
+    m32((&o), nlocal);
+    m32((&o), nextdef);
+    m32((&o), (nlocal + nextdef));
+    m32((&o), nundef);
+    mzero((&o), 48);
+    mbytes((&o), f->text);
+    while (o.b.len < off_const) {
+        m8((&o), 0);
+    }
+    mbytes((&o), f->rdata);
+    while (o.b.len < off_data) {
+        m8((&o), 0);
+    }
+    mbytes((&o), data);
+    while (o.b.len < off_rt) {
+        m8((&o), 0);
+    }
+    mbytes((&o), rt.b);
+    mbytes((&o), rd.b);
+    mbytes((&o), syms.b);
+    mbytes((&o), strs.b);
+    return o.b;
+}
+
+bool write_macho(const char* path, ObjFile* f) {
+    Array b = macho_bytes(f);
+    return strata_write_bytes(path, (&b));
+}
+
+int64_t rotr(int64_t x, int64_t n) {
+    return (((x >> n) | (x << (32 - n))) & 4294967295);
+}
+
+void sha256(Array b, int64_t from, int64_t n, MOut* out) {
+    Array k = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 1116352408; arr_push(&_a, &_e); } { int64_t _e = 1899447441; arr_push(&_a, &_e); } { int64_t _e = 3049323471; arr_push(&_a, &_e); } { int64_t _e = 3921009573; arr_push(&_a, &_e); } { int64_t _e = 961987163; arr_push(&_a, &_e); } { int64_t _e = 1508970993; arr_push(&_a, &_e); } { int64_t _e = 2453635748; arr_push(&_a, &_e); } { int64_t _e = 2870763221; arr_push(&_a, &_e); } { int64_t _e = 3624381080; arr_push(&_a, &_e); } { int64_t _e = 310598401; arr_push(&_a, &_e); } { int64_t _e = 607225278; arr_push(&_a, &_e); } { int64_t _e = 1426881987; arr_push(&_a, &_e); } { int64_t _e = 1925078388; arr_push(&_a, &_e); } { int64_t _e = 2162078206; arr_push(&_a, &_e); } { int64_t _e = 2614888103; arr_push(&_a, &_e); } { int64_t _e = 3248222580; arr_push(&_a, &_e); } { int64_t _e = 3835390401; arr_push(&_a, &_e); } { int64_t _e = 4022224774; arr_push(&_a, &_e); } { int64_t _e = 264347078; arr_push(&_a, &_e); } { int64_t _e = 604807628; arr_push(&_a, &_e); } { int64_t _e = 770255983; arr_push(&_a, &_e); } { int64_t _e = 1249150122; arr_push(&_a, &_e); } { int64_t _e = 1555081692; arr_push(&_a, &_e); } { int64_t _e = 1996064986; arr_push(&_a, &_e); } { int64_t _e = 2554220882; arr_push(&_a, &_e); } { int64_t _e = 2821834349; arr_push(&_a, &_e); } { int64_t _e = 2952996808; arr_push(&_a, &_e); } { int64_t _e = 3210313671; arr_push(&_a, &_e); } { int64_t _e = 3336571891; arr_push(&_a, &_e); } { int64_t _e = 3584528711; arr_push(&_a, &_e); } { int64_t _e = 113926993; arr_push(&_a, &_e); } { int64_t _e = 338241895; arr_push(&_a, &_e); } { int64_t _e = 666307205; arr_push(&_a, &_e); } { int64_t _e = 773529912; arr_push(&_a, &_e); } { int64_t _e = 1294757372; arr_push(&_a, &_e); } { int64_t _e = 1396182291; arr_push(&_a, &_e); } { int64_t _e = 1695183700; arr_push(&_a, &_e); } { int64_t _e = 1986661051; arr_push(&_a, &_e); } { int64_t _e = 2177026350; arr_push(&_a, &_e); } { int64_t _e = 2456956037; arr_push(&_a, &_e); } { int64_t _e = 2730485921; arr_push(&_a, &_e); } { int64_t _e = 2820302411; arr_push(&_a, &_e); } { int64_t _e = 3259730800; arr_push(&_a, &_e); } { int64_t _e = 3345764771; arr_push(&_a, &_e); } { int64_t _e = 3516065817; arr_push(&_a, &_e); } { int64_t _e = 3600352804; arr_push(&_a, &_e); } { int64_t _e = 4094571909; arr_push(&_a, &_e); } { int64_t _e = 275423344; arr_push(&_a, &_e); } { int64_t _e = 430227734; arr_push(&_a, &_e); } { int64_t _e = 506948616; arr_push(&_a, &_e); } { int64_t _e = 659060556; arr_push(&_a, &_e); } { int64_t _e = 883997877; arr_push(&_a, &_e); } { int64_t _e = 958139571; arr_push(&_a, &_e); } { int64_t _e = 1322822218; arr_push(&_a, &_e); } { int64_t _e = 1537002063; arr_push(&_a, &_e); } { int64_t _e = 1747873779; arr_push(&_a, &_e); } { int64_t _e = 1955562222; arr_push(&_a, &_e); } { int64_t _e = 2024104815; arr_push(&_a, &_e); } { int64_t _e = 2227730452; arr_push(&_a, &_e); } { int64_t _e = 2361852424; arr_push(&_a, &_e); } { int64_t _e = 2428436474; arr_push(&_a, &_e); } { int64_t _e = 2756734187; arr_push(&_a, &_e); } { int64_t _e = 3204031479; arr_push(&_a, &_e); } { int64_t _e = 3329325298; arr_push(&_a, &_e); } _a; });
+    Array h = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 1779033703; arr_push(&_a, &_e); } { int64_t _e = 3144134277; arr_push(&_a, &_e); } { int64_t _e = 1013904242; arr_push(&_a, &_e); } { int64_t _e = 2773480762; arr_push(&_a, &_e); } { int64_t _e = 1359893119; arr_push(&_a, &_e); } { int64_t _e = 2600822924; arr_push(&_a, &_e); } { int64_t _e = 528734635; arr_push(&_a, &_e); } { int64_t _e = 1541459225; arr_push(&_a, &_e); } _a; });
+    int64_t full = (n / 64);
+    Array tail = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = (full * 64); i < n; i++) {
+        ({ uint8_t _e = ((uint8_t*)(b).data)[(from + i)]; arr_push(&(tail), &_e); });
+    }
+    ({ uint8_t _e = ((uint8_t)(128)); arr_push(&(tail), &_e); });
+    while ((tail.len % 64) != 56) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(tail), &_e); });
+    }
+    int64_t bits = (n * 8);
+    for (int64_t i = 0; i < 8; i++) {
+        ({ uint8_t _e = ((uint8_t)(((bits >> (56 - (8 * i))) & 255))); arr_push(&(tail), &_e); });
+    }
+    Array w = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < 64; i++) {
+        ({ int64_t _e = 0; arr_push(&(w), &_e); });
+    }
+    int64_t blocks = (full + (tail.len / 64));
+    for (int64_t blk = 0; blk < blocks; blk++) {
+        for (int64_t i = 0; i < 16; i++) {
+            int64_t v = 0;
+            for (int64_t j = 0; j < 4; j++) {
+                int64_t at = (((blk * 64) + (4 * i)) + j);
+                int64_t c = 0;
+                if (blk < full) {
+                    c = ((int64_t)(((uint8_t*)(b).data)[(from + at)]));
+                } else {
+                    c = ((int64_t)(((uint8_t*)(tail).data)[(at - (full * 64))]));
+                }
+                v = ((v << 8) | c);
+            }
+            ((int64_t*)(w).data)[i] = v;
+        }
+        for (int64_t i = 16; i < 64; i++) {
+            int64_t s0 = ((({ __auto_type strata_t2520_ = rotr(((int64_t*)(w).data)[(i - 15)], 7); __auto_type strata_t2521_ = rotr(((int64_t*)(w).data)[(i - 15)], 18); (strata_t2520_ ^ strata_t2521_); })) ^ (((int64_t*)(w).data)[(i - 15)] >> 3));
+            int64_t s1 = ((({ __auto_type strata_t2522_ = rotr(((int64_t*)(w).data)[(i - 2)], 17); __auto_type strata_t2523_ = rotr(((int64_t*)(w).data)[(i - 2)], 19); (strata_t2522_ ^ strata_t2523_); })) ^ (((int64_t*)(w).data)[(i - 2)] >> 10));
+            ((int64_t*)(w).data)[i] = ((((((int64_t*)(w).data)[(i - 16)] + s0) + ((int64_t*)(w).data)[(i - 7)]) + s1) & 4294967295);
+        }
+        int64_t a = ((int64_t*)(h).data)[0];
+        int64_t bb = ((int64_t*)(h).data)[1];
+        int64_t c = ((int64_t*)(h).data)[2];
+        int64_t d = ((int64_t*)(h).data)[3];
+        int64_t e = ((int64_t*)(h).data)[4];
+        int64_t f = ((int64_t*)(h).data)[5];
+        int64_t g = ((int64_t*)(h).data)[6];
+        int64_t hh = ((int64_t*)(h).data)[7];
+        for (int64_t i = 0; i < 64; i++) {
+            int64_t t1 = (((((({ __auto_type strata_t2524_ = hh; __auto_type strata_t2525_ = (({ __auto_type strata_t2528_ = (({ __auto_type strata_t2526_ = rotr(e, 6); __auto_type strata_t2527_ = rotr(e, 11); (strata_t2526_ ^ strata_t2527_); })); __auto_type strata_t2529_ = rotr(e, 25); (strata_t2528_ ^ strata_t2529_); })); (strata_t2524_ + strata_t2525_); })) + ((e & f) ^ ((e ^ 4294967295) & g))) + ((int64_t*)(k).data)[i]) + ((int64_t*)(w).data)[i]) & 4294967295);
+            int64_t t2 = (((({ __auto_type strata_t2532_ = (({ __auto_type strata_t2530_ = rotr(a, 2); __auto_type strata_t2531_ = rotr(a, 13); (strata_t2530_ ^ strata_t2531_); })); __auto_type strata_t2533_ = rotr(a, 22); (strata_t2532_ ^ strata_t2533_); })) + (((a & bb) ^ (a & c)) ^ (bb & c))) & 4294967295);
+            hh = g;
+            g = f;
+            f = e;
+            e = ((d + t1) & 4294967295);
+            d = c;
+            c = bb;
+            bb = a;
+            a = ((t1 + t2) & 4294967295);
+        }
+        ((int64_t*)(h).data)[0] = ((((int64_t*)(h).data)[0] + a) & 4294967295);
+        ((int64_t*)(h).data)[1] = ((((int64_t*)(h).data)[1] + bb) & 4294967295);
+        ((int64_t*)(h).data)[2] = ((((int64_t*)(h).data)[2] + c) & 4294967295);
+        ((int64_t*)(h).data)[3] = ((((int64_t*)(h).data)[3] + d) & 4294967295);
+        ((int64_t*)(h).data)[4] = ((((int64_t*)(h).data)[4] + e) & 4294967295);
+        ((int64_t*)(h).data)[5] = ((((int64_t*)(h).data)[5] + f) & 4294967295);
+        ((int64_t*)(h).data)[6] = ((((int64_t*)(h).data)[6] + g) & 4294967295);
+        ((int64_t*)(h).data)[7] = ((((int64_t*)(h).data)[7] + hh) & 4294967295);
+    }
+    for (int64_t i = 0; i < 8; i++) {
+        for (int64_t j = 0; j < 4; j++) {
+            m8(out, ((((int64_t*)(h).data)[i] >> (24 - (8 * j))) & 255));
+        }
+    }
+}
+
+MachLinker* new_mach_linker(void) {
+    Array o = ({ Array _a = arr_make(sizeof(MObj)); _a; });
+    Array s = ({ Array _a = arr_make(sizeof(MSec)); _a; });
+    Array gn = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array go = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array gs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array ga = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array dl = ({ Array _a = arr_make(sizeof(const char*)); { const char* _e = "/usr/lib/libSystem.B.dylib"; arr_push(&_a, &_e); } _a; });
+    Array im = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array os = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array oa = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    return ({ MachLinker _v = (({ __auto_type strata_t2534_ = o; __auto_type strata_t2535_ = s; __auto_type strata_t2536_ = gn; __auto_type strata_t2537_ = go; __auto_type strata_t2538_ = gs; __auto_type strata_t2539_ = ga; __auto_type strata_t2540_ = new_idx(4096); (MachLinker){true, "", strata_t2534_, strata_t2535_, strata_t2536_, strata_t2537_, strata_t2538_, strata_t2539_, strata_t2540_, dl, im, os, oa}; })); MachLinker* _p = (MachLinker*)arena_alloc(strata_heap(), sizeof(MachLinker)); *_p = _v; _p; });
+}
+
+void mk_fail(MachLinker* l, const char* msg) {
+    if (l->ok) {
+        l->err = msg;
+    }
+    l->ok = false;
+}
+
+const char* mcstr(Array b, int64_t at) {
+    return strata_bytes_cstr((&b), at, 4096);
+}
+
+const char* mfixed16(Array b, int64_t at) {
+    int64_t n = 0;
+    while ((n < 16) && (((uint8_t*)(b).data)[(at + n)] != ((uint8_t)(0)))) {
+        n += 1;
+    }
+    return strata_bytes_cstr((&b), at, n);
+}
+
+int64_t find_mglobal(MachLinker* l, const char* name) {
+    int64_t k = idx_first((&l->gidx), name);
+    while (k >= 0) {
+        if (str_eq(((const char**)(l->gname).data)[k], name)) {
+            return k;
+        }
+        k = idx_next((&l->gidx), k);
+    }
+    return (0 - 1);
+}
+
+int64_t mout_class(const char* seg, const char* name, int64_t flags) {
+    int64_t typ = (flags & 255);
+    if (str_eq(seg, "__TEXT")) {
+        if (str_eq(name, "__text")) {
+            return 0;
+        }
+        if (str_eq(name, "__eh_frame") || str_eq(name, "__unwind_info")) {
+            return (0 - 1);
+        }
+        return 1;
+    }
+    if (str_eq(seg, "__DATA") || str_eq(seg, "__DATA_CONST")) {
+        if ((typ == 1) || (typ == 12)) {
+            return 3;
+        }
+        return 2;
+    }
+    return (0 - 1);
+}
+
+void mach_add(MachLinker* l, const char* name, Array b) {
+    if (!l->ok) {
+        return;
+    }
+    if ((b.len < 32) || (md32(b, 0) != 4277009103)) {
+        mk_fail(l, str_concat(name, ": not a 64-bit Mach-O object"));
+        return;
+    }
+    if (({ __auto_type strata_t2541_ = md32(b, 4); __auto_type strata_t2542_ = cpu_arm64(); (strata_t2541_ != strata_t2542_); })) {
+        mk_fail(l, str_concat(name, ": not an ARM64 object"));
+        return;
+    }
+    if (md32(b, 12) != 1) {
+        mk_fail(l, str_concat(name, ": not an object file"));
+        return;
+    }
+    int64_t oi = l->objs.len;
+    Array syms = ({ Array _a = arr_make(sizeof(MSym)); _a; });
+    int64_t first = l->secs.len;
+    int64_t nsec = 0;
+    int64_t ncmds = md32(b, 16);
+    int64_t off = 32;
+    for (int64_t c = 0; c < ncmds; c++) {
+        int64_t cmd = md32(b, off);
+        int64_t size = md32(b, (off + 4));
+        if (cmd == 25) {
+            int64_t ns = md32(b, (off + 64));
+            for (int64_t k = 0; k < ns; k++) {
+                int64_t so = ((off + 72) + (80 * k));
+                const char* sect = mfixed16(b, so);
+                const char* seg = mfixed16(b, (so + 16));
+                int64_t flags = md32(b, (so + 64));
+                MSec s = (({ __auto_type strata_t2543_ = oi; __auto_type strata_t2544_ = seg; __auto_type strata_t2545_ = sect; __auto_type strata_t2546_ = md64(b, (so + 32)); __auto_type strata_t2547_ = md64(b, (so + 40)); __auto_type strata_t2548_ = md32(b, (so + 48)); __auto_type strata_t2549_ = ((int64_t)1 << md32(b, (so + 52))); __auto_type strata_t2550_ = md32(b, (so + 56)); __auto_type strata_t2551_ = md32(b, (so + 60)); __auto_type strata_t2552_ = flags; __auto_type strata_t2553_ = mout_class(seg, sect, flags); (MSec){strata_t2543_, strata_t2544_, strata_t2545_, strata_t2546_, strata_t2547_, strata_t2548_, strata_t2549_, strata_t2550_, strata_t2551_, strata_t2552_, strata_t2553_, 0}; }));
+                ({ MSec _e = s; arr_push(&(l->secs), &_e); });
+                nsec += 1;
+            }
+        } else 
+        if (cmd == 2) {
+            int64_t symoff = md32(b, (off + 8));
+            int64_t nsyms = md32(b, (off + 12));
+            int64_t stroff = md32(b, (off + 16));
+            for (int64_t k = 0; k < nsyms; k++) {
+                int64_t e = (symoff + (16 * k));
+                ({ MSym _e = (({ __auto_type strata_t2554_ = (({ __auto_type strata_t2555_ = b; __auto_type strata_t2556_ = (({ __auto_type strata_t2557_ = stroff; __auto_type strata_t2558_ = md32(b, e); (strata_t2557_ + strata_t2558_); })); mcstr(strata_t2555_, strata_t2556_); })); __auto_type strata_t2559_ = md8(b, (e + 4)); __auto_type strata_t2560_ = md8(b, (e + 5)); __auto_type strata_t2561_ = md64(b, (e + 8)); (MSym){strata_t2554_, strata_t2559_, strata_t2560_, strata_t2561_}; })); arr_push(&(syms), &_e); });
+            }
+        }
+        off += size;
+    }
+    ({ MObj _e = (MObj){name, b, first, nsec, syms}; arr_push(&(l->objs), &_e); });
+    for (int64_t k = 0; k < syms.len; k++) {
+        MSym s = ((MSym*)(syms).data)[k];
+        if ((((s.typ & 14) == 14) && ((s.typ & 1) == 1)) && ((s.typ & 224) == 0)) {
+            if (find_mglobal(l, s.name) >= 0) {
+                (({ __auto_type strata_t2562_ = l; __auto_type strata_t2563_ = str_concat(str_concat(str_concat(str_concat("'", strata_name(s.name)), "' is defined twice ("), name), ")"); mk_fail(strata_t2562_, strata_t2563_); }));
+                return;
+            }
+            idx_add((&l->gidx), s.name, l->gname.len);
+            ({ const char* _e = s.name; arr_push(&(l->gname), &_e); });
+            ({ int64_t _e = oi; arr_push(&(l->gobj), &_e); });
+            ({ int64_t _e = k; arr_push(&(l->gsym), &_e); });
+            ({ int64_t _e = 0; arr_push(&(l->gaddr), &_e); });
+        }
+    }
+}
+
+const char* system_dylib(const char* name) {
+    if (str_eq(name, "objc")) {
+        return "/usr/lib/libobjc.A.dylib";
+    }
+    Array cee = ({ Array _a = arr_make(sizeof(const char*)); { const char* _e = "AppKit"; arr_push(&_a, &_e); } { const char* _e = "Foundation"; arr_push(&_a, &_e); } { const char* _e = "CoreServices"; arr_push(&_a, &_e); } { const char* _e = "Carbon"; arr_push(&_a, &_e); } _a; });
+    for (int64_t i = 0; i < cee.len; i++) {
+        if (str_eq(name, ((const char**)(cee).data)[i])) {
+            return str_concat(str_concat(str_concat("/System/Library/Frameworks/", name), ".framework/Versions/C/"), name);
+        }
+    }
+    Array aye = ({ Array _a = arr_make(sizeof(const char*)); { const char* _e = "Cocoa"; arr_push(&_a, &_e); } { const char* _e = "CoreFoundation"; arr_push(&_a, &_e); } { const char* _e = "CoreGraphics"; arr_push(&_a, &_e); } { const char* _e = "QuartzCore"; arr_push(&_a, &_e); } { const char* _e = "Metal"; arr_push(&_a, &_e); } { const char* _e = "IOKit"; arr_push(&_a, &_e); } { const char* _e = "AudioToolbox"; arr_push(&_a, &_e); } { const char* _e = "CoreAudio"; arr_push(&_a, &_e); } { const char* _e = "CoreVideo"; arr_push(&_a, &_e); } { const char* _e = "GameController"; arr_push(&_a, &_e); } { const char* _e = "OpenGL"; arr_push(&_a, &_e); } { const char* _e = "Security"; arr_push(&_a, &_e); } _a; });
+    for (int64_t i = 0; i < aye.len; i++) {
+        if (str_eq(name, ((const char**)(aye).data)[i])) {
+            return str_concat(str_concat(str_concat("/System/Library/Frameworks/", name), ".framework/Versions/A/"), name);
+        }
+    }
+    return "";
+}
+
+bool mach_library(MachLinker* l, const char* name, Array dirs) {
+    if ((((str_eq(name, "c") || str_eq(name, "m")) || str_eq(name, "System")) || str_eq(name, "pthread")) || str_eq(name, "dl")) {
+        return true;
+    }
+    const char* install = str_concat(str_concat("@rpath/lib", name), ".dylib");
+    if (!str_eq(system_dylib(name), "")) {
+        install = system_dylib(name);
+    }
+    if (str_eq(strata_host_os(), "macos") && str_eq(system_dylib(name), "")) {
+        Array where = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+        for (int64_t i = 0; i < dirs.len; i++) {
+            ({ const char* _e = ((const char**)(dirs).data)[i]; arr_push(&(where), &_e); });
+        }
+        ({ const char* _e = "/usr/local/lib"; arr_push(&(where), &_e); });
+        ({ const char* _e = "/opt/homebrew/lib"; arr_push(&(where), &_e); });
+        bool found = false;
+        for (int64_t i = 0; i < where.len; i++) {
+            const char* p = str_concat(str_concat(str_concat(((const char**)(where).data)[i], "/lib"), name), ".dylib");
+            if ((!found) && strata_file_exists(p)) {
+                const char* id = dylib_id(strata_read_bytes(p));
+                if (!str_eq(id, "")) {
+                    install = id;
+                }
+                found = true;
+            }
+        }
+    }
+    for (int64_t i = 0; i < l->dylibs.len; i++) {
+        if (str_eq(((const char**)(l->dylibs).data)[i], install)) {
+            return true;
+        }
+    }
+    ({ const char* _e = install; arr_push(&(l->dylibs), &_e); });
+    return true;
+}
+
+const char* dylib_id(Array b) {
+    if ((b.len < 32) || (md32(b, 0) != 4277009103)) {
+        return "";
+    }
+    int64_t ncmds = md32(b, 16);
+    int64_t off = 32;
+    for (int64_t c = 0; c < ncmds; c++) {
+        if (md32(b, off) == 13) {
+            return (({ __auto_type strata_t2564_ = b; __auto_type strata_t2565_ = (({ __auto_type strata_t2566_ = off; __auto_type strata_t2567_ = md32(b, (off + 8)); (strata_t2566_ + strata_t2567_); })); mcstr(strata_t2564_, strata_t2565_); }));
+        }
+        off += md32(b, (off + 4));
+    }
+    return "";
+}
+
+int64_t msym_addr(MachLinker* l, int64_t oi, int64_t si) {
+    MSym s = ((MSym*)(((MObj*)(l->objs).data)[oi].syms).data)[si];
+    if (((s.typ & 14) == 14) && (s.sect > 0)) {
+        MSec sec = ((MSec*)(l->secs).data)[((((MObj*)(l->objs).data)[oi].first + s.sect) - 1)];
+        if (sec.out < 0) {
+            return 0;
+        }
+        return ((((int64_t*)(l->oaddr).data)[sec.out] + sec.at) + (s.value - sec.addr));
+    }
+    int64_t g = find_mglobal(l, s.name);
+    if (g < 0) {
+        return 0;
+    }
+    if (((int64_t*)(l->gsym).data)[g] < 0) {
+        return ((int64_t*)(l->gaddr).data)[g];
+    }
+    return msym_addr(l, ((int64_t*)(l->gobj).data)[g], ((int64_t*)(l->gsym).data)[g]);
+}
+
+int64_t mobj_addr(MachLinker* l, int64_t oi, int64_t a) {
+    MObj o = ((MObj*)(l->objs).data)[oi];
+    for (int64_t k = 0; k < o.nsec; k++) {
+        MSec s = ((MSec*)(l->secs).data)[(o.first + k)];
+        if (((a >= s.addr) && (a < (s.addr + s.size))) && (s.out >= 0)) {
+            return ((((int64_t*)(l->oaddr).data)[s.out] + s.at) + (a - s.addr));
+        }
+    }
+    for (int64_t k = 0; k < o.nsec; k++) {
+        MSec s = ((MSec*)(l->secs).data)[(o.first + k)];
+        if ((a == (s.addr + s.size)) && (s.out >= 0)) {
+            return ((((int64_t*)(l->oaddr).data)[s.out] + s.at) + (a - s.addr));
+        }
+    }
+    return 0;
+}
+
+void find_mach_imports(MachLinker* l) {
+    for (int64_t oi = 0; oi < l->objs.len; oi++) {
+        MObj o = ((MObj*)(l->objs).data)[oi];
+        for (int64_t k = 0; k < o.nsec; k++) {
+            MSec s = ((MSec*)(l->secs).data)[(o.first + k)];
+            if (s.out >= 0) {
+                for (int64_t r = 0; r < s.nreloc; r++) {
+                    int64_t info = md32(o.b, ((s.reloff + (8 * r)) + 4));
+                    int64_t typ = ((info >> 28) & 15);
+                    if ((((info >> 27) & 1) == 1) && (typ != 10)) {
+                        MSym y = ((MSym*)(o.syms).data)[(info & 16777215)];
+                        if (((y.typ & 14) == 0) && (find_mglobal(l, y.name) < 0)) {
+                            idx_add((&l->gidx), y.name, l->gname.len);
+                            ({ const char* _e = y.name; arr_push(&(l->gname), &_e); });
+                            ({ int64_t _e = (0 - 1); arr_push(&(l->gobj), &_e); });
+                            ({ int64_t _e = (0 - 1); arr_push(&(l->gsym), &_e); });
+                            ({ int64_t _e = 0; arr_push(&(l->gaddr), &_e); });
+                            ({ const char* _e = y.name; arr_push(&(l->imports), &_e); });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+const char* mach_start_stub(void) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = "\t.text\n\t.globl strata_start\nstrata_start:\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tstp x29, x30, [sp, #-32]!\n\tmov x29, sp\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tstp x0, x1, [sp, #16]\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tadrp x0, srt_os_flush@PAGE\n\tadd x0, x0, srt_os_flush@PAGEOFF\n\tbl atexit\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tldp x0, x1, [sp, #16]\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tbl main\n\tbl exit\n"; arr_push(&(p), &_e); });
+    return strata_join((&p));
+}
+
+const char* mach_dylib_init(void) {
+    Array p = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    ({ const char* _e = "\t.text\n\t.globl strata_dylib_init\nstrata_dylib_init:\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tadrp x0, srt_os_flush@PAGE\n\tadd x0, x0, srt_os_flush@PAGEOFF\n\tbl atexit\n"; arr_push(&(p), &_e); });
+    ({ const char* _e = "\tldp x29, x30, [sp], #16\n\tret\n"; arr_push(&(p), &_e); });
+    return strata_join((&p));
+}
+
+int64_t trie_child(Trie* t, int64_t n, int64_t c) {
+    for (int64_t i = 0; i < t->parent.len; i++) {
+        if ((((int64_t*)(t->parent).data)[i] == n) && (((int64_t*)(t->ch).data)[i] == c)) {
+            return i;
+        }
+    }
+    ({ int64_t _e = n; arr_push(&(t->parent), &_e); });
+    ({ int64_t _e = c; arr_push(&(t->ch), &_e); });
+    ({ int64_t _e = 0; arr_push(&(t->addr), &_e); });
+    ({ int64_t _e = 0; arr_push(&(t->term), &_e); });
+    ({ int64_t _e = 0; arr_push(&(t->off), &_e); });
+    return (t->parent.len - 1);
+}
+
+int64_t uleb_size(int64_t v) {
+    int64_t n = 1;
+    uint64_t x = (((uint64_t)(v)) >> ((uint64_t)(7)));
+    while (x != ((uint64_t)(0))) {
+        n += 1;
+        x = (x >> ((uint64_t)(7)));
+    }
+    return n;
+}
+
+Array export_trie(Array names, Array addrs) {
+    Array pa = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = (0 - 1); arr_push(&_a, &_e); } _a; });
+    Array ch = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 0; arr_push(&_a, &_e); } _a; });
+    Array ad = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 0; arr_push(&_a, &_e); } _a; });
+    Array te = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 0; arr_push(&_a, &_e); } _a; });
+    Array of = ({ Array _a = arr_make(sizeof(int64_t)); { int64_t _e = 0; arr_push(&_a, &_e); } _a; });
+    Trie t = (Trie){pa, ch, ad, te, of};
+    for (int64_t i = 0; i < names.len; i++) {
+        int64_t n = 0;
+        for (int64_t j = 0; j < str_len(((const char**)(names).data)[i]); j++) {
+            n = trie_child((&t), n, ((int64_t)(((const char**)(names).data)[i][j])));
+        }
+        ((int64_t*)(t.term).data)[n] = 1;
+        ((int64_t*)(t.addr).data)[n] = ((int64_t*)(addrs).data)[i];
+    }
+    int64_t nn = t.parent.len;
+    bool moved = true;
+    while (moved) {
+        moved = false;
+        int64_t at = 0;
+        for (int64_t n = 0; n < nn; n++) {
+            if (((int64_t*)(t.off).data)[n] != at) {
+                ((int64_t*)(t.off).data)[n] = at;
+                moved = true;
+            }
+            int64_t size = 1;
+            if (((int64_t*)(t.term).data)[n] == 1) {
+                int64_t info = (1 + uleb_size(((int64_t*)(t.addr).data)[n]));
+                size = (uleb_size(info) + info);
+            }
+            size += 1;
+            for (int64_t k = 0; k < nn; k++) {
+                if (((int64_t*)(t.parent).data)[k] == n) {
+                    size += (2 + uleb_size(((int64_t*)(t.off).data)[k]));
+                }
+            }
+            at += size;
+        }
+    }
+    Array ob = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut o = (MOut){ob};
+    for (int64_t n = 0; n < nn; n++) {
+        if (((int64_t*)(t.term).data)[n] == 1) {
+            (({ __auto_type strata_t2568_ = (&o); __auto_type strata_t2569_ = (1 + uleb_size(((int64_t*)(t.addr).data)[n])); uleb(strata_t2568_, strata_t2569_); }));
+            uleb((&o), 0);
+            uleb((&o), ((int64_t*)(t.addr).data)[n]);
+        } else {
+            m8((&o), 0);
+        }
+        int64_t kids = 0;
+        for (int64_t k = 0; k < nn; k++) {
+            if (((int64_t*)(t.parent).data)[k] == n) {
+                kids += 1;
+            }
+        }
+        m8((&o), kids);
+        for (int64_t k = 0; k < nn; k++) {
+            if (((int64_t*)(t.parent).data)[k] == n) {
+                m8((&o), ((int64_t*)(t.ch).data)[k]);
+                m8((&o), 0);
+                uleb((&o), ((int64_t*)(t.off).data)[k]);
+            }
+        }
+    }
+    while ((o.b.len % 8) != 0) {
+        m8((&o), 0);
+    }
+    return o.b;
+}
+
+int64_t lc_str_size(int64_t fixed, const char* s) {
+    return malign(((fixed + str_len(s)) + 1), 8);
+}
+
+void lc_str(MOut* o, const char* s, int64_t size, int64_t fixed) {
+    for (int64_t i = 0; i < str_len(s); i++) {
+        m8(o, ((int64_t)(s[i])));
+    }
+    mzero(o, ((size - fixed) - str_len(s)));
+}
+
+bool mach_link_exe(MachLinker* l, const char* path) {
+    Array none = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    return mach_link(l, path, false, none);
+}
+
+bool mach_link_dylib(MachLinker* l, const char* path, Array exports) {
+    return mach_link(l, path, true, exports);
+}
+
+bool mach_link(MachLinker* l, const char* path, bool dylib, Array exports) {
+    if (!l->ok) {
+        return false;
+    }
+    if ((!dylib) && (find_mglobal(l, "_main") < 0)) {
+        mk_fail(l, "no main");
+        return false;
+    }
+    const char* stub_src = mach_start_stub();
+    if (dylib) {
+        stub_src = mach_dylib_init();
+    }
+    ObjFile st = assemble(stub_src, "arm64");
+    if (!st.ok) {
+        mk_fail(l, str_concat("start: ", st.err));
+        return false;
+    }
+    (({ __auto_type strata_t2570_ = l; __auto_type strata_t2571_ = macho_bytes((&st)); mach_add(strata_t2570_, "start", strata_t2571_); }));
+    if (!l->ok) {
+        return false;
+    }
+    for (int64_t i = 0; i < exports.len; i++) {
+        if (find_mglobal(l, str_concat("_", ((const char**)(exports).data)[i])) < 0) {
+            mk_fail(l, str_concat(str_concat("exported function '", ((const char**)(exports).data)[i]), "' isn't defined"));
+        }
+    }
+    if (!l->ok) {
+        return false;
+    }
+    find_mach_imports(l);
+    int64_t ni = l->imports.len;
+    const char* base_name = path;
+    for (int64_t i = 0; i < str_len(path); i++) {
+        if ((path[i] == '/') || (path[i] == '\\')) {
+            base_name = str_sub(path, (i + 1), ((str_len(path) - i) - 1));
+        }
+    }
+    int64_t nseg = 4;
+    if (dylib) {
+        nseg = 3;
+    }
+    int64_t text_nsect = 3;
+    int64_t data_nsect = 3;
+    if (dylib) {
+        data_nsect = 4;
+    }
+    int64_t sizeofcmds = ((72 * nseg) + (80 * (text_nsect + data_nsect)));
+    sizeofcmds += (((((48 + 24) + 80) + 24) + 24) + 16);
+    int64_t dylinker_size = lc_str_size(12, "/usr/lib/dyld");
+    const char* id_name = str_concat("@rpath/", base_name);
+    int64_t id_size = lc_str_size(24, id_name);
+    if (dylib) {
+        sizeofcmds += id_size;
+    } else {
+        sizeofcmds += (dylinker_size + 24);
+    }
+    Array dl_size = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < l->dylibs.len; i++) {
+        ({ int64_t _e = lc_str_size(24, ((const char**)(l->dylibs).data)[i]); arr_push(&(dl_size), &_e); });
+        sizeofcmds += ((int64_t*)(dl_size).data)[i];
+    }
+    int64_t ncmds = (((nseg + 6) + l->dylibs.len) + 1);
+    if (!dylib) {
+        ncmds += 1;
+    }
+    for (int64_t k = 0; k < 4; k++) {
+        ({ int64_t _e = 0; arr_push(&(l->osize), &_e); });
+        ({ int64_t _e = 0; arr_push(&(l->oaddr), &_e); });
+    }
+    for (int64_t k = 0; k < l->secs.len; k++) {
+        int64_t out = ((MSec*)(l->secs).data)[k].out;
+        if (out >= 0) {
+            int64_t at = malign(((int64_t*)(l->osize).data)[out], ((MSec*)(l->secs).data)[k].align);
+            ((MSec*)(l->secs).data)[k].at = at;
+            ((int64_t*)(l->osize).data)[out] = (at + ((MSec*)(l->secs).data)[k].size);
+        }
+    }
+    int64_t page = 16384;
+    int64_t base = 4294967296;
+    if (dylib) {
+        base = 0;
+    }
+    int64_t text_off = malign((32 + sizeofcmds), 16);
+    int64_t stubs_off = malign((text_off + ((int64_t*)(l->osize).data)[0]), 4);
+    int64_t const_off = malign((stubs_off + (12 * ni)), 16);
+    int64_t text_end = (const_off + ((int64_t*)(l->osize).data)[1]);
+    int64_t text_size = malign(text_end, page);
+    int64_t data_off = text_size;
+    int64_t got_at = 0;
+    int64_t init_at = (8 * ni);
+    int64_t data_at = init_at;
+    if (dylib) {
+        data_at = (init_at + 8);
+    }
+    data_at = malign(data_at, 16);
+    int64_t data_end = (data_at + ((int64_t*)(l->osize).data)[2]);
+    int64_t bss_at = malign(data_end, 16);
+    int64_t data_filesize = malign(data_end, page);
+    int64_t data_vmsize = malign((bss_at + ((int64_t*)(l->osize).data)[3]), page);
+    if (data_vmsize == 0) {
+        data_vmsize = page;
+    }
+    if (data_filesize == 0) {
+        data_filesize = page;
+    }
+    int64_t link_off = (data_off + data_filesize);
+    ((int64_t*)(l->oaddr).data)[0] = (base + text_off);
+    ((int64_t*)(l->oaddr).data)[1] = (base + const_off);
+    ((int64_t*)(l->oaddr).data)[2] = ((base + data_off) + data_at);
+    ((int64_t*)(l->oaddr).data)[3] = ((base + data_off) + bss_at);
+    int64_t stubs_addr = (base + stubs_off);
+    int64_t got_addr = ((base + data_off) + got_at);
+    for (int64_t i = 0; i < ni; i++) {
+        ((int64_t*)(l->gaddr).data)[find_mglobal(l, ((const char**)(l->imports).data)[i])] = (stubs_addr + (12 * i));
+    }
+    Array text = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array cst = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    Array data = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = 0; i < (const_off - text_off); i++) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(text), &_e); });
+    }
+    for (int64_t i = 0; i < ((int64_t*)(l->osize).data)[1]; i++) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(cst), &_e); });
+    }
+    for (int64_t i = 0; i < data_end; i++) {
+        ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(data), &_e); });
+    }
+    for (int64_t k = 0; k < l->secs.len; k++) {
+        MSec s = ((MSec*)(l->secs).data)[k];
+        if (((s.out >= 0) && (s.out != 3)) && ((s.flags & 255) != 1)) {
+            Array src = ((MObj*)(l->objs).data)[s.obj].b;
+            for (int64_t i = 0; i < s.size; i++) {
+                if (s.out == 0) {
+                    ((uint8_t*)(text).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                } else 
+                if (s.out == 1) {
+                    ((uint8_t*)(cst).data)[(s.at + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                } else {
+                    ((uint8_t*)(data).data)[((data_at + s.at) + i)] = ((uint8_t*)(src).data)[(s.raw + i)];
+                }
+            }
+        }
+    }
+    for (int64_t i = 0; i < ni; i++) {
+        int64_t p = ((stubs_off - text_off) + (12 * i));
+        int64_t pa = (stubs_addr + (12 * i));
+        int64_t slot = (got_addr + (8 * i));
+        int64_t pg = (((slot >> 12) - (pa >> 12)) & 2097151);
+        mput32((&text), p, (((0 - 1879048176) | ((pg & 3) << 29)) | ((pg >> 2) << 5)));
+        mput32((&text), (p + 4), ((0 - 113245680) | (((slot & 4095) >> 3) << 10)));
+        mput32((&text), (p + 8), (0 - 702610944));
+    }
+    Array rebase = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array bind_at = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    Array bind_name = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t i = 0; i < ni; i++) {
+        ({ int64_t _e = (got_at + (8 * i)); arr_push(&(bind_at), &_e); });
+        ({ const char* _e = ((const char**)(l->imports).data)[i]; arr_push(&(bind_name), &_e); });
+    }
+    for (int64_t oi = 0; oi < l->objs.len; oi++) {
+        MObj o = ((MObj*)(l->objs).data)[oi];
+        for (int64_t k = 0; k < o.nsec; k++) {
+            MSec s = ((MSec*)(l->secs).data)[(o.first + k)];
+            if ((s.out >= 0) && (s.out != 3)) {
+                int64_t addend = 0;
+                for (int64_t r = 0; r < s.nreloc; r++) {
+                    int64_t ra = (s.reloff + (8 * r));
+                    int64_t off = md32(o.b, ra);
+                    int64_t info = md32(o.b, (ra + 4));
+                    int64_t symnum = (info & 16777215);
+                    bool ext = (((info >> 27) & 1) == 1);
+                    int64_t typ = ((info >> 28) & 15);
+                    int64_t p = (s.at + off);
+                    int64_t pa = (((int64_t*)(l->oaddr).data)[s.out] + p);
+                    if (typ == 10) {
+                        addend = symnum;
+                        if (addend >= 8388608) {
+                            addend = (addend - 16777216);
+                        }
+                    } else {
+                        const char* tname = "";
+                        int64_t target = 0;
+                        bool is_import = false;
+                        if (ext) {
+                            MSym y = ((MSym*)(o.syms).data)[symnum];
+                            tname = y.name;
+                            target = msym_addr(l, oi, symnum);
+                            int64_t g = find_mglobal(l, y.name);
+                            is_import = ((((y.typ & 14) == 0) && (g >= 0)) && (((int64_t*)(l->gsym).data)[g] < 0));
+                        }
+                        if (typ == 0) {
+                            if ((((info >> 25) & 3) != 3) || (s.out != 2)) {
+                                mk_fail(l, str_concat("a 32-bit / non-data address in ", o.name));
+                            } else {
+                                int64_t dp = (data_at + p);
+                                int64_t v = md64(data, dp);
+                                if (!ext) {
+                                    v = mobj_addr(l, oi, v);
+                                } else 
+                                if (is_import) {
+                                    ({ int64_t _e = dp; arr_push(&(bind_at), &_e); });
+                                    ({ const char* _e = tname; arr_push(&(bind_name), &_e); });
+                                    v = md64(data, dp);
+                                } else {
+                                    v = (target + v);
+                                }
+                                mput64((&data), dp, v);
+                                if (!is_import) {
+                                    ({ int64_t _e = dp; arr_push(&(rebase), &_e); });
+                                }
+                            }
+                        } else 
+                        if (s.out != 0) {
+                            mk_fail(l, str_concat("a code relocation outside __text in ", o.name));
+                        } else {
+                            int64_t w = md32(text, p);
+                            target += addend;
+                            if (typ == 2) {
+                                int64_t d = (target - pa);
+                                if ((d < (0 - 134217728)) || (d >= 134217728)) {
+                                    (({ __auto_type strata_t2572_ = l; __auto_type strata_t2573_ = str_concat("a call too far, to ", strata_name(tname)); mk_fail(strata_t2572_, strata_t2573_); }));
+                                }
+                                w = (w | ((d >> 2) & 67108863));
+                            } else 
+                            if (typ == 3) {
+                                int64_t pg = (((target >> 12) - (pa >> 12)) & 2097151);
+                                w = ((w | ((pg & 3) << 29)) | ((pg >> 2) << 5));
+                            } else 
+                            if (typ == 4) {
+                                int64_t scale = 0;
+                                if ((w & 989855744) == 956301312) {
+                                    scale = ((w >> 30) & 3);
+                                    if ((((w >> 26) & 1) == 1) && (((w >> 23) & 1) == 1)) {
+                                        scale = 4;
+                                    }
+                                }
+                                int64_t lo = (target & 4095);
+                                if ((lo & (((int64_t)1 << scale) - 1)) != 0) {
+                                    (({ __auto_type strata_t2574_ = l; __auto_type strata_t2575_ = str_concat("a misaligned access to ", strata_name(tname)); mk_fail(strata_t2574_, strata_t2575_); }));
+                                }
+                                w = (w | ((lo >> scale) << 10));
+                            } else {
+                                (({ __auto_type strata_t2576_ = l; __auto_type strata_t2577_ = str_concat(str_concat(str_concat("unsupported relocation type ", str_from_int(typ)), " in "), o.name); mk_fail(strata_t2576_, strata_t2577_); }));
+                            }
+                            mput32((&text), p, w);
+                        }
+                        addend = 0;
+                    }
+                }
+            }
+        }
+    }
+    if (!l->ok) {
+        return false;
+    }
+    int64_t entry = 0;
+    if (dylib) {
+        int64_t g = find_mglobal(l, "_strata_dylib_init");
+        (({ __auto_type strata_t2578_ = (&data); __auto_type strata_t2579_ = init_at; __auto_type strata_t2580_ = msym_addr(l, ((int64_t*)(l->gobj).data)[g], ((int64_t*)(l->gsym).data)[g]); mput64(strata_t2578_, strata_t2579_, strata_t2580_); }));
+        ({ int64_t _e = init_at; arr_push(&(rebase), &_e); });
+    } else {
+        int64_t g = find_mglobal(l, "_strata_start");
+        entry = (msym_addr(l, ((int64_t*)(l->gobj).data)[g], ((int64_t*)(l->gsym).data)[g]) - base);
+    }
+    int64_t dseg = 2;
+    if (dylib) {
+        dseg = 1;
+    }
+    Array lb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut le = (MOut){lb};
+    int64_t rebase_off = 0;
+    m8((&le), 17);
+    for (int64_t i = 0; i < rebase.len; i++) {
+        m8((&le), (32 | dseg));
+        uleb((&le), ((int64_t*)(rebase).data)[i]);
+        m8((&le), 81);
+    }
+    m8((&le), 0);
+    mpad((&le), 8);
+    int64_t rebase_size = le.b.len;
+    int64_t bind_off = le.b.len;
+    bool flat = (l->dylibs.len > 1);
+    for (int64_t i = 0; i < bind_at.len; i++) {
+        if (flat) {
+            m8((&le), 62);
+        } else {
+            m8((&le), 17);
+        }
+        m8((&le), 64);
+        for (int64_t j = 0; j < str_len(((const char**)(bind_name).data)[i]); j++) {
+            m8((&le), ((int64_t)(((const char**)(bind_name).data)[i][j])));
+        }
+        m8((&le), 0);
+        m8((&le), 81);
+        m8((&le), (112 | dseg));
+        uleb((&le), ((int64_t*)(bind_at).data)[i]);
+        m8((&le), 144);
+    }
+    m8((&le), 0);
+    mpad((&le), 8);
+    int64_t bind_size = (le.b.len - bind_off);
+    int64_t export_off = le.b.len;
+    Array enames = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    Array eaddrs = ({ Array _a = arr_make(sizeof(int64_t)); _a; });
+    for (int64_t i = 0; i < exports.len; i++) {
+        int64_t g = find_mglobal(l, str_concat("_", ((const char**)(exports).data)[i]));
+        ({ const char* _e = str_concat("_", ((const char**)(exports).data)[i]); arr_push(&(enames), &_e); });
+        ({ int64_t _e = (msym_addr(l, ((int64_t*)(l->gobj).data)[g], ((int64_t*)(l->gsym).data)[g]) - base); arr_push(&(eaddrs), &_e); });
+    }
+    if (!dylib) {
+        int64_t g = find_mglobal(l, "_main");
+        ({ const char* _e = "_main"; arr_push(&(enames), &_e); });
+        ({ int64_t _e = (msym_addr(l, ((int64_t*)(l->gobj).data)[g], ((int64_t*)(l->gsym).data)[g]) - base); arr_push(&(eaddrs), &_e); });
+    }
+    (({ __auto_type strata_t2581_ = (&le); __auto_type strata_t2582_ = export_trie(enames, eaddrs); mbytes(strata_t2581_, strata_t2582_); }));
+    int64_t export_size = (le.b.len - export_off);
+    int64_t sym_off = le.b.len;
+    Array sb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MStr strs = (MStr){sb};
+    ({ uint8_t _e = ((uint8_t)(32)); arr_push(&(strs.b), &_e); });
+    ({ uint8_t _e = ((uint8_t)(0)); arr_push(&(strs.b), &_e); });
+    for (int64_t i = 0; i < enames.len; i++) {
+        (({ __auto_type strata_t2583_ = (&le); __auto_type strata_t2584_ = mstr_add((&strs), ((const char**)(enames).data)[i]); m32(strata_t2583_, strata_t2584_); }));
+        m8((&le), 15);
+        m8((&le), 1);
+        m16((&le), 0);
+        m64((&le), (((int64_t*)(eaddrs).data)[i] + base));
+    }
+    int64_t str_off = le.b.len;
+    mbytes((&le), strs.b);
+    mpad((&le), 16);
+    int64_t sig_off = le.b.len;
+    int64_t code_limit = (link_off + sig_off);
+    int64_t nslots = ((code_limit + 4095) / 4096);
+    int64_t ident_len = (str_len(base_name) + 1);
+    int64_t cd_len = ((88 + ident_len) + (32 * nslots));
+    int64_t sig_len = malign((20 + cd_len), 16);
+    int64_t link_filesize = (sig_off + sig_len);
+    int64_t link_vmsize = malign(link_filesize, page);
+    Array hb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut o = (MOut){hb};
+    m32((&o), 4277009103);
+    (({ __auto_type strata_t2585_ = (&o); __auto_type strata_t2586_ = cpu_arm64(); m32(strata_t2585_, strata_t2586_); }));
+    m32((&o), 0);
+    if (dylib) {
+        m32((&o), 6);
+    } else {
+        m32((&o), 2);
+    }
+    m32((&o), ncmds);
+    m32((&o), sizeofcmds);
+    if (dylib) {
+        m32((&o), 1048709);
+    } else {
+        m32((&o), 2097285);
+    }
+    m32((&o), 0);
+    int64_t vm = base;
+    if (!dylib) {
+        m32((&o), 25);
+        m32((&o), 72);
+        mname16((&o), "__PAGEZERO");
+        m64((&o), 0);
+        m64((&o), base);
+        m64((&o), 0);
+        m64((&o), 0);
+        m32((&o), 0);
+        m32((&o), 0);
+        m32((&o), 0);
+        m32((&o), 0);
+    }
+    m32((&o), 25);
+    m32((&o), (72 + (80 * text_nsect)));
+    mname16((&o), "__TEXT");
+    m64((&o), base);
+    m64((&o), text_size);
+    m64((&o), 0);
+    m64((&o), text_size);
+    m32((&o), 5);
+    m32((&o), 5);
+    m32((&o), text_nsect);
+    m32((&o), 0);
+    mname16((&o), "__text");
+    mname16((&o), "__TEXT");
+    m64((&o), (base + text_off));
+    m64((&o), ((int64_t*)(l->osize).data)[0]);
+    m32((&o), text_off);
+    m32((&o), 4);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), (0 - 2147482624));
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    mname16((&o), "__stubs");
+    mname16((&o), "__TEXT");
+    m64((&o), stubs_addr);
+    m64((&o), (12 * ni));
+    m32((&o), stubs_off);
+    m32((&o), 2);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), (0 - 2147482624));
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    mname16((&o), "__const");
+    mname16((&o), "__TEXT");
+    m64((&o), (base + const_off));
+    m64((&o), ((int64_t*)(l->osize).data)[1]);
+    m32((&o), const_off);
+    m32((&o), 4);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 25);
+    m32((&o), (72 + (80 * data_nsect)));
+    mname16((&o), "__DATA");
+    m64((&o), (base + data_off));
+    m64((&o), data_vmsize);
+    m64((&o), data_off);
+    m64((&o), data_filesize);
+    m32((&o), 3);
+    m32((&o), 3);
+    m32((&o), data_nsect);
+    m32((&o), 0);
+    mname16((&o), "__got");
+    mname16((&o), "__DATA");
+    m64((&o), got_addr);
+    m64((&o), (8 * ni));
+    m32((&o), (data_off + got_at));
+    m32((&o), 3);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    if (dylib) {
+        mname16((&o), "__mod_init_func");
+        mname16((&o), "__DATA");
+        m64((&o), ((base + data_off) + init_at));
+        m64((&o), 8);
+        m32((&o), (data_off + init_at));
+        m32((&o), 3);
+        m32((&o), 0);
+        m32((&o), 0);
+        m32((&o), 9);
+        m32((&o), 0);
+        m32((&o), 0);
+        m32((&o), 0);
+    }
+    mname16((&o), "__data");
+    mname16((&o), "__DATA");
+    m64((&o), ((int64_t*)(l->oaddr).data)[2]);
+    m64((&o), ((int64_t*)(l->osize).data)[2]);
+    m32((&o), (data_off + data_at));
+    m32((&o), 4);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    mname16((&o), "__bss");
+    mname16((&o), "__DATA");
+    m64((&o), ((int64_t*)(l->oaddr).data)[3]);
+    m64((&o), ((int64_t*)(l->osize).data)[3]);
+    m32((&o), 0);
+    m32((&o), 4);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 1);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 25);
+    m32((&o), 72);
+    mname16((&o), "__LINKEDIT");
+    m64((&o), (base + link_off));
+    m64((&o), link_vmsize);
+    m64((&o), link_off);
+    m64((&o), link_filesize);
+    m32((&o), 1);
+    m32((&o), 1);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 2147483682);
+    m32((&o), 48);
+    m32((&o), (link_off + rebase_off));
+    m32((&o), rebase_size);
+    m32((&o), (link_off + bind_off));
+    m32((&o), bind_size);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), (link_off + export_off));
+    m32((&o), export_size);
+    m32((&o), 2);
+    m32((&o), 24);
+    m32((&o), (link_off + sym_off));
+    m32((&o), enames.len);
+    m32((&o), (link_off + str_off));
+    m32((&o), strs.b.len);
+    m32((&o), 11);
+    m32((&o), 80);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), 0);
+    m32((&o), enames.len);
+    m32((&o), enames.len);
+    m32((&o), 0);
+    mzero((&o), 48);
+    if (dylib) {
+        m32((&o), 13);
+        m32((&o), id_size);
+        m32((&o), 24);
+        m32((&o), 2);
+        m32((&o), 65536);
+        m32((&o), 65536);
+        lc_str((&o), id_name, id_size, 24);
+    } else {
+        m32((&o), 14);
+        m32((&o), dylinker_size);
+        m32((&o), 12);
+        lc_str((&o), "/usr/lib/dyld", dylinker_size, 12);
+    }
+    Array idb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut id = (MOut){idb};
+    Array both = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    for (int64_t i = 0; i < text.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(text).data)[i]; arr_push(&(both), &_e); });
+    }
+    for (int64_t i = 0; i < data.len; i++) {
+        ({ uint8_t _e = ((uint8_t*)(data).data)[i]; arr_push(&(both), &_e); });
+    }
+    sha256(both, 0, both.len, (&id));
+    m32((&o), 27);
+    m32((&o), 24);
+    for (int64_t i = 0; i < 16; i++) {
+        if (i == 6) {
+            m8((&o), ((((int64_t)(((uint8_t*)(id.b).data)[i])) & 15) | 64));
+        } else 
+        if (i == 8) {
+            m8((&o), ((((int64_t)(((uint8_t*)(id.b).data)[i])) & 63) | 128));
+        } else {
+            m8((&o), ((int64_t)(((uint8_t*)(id.b).data)[i])));
+        }
+    }
+    m32((&o), 50);
+    m32((&o), 24);
+    m32((&o), 1);
+    m32((&o), 720896);
+    m32((&o), 720896);
+    m32((&o), 0);
+    if (!dylib) {
+        m32((&o), 2147483688);
+        m32((&o), 24);
+        m64((&o), entry);
+        m64((&o), 0);
+    }
+    for (int64_t i = 0; i < l->dylibs.len; i++) {
+        m32((&o), 12);
+        m32((&o), ((int64_t*)(dl_size).data)[i]);
+        m32((&o), 24);
+        m32((&o), 2);
+        m32((&o), 65536);
+        m32((&o), 65536);
+        lc_str((&o), ((const char**)(l->dylibs).data)[i], ((int64_t*)(dl_size).data)[i], 24);
+    }
+    m32((&o), 29);
+    m32((&o), 16);
+    m32((&o), (link_off + sig_off));
+    m32((&o), sig_len);
+    if (o.b.len != (32 + sizeofcmds)) {
+        (({ __auto_type strata_t2587_ = l; __auto_type strata_t2588_ = (({ __auto_type strata_t2589_ = str_concat(str_concat("internal: load commands are ", str_from_int((o.b.len - 32))), " bytes, not "); __auto_type strata_t2590_ = str_from_int(sizeofcmds); str_concat(strata_t2589_, strata_t2590_); })); mk_fail(strata_t2587_, strata_t2588_); }));
+        return false;
+    }
+    while (o.b.len < text_off) {
+        m8((&o), 0);
+    }
+    mbytes((&o), text);
+    mbytes((&o), cst);
+    while (o.b.len < data_off) {
+        m8((&o), 0);
+    }
+    mbytes((&o), data);
+    while (o.b.len < link_off) {
+        m8((&o), 0);
+    }
+    mbytes((&o), le.b);
+    mbe32((&o), 4208856256);
+    mbe32((&o), (20 + cd_len));
+    mbe32((&o), 1);
+    mbe32((&o), 0);
+    mbe32((&o), 20);
+    mbe32((&o), 4208856066);
+    mbe32((&o), cd_len);
+    mbe32((&o), 132096);
+    mbe32((&o), 131074);
+    mbe32((&o), (88 + ident_len));
+    mbe32((&o), 88);
+    mbe32((&o), 0);
+    mbe32((&o), nslots);
+    mbe32((&o), code_limit);
+    m8((&o), 32);
+    m8((&o), 2);
+    m8((&o), 0);
+    m8((&o), 12);
+    mbe32((&o), 0);
+    mbe32((&o), 0);
+    mbe32((&o), 0);
+    mbe32((&o), 0);
+    mbe64((&o), 0);
+    mbe64((&o), 0);
+    mbe64((&o), text_size);
+    if (dylib) {
+        mbe64((&o), 0);
+    } else {
+        mbe64((&o), 1);
+    }
+    for (int64_t i = 0; i < str_len(base_name); i++) {
+        m8((&o), ((int64_t)(base_name[i])));
+    }
+    m8((&o), 0);
+    Array hsb = ({ Array _a = arr_make(sizeof(uint8_t)); _a; });
+    MOut hs = (MOut){hsb};
+    for (int64_t s = 0; s < nslots; s++) {
+        int64_t from = (4096 * s);
+        int64_t n = 4096;
+        if ((from + n) > code_limit) {
+            n = (code_limit - from);
+        }
+        sha256(o.b, from, n, (&hs));
+    }
+    mbytes((&o), hs.b);
+    while (o.b.len < (link_off + link_filesize)) {
+        m8((&o), 0);
+    }
+    if (!strata_write_bytes(path, (&o.b))) {
+        mk_fail(l, str_concat("cannot write ", path));
+        return false;
+    }
+    if (!str_eq(strata_host_os(), "windows")) {
+        Array chmod = ({ Array _a = arr_make(sizeof(const char*)); { const char* _e = "chmod"; arr_push(&_a, &_e); } { const char* _e = "+x"; arr_push(&_a, &_e); } { const char* _e = path; arr_push(&_a, &_e); } _a; });
+        strata_run_argv((&chmod));
+    }
+    return true;
+}
+
+Link new_link(const char* os) {
+    return (({ __auto_type strata_t2591_ = os; __auto_type strata_t2592_ = new_linker(); __auto_type strata_t2593_ = new_elf_linker(); __auto_type strata_t2594_ = new_mach_linker(); (Link){strata_t2591_, strata_t2592_, strata_t2593_, strata_t2594_}; }));
+}
+
+const char* link_target_why(const char* os) {
+    if ((str_eq(os, "windows") || str_eq(os, "linux")) || str_eq(os, "macos")) {
+        return "";
+    }
+    return str_concat(str_concat("Strata's linker makes Windows, Linux and macOS programs (this is ", os), ")");
+}
+
+Array object_bytes(const char* os, ObjFile* o) {
+    if (str_eq(os, "linux")) {
+        return elf_bytes(o);
+    }
+    if (str_eq(os, "macos")) {
+        return macho_bytes(o);
+    }
+    return coff_bytes(o);
+}
+
+bool write_object(const char* os, const char* path, ObjFile* o) {
+    if (str_eq(os, "linux")) {
+        return write_elf(path, o);
+    }
+    if (str_eq(os, "macos")) {
+        return write_macho(path, o);
+    }
+    return write_coff(path, o);
+}
+
+void link_object(Link* k, const char* name, Array bytes) {
+    if (str_eq(k->os, "linux")) {
+        elf_add(k->lin, name, bytes);
+    } else 
+    if (str_eq(k->os, "macos")) {
+        mach_add(k->mac, name, bytes);
+    } else {
+        link_add(k->win, name, bytes);
+    }
+}
+
+bool link_lib(Link* k, const char* name, Array dirs) {
+    if (str_eq(k->os, "linux")) {
+        return elf_library(k->lin, name, dirs);
+    }
+    if (str_eq(k->os, "macos")) {
+        return mach_library(k->mac, name, dirs);
+    }
+    return link_library(k->win, name, dirs);
+}
+
+Array link_lib_paths(Link* k) {
+    if (str_eq(k->os, "linux")) {
+        return k->lin->needed;
+    }
+    if (str_eq(k->os, "macos")) {
+        return k->mac->dylibs;
+    }
+    return k->win->dll_path;
+}
+
+bool link_failed(Link* k) {
+    if (str_eq(k->os, "linux")) {
+        return (!k->lin->ok);
+    }
+    if (str_eq(k->os, "macos")) {
+        return (!k->mac->ok);
+    }
+    return (!k->win->ok);
+}
+
+const char* link_error(Link* k) {
+    if (str_eq(k->os, "linux")) {
+        return k->lin->err;
+    }
+    if (str_eq(k->os, "macos")) {
+        return k->mac->err;
+    }
+    return k->win->err;
+}
+
+bool link_program(Link* k, const char* out, bool dll, Array exports) {
+    if (str_eq(k->os, "linux")) {
+        if (!k->lin->ok) {
+            return false;
+        }
+        if (dll) {
+            return elf_link_so(k->lin, out, exports);
+        }
+        return elf_link_exe(k->lin, out);
+    }
+    if (str_eq(k->os, "macos")) {
+        if (!k->mac->ok) {
+            return false;
+        }
+        if (dll) {
+            return mach_link_dylib(k->mac, out, exports);
+        }
+        return mach_link_exe(k->mac, out);
+    }
+    if (!k->win->ok) {
+        return false;
+    }
+    if (!dll) {
+        return link_exe(k->win, out);
+    }
+    if (!link_dll(k->win, out, exports)) {
+        return false;
+    }
+    const char* stem = out;
+    if ((str_len(stem) > 4) && str_eq(str_sub(stem, (str_len(stem) - 4), 4), ".dll")) {
+        stem = str_sub(stem, 0, (str_len(stem) - 4));
+    }
+    const char* base = out;
+    for (int64_t i = 0; i < str_len(out); i++) {
+        if ((out[i] == '/') || (out[i] == '\\')) {
+            base = str_sub(out, (i + 1), ((str_len(out) - i) - 1));
+        }
+    }
+    Array implib = import_library(base, exports);
+    strata_write_bytes(str_concat(stem, ".dll.a"), (&implib));
+    strata_write_bytes(str_concat(stem, ".lib"), (&implib));
+    return true;
+}
+
 bool is_text_kind(TokKind k) {
     switch (k) {
         case TkIdent:
@@ -14636,10 +22111,10 @@ const char* pad_right(const char* s, int64_t w) {
 }
 
 void print_token(Token t) {
-    const char* loc = (({ __auto_type strata_t1544_ = str_concat(pad_left(str_from_int(t.line), 3), ":"); __auto_type strata_t1545_ = pad_right(str_from_int(t.col), 3); str_concat(strata_t1544_, strata_t1545_); }));
+    const char* loc = (({ __auto_type strata_t2595_ = str_concat(pad_left(str_from_int(t.line), 3), ":"); __auto_type strata_t2596_ = pad_right(str_from_int(t.col), 3); str_concat(strata_t2595_, strata_t2596_); }));
     const char* name = kind_name(t.kind);
     if (is_text_kind(t.kind)) {
-        printf("%s\n", str_concat(str_concat((({ __auto_type strata_t1546_ = str_concat(loc, "  "); __auto_type strata_t1547_ = pad_right(name, 8); str_concat(strata_t1546_, strata_t1547_); })), "  "), t.text));
+        printf("%s\n", str_concat(str_concat((({ __auto_type strata_t2597_ = str_concat(loc, "  "); __auto_type strata_t2598_ = pad_right(name, 8); str_concat(strata_t2597_, strata_t2598_); })), "  "), t.text));
     } else {
         printf("%s\n", str_concat(str_concat(loc, "  "), name));
     }
@@ -14663,6 +22138,13 @@ void pr(int64_t ind, const char* s) {
     printf("%s\n", str_concat(repeat2(ind), s));
 }
 
+const char* ast_elem_str(TypeNode* t) {
+    if ((t != 0) && (t->kind == TyFunc)) {
+        return str_concat(str_concat("(", ast_type_str(t)), ")");
+    }
+    return ast_type_str(t);
+}
+
 const char* ast_type_str(TypeNode* t) {
     if (t == 0) {
         return "<none>";
@@ -14675,22 +22157,42 @@ const char* ast_type_str(TypeNode* t) {
         }
         case TyArray:
         {
-            return str_concat(ast_type_str(t->elem), "[]");
+            return str_concat(ast_elem_str(t->elem), "[]");
             break;
         }
         case TyFixedArray:
         {
-            return str_concat(str_concat(str_concat(ast_type_str(t->elem), "["), t->size), "]");
+            return str_concat(str_concat(str_concat(ast_elem_str(t->elem), "["), t->size), "]");
             break;
         }
         case TyDynArray:
         {
-            return str_concat(ast_type_str(t->elem), "[dynamic]");
+            return str_concat(ast_elem_str(t->elem), "[dynamic]");
             break;
         }
         case TyPointer:
         {
-            return str_concat(ast_type_str(t->elem), "*");
+            return str_concat(ast_elem_str(t->elem), "*");
+            break;
+        }
+        case TyFunc:
+        {
+            {
+                const char* s = "fn(";
+                TypeNode* a = t->args;
+                while (a != 0) {
+                    s = (({ __auto_type strata_t2599_ = s; __auto_type strata_t2600_ = ast_type_str(a); str_concat(strata_t2599_, strata_t2600_); }));
+                    if (a->next != 0) {
+                        s = str_concat(s, ", ");
+                    }
+                    a = a->next;
+                }
+                s = str_concat(s, ")");
+                if (t->elem != 0) {
+                    s = (({ __auto_type strata_t2601_ = str_concat(s, " -> "); __auto_type strata_t2602_ = ast_type_str(t->elem); str_concat(strata_t2601_, strata_t2602_); }));
+                }
+                return s;
+            }
             break;
         }
     }
@@ -14798,13 +22300,13 @@ void pr_expr(int64_t ind, Expr* e) {
         }
         case ExCast:
         {
-            (({ __auto_type strata_t1548_ = ind; __auto_type strata_t1549_ = str_concat("Cast ", ast_type_str(e->type)); pr(strata_t1548_, strata_t1549_); }));
+            (({ __auto_type strata_t2603_ = ind; __auto_type strata_t2604_ = str_concat("Cast ", ast_type_str(e->type)); pr(strata_t2603_, strata_t2604_); }));
             pr_expr((ind + 1), e->a);
             break;
         }
         case ExSizeof:
         {
-            (({ __auto_type strata_t1550_ = ind; __auto_type strata_t1551_ = str_concat("Sizeof ", ast_type_str(e->type)); pr(strata_t1550_, strata_t1551_); }));
+            (({ __auto_type strata_t2605_ = ind; __auto_type strata_t2606_ = str_concat("Sizeof ", ast_type_str(e->type)); pr(strata_t2605_, strata_t2606_); }));
             break;
         }
         default: {
@@ -14838,7 +22340,7 @@ void pr_stmt(int64_t ind, Stmt* s) {
                 if (s->type == 0) {
                     head = str_concat(head, "var");
                 } else {
-                    head = (({ __auto_type strata_t1552_ = head; __auto_type strata_t1553_ = ast_type_str(s->type); str_concat(strata_t1552_, strata_t1553_); }));
+                    head = (({ __auto_type strata_t2607_ = head; __auto_type strata_t2608_ = ast_type_str(s->type); str_concat(strata_t2607_, strata_t2608_); }));
                 }
                 head = str_concat(str_concat(head, " "), s->name);
                 pr(ind, head);
@@ -14956,12 +22458,12 @@ void pr_decl(Decl* d) {
         case DcFunc:
         {
             {
-                const char* head = str_concat(str_concat(str_concat((({ __auto_type strata_t1554_ = str_concat(ex, "Func "); __auto_type strata_t1555_ = ast_type_str(d->ret); str_concat(strata_t1554_, strata_t1555_); })), " "), d->name), "(");
+                const char* head = str_concat(str_concat(str_concat((({ __auto_type strata_t2609_ = str_concat(ex, "Func "); __auto_type strata_t2610_ = ast_type_str(d->ret); str_concat(strata_t2609_, strata_t2610_); })), " "), d->name), "(");
                 for (int64_t i = 0; i < d->params.len; i++) {
                     if (i > 0) {
                         head = str_concat(head, ", ");
                     }
-                    head = str_concat(str_concat((({ __auto_type strata_t1556_ = head; __auto_type strata_t1557_ = ast_type_str(((Param*)(d->params).data)[i].type); str_concat(strata_t1556_, strata_t1557_); })), " "), ((Param*)(d->params).data)[i].name);
+                    head = str_concat(str_concat((({ __auto_type strata_t2611_ = head; __auto_type strata_t2612_ = ast_type_str(((Param*)(d->params).data)[i].type); str_concat(strata_t2611_, strata_t2612_); })), " "), ((Param*)(d->params).data)[i].name);
                 }
                 head = str_concat(head, ")");
                 if (d->is_foreign) {
@@ -14975,7 +22477,7 @@ void pr_decl(Decl* d) {
         }
         case DcGlobal:
         {
-            pr(0, str_concat(str_concat((({ __auto_type strata_t1558_ = str_concat(ex, "Global "); __auto_type strata_t1559_ = ast_type_str(d->ret); str_concat(strata_t1558_, strata_t1559_); })), " "), d->name));
+            pr(0, str_concat(str_concat((({ __auto_type strata_t2613_ = str_concat(ex, "Global "); __auto_type strata_t2614_ = ast_type_str(d->ret); str_concat(strata_t2613_, strata_t2614_); })), " "), d->name));
             if (d->init != 0) {
                 pr_expr(1, d->init);
             }
@@ -14983,7 +22485,7 @@ void pr_decl(Decl* d) {
         }
         case DcConst:
         {
-            pr(0, str_concat(str_concat((({ __auto_type strata_t1560_ = str_concat(ex, "Foreign Const "); __auto_type strata_t1561_ = ast_type_str(d->ret); str_concat(strata_t1560_, strata_t1561_); })), " "), d->name));
+            pr(0, str_concat(str_concat((({ __auto_type strata_t2615_ = str_concat(ex, "Foreign Const "); __auto_type strata_t2616_ = ast_type_str(d->ret); str_concat(strata_t2615_, strata_t2616_); })), " "), d->name));
             pr_expr(1, d->init);
             break;
         }
@@ -15088,7 +22590,7 @@ const char* strip_comment(const char* s) {
 
 void toml_error(Toml* t, const char* msg) {
     t->p.ok = false;
-    strata_report(str_concat(str_concat((({ __auto_type strata_t1562_ = str_concat(t->fname, ":"); __auto_type strata_t1563_ = str_from_int(t->line); str_concat(strata_t1562_, strata_t1563_); })), ": error: "), msg));
+    strata_report(str_concat(str_concat((({ __auto_type strata_t2617_ = str_concat(t->fname, ":"); __auto_type strata_t2618_ = str_from_int(t->line); str_concat(strata_t2617_, strata_t2618_); })), ": error: "), msg));
 }
 
 const char* toml_string(Toml* t, const char* v) {
@@ -15100,10 +22602,10 @@ const char* toml_string(Toml* t, const char* v) {
     int64_t i = 1;
     while (i < (str_len(v) - 1)) {
         if ((v[i] == '\\') && ((i + 1) < (str_len(v) - 1))) {
-            r = (({ __auto_type strata_t1564_ = r; __auto_type strata_t1565_ = str_sub(v, (i + 1), 1); str_concat(strata_t1564_, strata_t1565_); }));
+            r = (({ __auto_type strata_t2619_ = r; __auto_type strata_t2620_ = str_sub(v, (i + 1), 1); str_concat(strata_t2619_, strata_t2620_); }));
             i += 2;
         } else {
-            r = (({ __auto_type strata_t1566_ = r; __auto_type strata_t1567_ = str_sub(v, i, 1); str_concat(strata_t1566_, strata_t1567_); }));
+            r = (({ __auto_type strata_t2621_ = r; __auto_type strata_t2622_ = str_sub(v, i, 1); str_concat(strata_t2621_, strata_t2622_); }));
             i += 1;
         }
     }
@@ -15136,15 +22638,15 @@ Array toml_array(Toml* t, const char* v) {
         }
         if ((c == ',') && (!in_str)) {
             if (!str_eq(project__trim(item), "")) {
-                ({ const char* _e = (({ __auto_type strata_t1568_ = t; __auto_type strata_t1569_ = project__trim(item); toml_string(strata_t1568_, strata_t1569_); })); arr_push(&(out), &_e); });
+                ({ const char* _e = (({ __auto_type strata_t2623_ = t; __auto_type strata_t2624_ = project__trim(item); toml_string(strata_t2623_, strata_t2624_); })); arr_push(&(out), &_e); });
             }
             item = "";
         } else {
-            item = (({ __auto_type strata_t1570_ = item; __auto_type strata_t1571_ = str_sub(body, i, 1); str_concat(strata_t1570_, strata_t1571_); }));
+            item = (({ __auto_type strata_t2625_ = item; __auto_type strata_t2626_ = str_sub(body, i, 1); str_concat(strata_t2625_, strata_t2626_); }));
         }
     }
     if (!str_eq(project__trim(item), "")) {
-        ({ const char* _e = (({ __auto_type strata_t1572_ = t; __auto_type strata_t1573_ = project__trim(item); toml_string(strata_t1572_, strata_t1573_); })); arr_push(&(out), &_e); });
+        ({ const char* _e = (({ __auto_type strata_t2627_ = t; __auto_type strata_t2628_ = project__trim(item); toml_string(strata_t2627_, strata_t2628_); })); arr_push(&(out), &_e); });
     }
     return out;
 }
@@ -15225,7 +22727,7 @@ void toml_key(Toml* t, const char* key, const char* v) {
         toml_build_key(t, key, v, false, true);
     } else 
     if ((str_eq(sec, "windows") || str_eq(sec, "linux")) || str_eq(sec, "macos")) {
-        (({ __auto_type strata_t1574_ = t; __auto_type strata_t1575_ = key; __auto_type strata_t1576_ = v; __auto_type strata_t1577_ = (({ __auto_type strata_t1578_ = sec; __auto_type strata_t1579_ = host_os(); str_eq(strata_t1578_, strata_t1579_); })); toml_build_key(strata_t1574_, strata_t1575_, strata_t1576_, true, strata_t1577_); }));
+        (({ __auto_type strata_t2629_ = t; __auto_type strata_t2630_ = key; __auto_type strata_t2631_ = v; __auto_type strata_t2632_ = (({ __auto_type strata_t2633_ = sec; __auto_type strata_t2634_ = target_os(); str_eq(strata_t2633_, strata_t2634_); })); toml_build_key(strata_t2629_, strata_t2630_, strata_t2631_, true, strata_t2632_); }));
     } else 
     if (str_eq(sec, "")) {
         toml_error(t, str_concat(str_concat("'", key), "' must be inside a section such as [project]"));
@@ -15239,8 +22741,8 @@ Project load_project(const char* path) {
     Array l = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array cs = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     Array fw = ({ Array _a = arr_make(sizeof(const char*)); _a; });
-    Project p = (({ __auto_type strata_t1580_ = path; __auto_type strata_t1581_ = dirname_of(path); (Project){true, strata_t1580_, strata_t1581_, "", "", "src/main.strata", "exe", "build", false, d, i, ld, l, cs, fw, true}; }));
-    Toml t = (({ __auto_type strata_t1582_ = p; __auto_type strata_t1583_ = basename_of(path); (Toml){strata_t1582_, "", 0, strata_t1583_}; }));
+    Project p = (({ __auto_type strata_t2635_ = path; __auto_type strata_t2636_ = dirname_of(path); (Project){true, strata_t2635_, strata_t2636_, "", "", "src/main.strata", "exe", "build", false, d, i, ld, l, cs, fw, true}; }));
+    Toml t = (({ __auto_type strata_t2637_ = p; __auto_type strata_t2638_ = basename_of(path); (Toml){strata_t2637_, "", 0, strata_t2638_}; }));
     const char* src = strata_read_file(path);
     if (str_len(src) == 0) {
         strata_report(str_concat(str_concat(str_concat(basename_of(path), ": error: cannot read the project file ("), path), ")"));
@@ -15254,7 +22756,7 @@ Project load_project(const char* path) {
             ({ const char* _e = cur; arr_push(&(lines), &_e); });
             cur = "";
         } else {
-            cur = (({ __auto_type strata_t1584_ = cur; __auto_type strata_t1585_ = str_sub(src, k, 1); str_concat(strata_t1584_, strata_t1585_); }));
+            cur = (({ __auto_type strata_t2639_ = cur; __auto_type strata_t2640_ = str_sub(src, k, 1); str_concat(strata_t2639_, strata_t2640_); }));
         }
     }
     ({ const char* _e = cur; arr_push(&(lines), &_e); });
@@ -15289,7 +22791,7 @@ Project load_project(const char* path) {
                 const char* val = project__trim(str_sub(ln, (eq + 1), ((str_len(ln) - eq) - 1)));
                 if ((str_len(val) > 0) && (val[0] == '[')) {
                     while ((val[(str_len(val) - 1)] != ']') && (n < lines.len)) {
-                        val = (({ __auto_type strata_t1586_ = str_concat(val, " "); __auto_type strata_t1587_ = project__trim(strip_comment(((const char**)(lines).data)[n])); str_concat(strata_t1586_, strata_t1587_); }));
+                        val = (({ __auto_type strata_t2641_ = str_concat(val, " "); __auto_type strata_t2642_ = project__trim(strip_comment(((const char**)(lines).data)[n])); str_concat(strata_t2641_, strata_t2642_); }));
                         n += 1;
                     }
                 }
@@ -15310,14 +22812,14 @@ Array no_strings(void) {
 }
 
 const char* exe_ext(void) {
-    if (str_eq(host_os(), "windows")) {
+    if (str_eq(target_os(), "windows")) {
         return ".exe";
     }
     return "";
 }
 
 const char* dll_ext(void) {
-    const char* os = host_os();
+    const char* os = target_os();
     if (str_eq(os, "windows")) {
         return ".dll";
     }
@@ -15329,7 +22831,7 @@ const char* dll_ext(void) {
 
 BuildSpec spec_for_file(const char* path, const char* version, bool quiet) {
     const char* stem = stem_of(path);
-    return (({ __auto_type strata_t1588_ = path; __auto_type strata_t1589_ = str_concat(stem, ".c"); __auto_type strata_t1590_ = (({ __auto_type strata_t1591_ = stem; __auto_type strata_t1592_ = exe_ext(); str_concat(strata_t1591_, strata_t1592_); })); __auto_type strata_t1593_ = no_strings(); __auto_type strata_t1594_ = no_strings(); __auto_type strata_t1595_ = no_strings(); __auto_type strata_t1596_ = no_strings(); __auto_type strata_t1597_ = no_strings(); __auto_type strata_t1598_ = no_strings(); (BuildSpec){strata_t1588_, strata_t1589_, strata_t1590_, false, true, strata_t1593_, strata_t1594_, strata_t1595_, strata_t1596_, strata_t1597_, strata_t1598_, "", false, quiet, version, false, "auto"}; }));
+    return (({ __auto_type strata_t2643_ = path; __auto_type strata_t2644_ = str_concat(stem, ".c"); __auto_type strata_t2645_ = (({ __auto_type strata_t2646_ = stem; __auto_type strata_t2647_ = exe_ext(); str_concat(strata_t2646_, strata_t2647_); })); __auto_type strata_t2648_ = no_strings(); __auto_type strata_t2649_ = no_strings(); __auto_type strata_t2650_ = no_strings(); __auto_type strata_t2651_ = no_strings(); __auto_type strata_t2652_ = no_strings(); __auto_type strata_t2653_ = no_strings(); (BuildSpec){strata_t2643_, strata_t2644_, strata_t2645_, false, true, strata_t2648_, strata_t2649_, strata_t2650_, strata_t2651_, strata_t2652_, strata_t2653_, "", false, quiet, version, false, "auto"}; }));
 }
 
 BuildSpec spec_for_project(Project p, const char* version, bool release, bool force, bool quiet) {
@@ -15339,7 +22841,7 @@ BuildSpec spec_for_project(Project p, const char* version, bool release, bool fo
     if (str_eq(p.output, "dll")) {
         ext = dll_ext();
     }
-    BuildSpec s = (({ __auto_type strata_t1599_ = str_concat(str_concat(root, "/"), p.entry); __auto_type strata_t1600_ = str_concat(str_concat(str_concat(out, "/"), p.name), ".c"); __auto_type strata_t1601_ = str_concat(str_concat(str_concat(out, "/"), p.name), ext); __auto_type strata_t1602_ = str_eq(p.output, "dll"); __auto_type strata_t1603_ = (release || p.release); __auto_type strata_t1604_ = p.defines; __auto_type strata_t1605_ = no_strings(); __auto_type strata_t1606_ = no_strings(); __auto_type strata_t1607_ = p.libs; __auto_type strata_t1608_ = no_strings(); (BuildSpec){strata_t1599_, strata_t1600_, strata_t1601_, strata_t1602_, strata_t1603_, strata_t1604_, strata_t1605_, strata_t1606_, strata_t1607_, strata_t1608_, p.frameworks, str_concat(out, "/.strata-cache"), force, quiet, version, p.split, "auto"}; }));
+    BuildSpec s = (({ __auto_type strata_t2654_ = str_concat(str_concat(root, "/"), p.entry); __auto_type strata_t2655_ = str_concat(str_concat(str_concat(out, "/"), p.name), ".c"); __auto_type strata_t2656_ = str_concat(str_concat(str_concat(out, "/"), p.name), ext); __auto_type strata_t2657_ = str_eq(p.output, "dll"); __auto_type strata_t2658_ = (release || p.release); __auto_type strata_t2659_ = p.defines; __auto_type strata_t2660_ = no_strings(); __auto_type strata_t2661_ = no_strings(); __auto_type strata_t2662_ = p.libs; __auto_type strata_t2663_ = no_strings(); (BuildSpec){strata_t2654_, strata_t2655_, strata_t2656_, strata_t2657_, strata_t2658_, strata_t2659_, strata_t2660_, strata_t2661_, strata_t2662_, strata_t2663_, p.frameworks, str_concat(out, "/.strata-cache"), force, quiet, version, p.split, "auto"}; }));
     for (int64_t i = 0; i < p.include_dirs.len; i++) {
         ({ const char* _e = str_concat(str_concat(root, "/"), ((const char**)(p.include_dirs).data)[i]); arr_push(&(s.include_dirs), &_e); });
     }
@@ -15359,7 +22861,7 @@ const char* win_path(const char* p) {
         if (p[i] == '/') {
             r = str_concat(r, "\\");
         } else {
-            r = (({ __auto_type strata_t1609_ = r; __auto_type strata_t1610_ = str_sub(p, i, 1); str_concat(strata_t1609_, strata_t1610_); }));
+            r = (({ __auto_type strata_t2664_ = r; __auto_type strata_t2665_ = str_sub(p, i, 1); str_concat(strata_t2664_, strata_t2665_); }));
         }
     }
     return r;
@@ -15455,10 +22957,10 @@ const char* guard_for(const char* name) {
     for (int64_t i = 0; i < n; i++) {
         char c = name[i];
         if ((c >= 'a') && (c <= 'z')) {
-            g = (({ __auto_type strata_t1611_ = g; __auto_type strata_t1612_ = str_sub(upper, (((int64_t)(c)) - ((int64_t)('a'))), 1); str_concat(strata_t1611_, strata_t1612_); }));
+            g = (({ __auto_type strata_t2666_ = g; __auto_type strata_t2667_ = str_sub(upper, (((int64_t)(c)) - ((int64_t)('a'))), 1); str_concat(strata_t2666_, strata_t2667_); }));
         } else 
         if (((c >= 'A') && (c <= 'Z')) || ((c >= '0') && (c <= '9'))) {
-            g = (({ __auto_type strata_t1613_ = g; __auto_type strata_t1614_ = str_sub(name, i, 1); str_concat(strata_t1613_, strata_t1614_); }));
+            g = (({ __auto_type strata_t2668_ = g; __auto_type strata_t2669_ = str_sub(name, i, 1); str_concat(strata_t2668_, strata_t2669_); }));
         } else {
             g = str_concat(g, "_");
         }
@@ -15479,27 +22981,31 @@ bool run_build(BuildSpec s, const char* libdir) {
     }
     if (s.dll && (prog.main.len > 0)) {
         Stmt* st = ((Stmt**)(prog.main).data)[0];
-        strata_report(str_concat((({ __auto_type strata_t1617_ = str_concat((({ __auto_type strata_t1615_ = str_concat(basename_of(s.entry), ":"); __auto_type strata_t1616_ = str_from_int(st->line); str_concat(strata_t1615_, strata_t1616_); })), ":"); __auto_type strata_t1618_ = str_from_int(st->col); str_concat(strata_t1617_, strata_t1618_); })), ": error: a dll has no main, so its entry file can't contain top-level code"));
+        strata_report(str_concat((({ __auto_type strata_t2672_ = str_concat((({ __auto_type strata_t2670_ = str_concat(basename_of(s.entry), ":"); __auto_type strata_t2671_ = str_from_int(st->line); str_concat(strata_t2670_, strata_t2671_); })), ":"); __auto_type strata_t2673_ = str_from_int(st->col); str_concat(strata_t2672_, strata_t2673_); })), ": error: a dll has no main, so its entry file can't contain top-level code"));
+        return false;
+    }
+    if ((!target_is_host()) && str_eq(s.backend, "c")) {
+        strata_report(str_concat((({ __auto_type strata_t2674_ = str_concat(basename_of(s.entry), ": error: the C backend builds only for this machine ("); __auto_type strata_t2675_ = target_name(); str_concat(strata_t2674_, strata_t2675_); })), " needs the native backend)"));
         return false;
     }
     if (!str_eq(s.backend, "c")) {
-        const char* why = (({ __auto_type strata_t1619_ = host_os(); __auto_type strata_t1620_ = host_arch(); native_target_why(strata_t1619_, strata_t1620_); }));
-        if (str_eq(why, "") && (!strata_file_exists(str_concat(libdir, "/srt.o")))) {
-            why = "its runtime, lib/srt.o, is missing (build.ps1 makes it from lib/srt.strata)";
+        const char* why = (({ __auto_type strata_t2676_ = target_os(); __auto_type strata_t2677_ = target_arch(); native_target_why(strata_t2676_, strata_t2677_); }));
+        if (str_eq(why, "") && (!strata_file_exists(runtime_object(libdir)))) {
+            why = str_concat(str_concat("its runtime, ", runtime_object(libdir)), ", is missing (build.ps1 makes it from lib/srt.strata)");
         }
-        if (str_eq(why, "")) {
-            NativeResult nr = native_compile(prog, (!s.dll), s.release);
-            if (nr.ok) {
-                ObjFile ob = assemble_x64(nr.asm_text);
-                if (ob.ok) {
-                    return native_build(s, libdir, prog, nr.asm_text, (&ob));
-                }
-                why = str_concat("internal error in the assembler: ", ob.err);
-            } else {
-                why = nr.why;
+        if (str_eq(why, "") && (!str_eq(target_os(), "windows"))) {
+            if ((s.c_sources.len > 0) || (s.frameworks.len > 0)) {
+                why = str_concat(str_concat("it has C sources (natively on ", target_os()), ": not yet)");
             }
         }
-        if (str_eq(s.backend, "native")) {
+        if (str_eq(why, "")) {
+            NativeResult nr = (({ __auto_type strata_t2678_ = prog; __auto_type strata_t2679_ = (!s.dll); __auto_type strata_t2680_ = s.release; __auto_type strata_t2681_ = view_object(); native_compile(strata_t2678_, strata_t2679_, strata_t2680_, strata_t2681_); }));
+            if (nr.ok) {
+                return native_build(s, libdir, prog, (&nr.obj));
+            }
+            why = nr.why;
+        }
+        if (str_eq(s.backend, "native") || (!target_is_host())) {
             strata_report(str_concat(str_concat(str_concat(basename_of(s.entry), ": error: can't build natively: "), why), " (use --backend c)"));
             return false;
         }
@@ -15568,13 +23074,13 @@ bool run_build(BuildSpec s, const char* libdir) {
     const char* cmd = spaced(argv);
     const char* header = "";
     if (s.dll) {
-        header = (({ __auto_type strata_t1621_ = prog; __auto_type strata_t1622_ = guard_for(basename_of(stem_of(s.out_bin))); __auto_type strata_t1623_ = basename_of(s.entry); generate_header(strata_t1621_, strata_t1622_, strata_t1623_); }));
+        header = (({ __auto_type strata_t2682_ = prog; __auto_type strata_t2683_ = guard_for(basename_of(stem_of(s.out_bin))); __auto_type strata_t2684_ = basename_of(s.entry); generate_header(strata_t2682_, strata_t2683_, strata_t2684_); }));
     }
     const char* key = "";
     if (!str_eq(s.cache_file, "")) {
         const char* all = str_concat(str_concat(str_concat(str_concat(c, "\n"), cmd), "\n"), s.tool_version);
         for (int64_t i = 0; i < s.c_sources.len; i++) {
-            all = (({ __auto_type strata_t1624_ = str_concat(all, "\n"); __auto_type strata_t1625_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1624_, strata_t1625_); }));
+            all = (({ __auto_type strata_t2685_ = str_concat(all, "\n"); __auto_type strata_t2686_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t2685_, strata_t2686_); }));
         }
         key = fingerprint(all);
         if (((!s.force) && str_eq(strata_read_file(s.cache_file), key)) && file_present(s.out_bin)) {
@@ -15608,13 +23114,42 @@ bool run_build(BuildSpec s, const char* libdir) {
     return true;
 }
 
-bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm_text, ObjFile* ob) {
+const char* runtime_object(const char* libdir) {
+    if (str_eq(target_os(), "windows") && str_eq(target_arch(), "x86_64")) {
+        return str_concat(libdir, "/srt.o");
+    }
+    return str_concat((({ __auto_type strata_t2687_ = str_concat(libdir, "/srt-"); __auto_type strata_t2688_ = target_name(); str_concat(strata_t2687_, strata_t2688_); })), ".o");
+}
+
+const char* object_fingerprint(ObjFile* o) {
+    uint64_t h = 1469598103934665603;
+    for (int64_t i = 0; i < o->text.len; i++) {
+        h = ((h ^ ((uint64_t)(((uint8_t*)(o->text).data)[i]))) * 1099511628211);
+    }
+    for (int64_t i = 0; i < o->rdata.len; i++) {
+        h = ((h ^ ((uint64_t)(((uint8_t*)(o->rdata).data)[i]))) * 1099511628211);
+    }
+    for (int64_t i = 0; i < o->data.len; i++) {
+        h = ((h ^ ((uint64_t)(((uint8_t*)(o->data).data)[i]))) * 1099511628211);
+    }
+    for (int64_t i = 0; i < o->relocs.len; i++) {
+        ObjReloc r = ((ObjReloc*)(o->relocs).data)[i];
+        h = ((h ^ ((uint64_t)((((((r.section * 7) + (r.offset * 131)) + (r.symbol * 8191)) + (r.after * 31)) + r.kind)))) * 1099511628211);
+    }
+    Array names = ({ Array _a = arr_make(sizeof(const char*)); _a; });
+    for (int64_t i = 0; i < o->symbols.len; i++) {
+        ({ const char* _e = str_concat((({ __auto_type strata_t2691_ = str_concat((({ __auto_type strata_t2689_ = str_concat(((ObjSymbol*)(o->symbols).data)[i].name, ":"); __auto_type strata_t2690_ = str_from_int(((ObjSymbol*)(o->symbols).data)[i].section); str_concat(strata_t2689_, strata_t2690_); })), ":"); __auto_type strata_t2692_ = str_from_int(((ObjSymbol*)(o->symbols).data)[i].value); str_concat(strata_t2691_, strata_t2692_); })), "\n"); arr_push(&(names), &_e); });
+    }
+    return (({ __auto_type strata_t2693_ = str_from_int(((int64_t)(h))); __auto_type strata_t2694_ = fingerprint(strata_join((&names))); str_concat(strata_t2693_, strata_t2694_); }));
+}
+
+bool native_build(BuildSpec s, const char* libdir, Program prog, ObjFile* ob) {
     const char* obj_file = str_concat(stem_of(s.out_c), ".o");
     Array argv = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     ({ const char* _e = strata_cc(); arr_push(&(argv), &_e); });
     ({ const char* _e = "-O2"; arr_push(&(argv), &_e); });
     ({ const char* _e = obj_file; arr_push(&(argv), &_e); });
-    ({ const char* _e = str_concat(libdir, "/srt.o"); arr_push(&(argv), &_e); });
+    ({ const char* _e = runtime_object(libdir); arr_push(&(argv), &_e); });
     for (int64_t i = 0; i < s.c_sources.len; i++) {
         ({ const char* _e = ((const char**)(s.c_sources).data)[i]; arr_push(&(argv), &_e); });
     }
@@ -15656,12 +23191,12 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
                 ({ const char* _e = d->name; arr_push(&(exports), &_e); });
             }
         }
-        const char* header = (({ __auto_type strata_t1626_ = prog; __auto_type strata_t1627_ = guard_for(basename_of(stem_of(s.out_bin))); __auto_type strata_t1628_ = basename_of(s.entry); generate_header(strata_t1626_, strata_t1627_, strata_t1628_); }));
+        const char* header = (({ __auto_type strata_t2695_ = prog; __auto_type strata_t2696_ = guard_for(basename_of(stem_of(s.out_bin))); __auto_type strata_t2697_ = basename_of(s.entry); generate_header(strata_t2695_, strata_t2696_, strata_t2697_); }));
         if (!str_eq(strata_read_file(str_concat(stem_of(s.out_bin), ".h")), header)) {
             strata_write_file(str_concat(stem_of(s.out_bin), ".h"), header);
         }
     }
-    Linker* lk = new_linker();
+    Link lk = new_link(target_os());
     bool own = ((s.c_sources.len == 0) && (s.frameworks.len == 0));
     Array libs = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 0; i < prog.decls.len; i++) {
@@ -15681,21 +23216,22 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
     }
     const char* dlls = "";
     for (int64_t i = 0; i < libs.len; i++) {
-        if (own && (!link_library(lk, ((const char**)(libs).data)[i], s.lib_dirs))) {
+        if (own && (!link_lib((&lk), ((const char**)(libs).data)[i], s.lib_dirs))) {
             own = false;
         }
     }
     if (own) {
-        for (int64_t i = 0; i < lk->dll_path.len; i++) {
-            dlls = str_concat(str_concat(dlls, " "), ((const char**)(lk->dll_path).data)[i]);
+        Array found = link_lib_paths((&lk));
+        for (int64_t i = 0; i < found.len; i++) {
+            dlls = str_concat(str_concat(dlls, " "), ((const char**)(found).data)[i]);
         }
-        cmd = str_concat(str_concat(str_concat("strata-link ", libdir), "/srt.o"), dlls);
+        cmd = str_concat(str_concat("strata-link ", runtime_object(libdir)), dlls);
     }
     const char* key = "";
     if (!str_eq(s.cache_file, "")) {
-        const char* all = (({ __auto_type strata_t1629_ = str_concat(str_concat(str_concat(str_concat(str_concat(asm_text, "\n"), cmd), "\n"), s.tool_version), "\n"); __auto_type strata_t1630_ = strata_read_file(str_concat(libdir, "/srt.strata")); str_concat(strata_t1629_, strata_t1630_); }));
+        const char* all = (({ __auto_type strata_t2698_ = str_concat(str_concat(str_concat(str_concat(str_concat(object_fingerprint(ob), "\n"), cmd), "\n"), s.tool_version), "\n"); __auto_type strata_t2699_ = strata_read_file(str_concat(libdir, "/srt.strata")); str_concat(strata_t2698_, strata_t2699_); }));
         for (int64_t i = 0; i < s.c_sources.len; i++) {
-            all = (({ __auto_type strata_t1631_ = str_concat(all, "\n"); __auto_type strata_t1632_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1631_, strata_t1632_); }));
+            all = (({ __auto_type strata_t2700_ = str_concat(all, "\n"); __auto_type strata_t2701_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t2700_, strata_t2701_); }));
         }
         key = fingerprint(all);
         if (((!s.force) && str_eq(strata_read_file(s.cache_file), key)) && file_present(s.out_bin)) {
@@ -15709,28 +23245,27 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
             strata_make_dirs(dir);
         }
     }
-    if (!write_coff(obj_file, ob)) {
+    if (!write_object(target_os(), obj_file, ob)) {
         strata_report(str_concat("error: can't write ", obj_file));
         return false;
     }
     bool linked = false;
     if (own) {
-        (({ __auto_type strata_t1633_ = lk; __auto_type strata_t1634_ = obj_file; __auto_type strata_t1635_ = coff_bytes(ob); link_add(strata_t1633_, strata_t1634_, strata_t1635_); }));
-        (({ __auto_type strata_t1636_ = lk; __auto_type strata_t1637_ = strata_read_bytes(str_concat(libdir, "/srt.o")); link_add(strata_t1636_, "srt.o", strata_t1637_); }));
-        if (s.dll) {
-            linked = (lk->ok && link_dll(lk, s.out_bin, exports));
-            if (linked) {
-                Array implib = import_library(basename_of(s.out_bin), exports);
-                strata_write_bytes(str_concat(stem_of(s.out_bin), ".dll.a"), (&implib));
-                strata_write_bytes(str_concat(stem_of(s.out_bin), ".lib"), (&implib));
-            }
-        } else {
-            linked = (lk->ok && link_exe(lk, s.out_bin));
-        }
+        (({ __auto_type strata_t2702_ = (&lk); __auto_type strata_t2703_ = obj_file; __auto_type strata_t2704_ = object_bytes(target_os(), ob); link_object(strata_t2702_, strata_t2703_, strata_t2704_); }));
+        (({ __auto_type strata_t2705_ = (&lk); __auto_type strata_t2706_ = basename_of(runtime_object(libdir)); __auto_type strata_t2707_ = strata_read_bytes(runtime_object(libdir)); link_object(strata_t2705_, strata_t2706_, strata_t2707_); }));
+        linked = link_program((&lk), s.out_bin, s.dll, exports);
         if ((!linked) && str_eq(s.backend, "native")) {
-            strata_report(str_concat(str_concat(basename_of(s.entry), ": error: can't link: "), lk->err));
+            strata_report((({ __auto_type strata_t2708_ = str_concat(basename_of(s.entry), ": error: can't link: "); __auto_type strata_t2709_ = link_error((&lk)); str_concat(strata_t2708_, strata_t2709_); })));
             return false;
         }
+    }
+    if ((!linked) && (!str_eq(target_os(), "windows"))) {
+        if (own) {
+            strata_report((({ __auto_type strata_t2710_ = str_concat(basename_of(s.entry), ": error: can't link: "); __auto_type strata_t2711_ = link_error((&lk)); str_concat(strata_t2710_, strata_t2711_); })));
+        } else {
+            strata_report(str_concat((({ __auto_type strata_t2712_ = str_concat(basename_of(s.entry), ": error: libraries and C sources can't be linked into a native "); __auto_type strata_t2713_ = target_name(); str_concat(strata_t2712_, strata_t2713_); })), " program yet"));
+        }
+        return false;
     }
     if ((!linked) && (strata_run_argv((&argv)) != 0)) {
         return false;
@@ -15742,7 +23277,7 @@ bool native_build(BuildSpec s, const char* libdir, Program prog, const char* asm
         if (linked) {
             strata_report(str_concat(str_concat("built ", s.out_bin), " (native)"));
         } else {
-            strata_report(str_concat((({ __auto_type strata_t1638_ = str_concat(str_concat("built ", s.out_bin), " (native, linked by "); __auto_type strata_t1639_ = strata_cc(); str_concat(strata_t1638_, strata_t1639_); })), ")"));
+            strata_report(str_concat((({ __auto_type strata_t2714_ = str_concat(str_concat("built ", s.out_bin), " (native, linked by "); __auto_type strata_t2715_ = strata_cc(); str_concat(strata_t2714_, strata_t2715_); })), ")"));
         }
     }
     return true;
@@ -15761,7 +23296,7 @@ const char* fwd_path(const char* p) {
         if (p[i] == '\\') {
             r = str_concat(r, "/");
         } else {
-            r = (({ __auto_type strata_t1640_ = r; __auto_type strata_t1641_ = str_sub(p, i, 1); str_concat(strata_t1640_, strata_t1641_); }));
+            r = (({ __auto_type strata_t2716_ = r; __auto_type strata_t2717_ = str_sub(p, i, 1); str_concat(strata_t2716_, strata_t2717_); }));
         }
     }
     return r;
@@ -15784,7 +23319,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     strata_make_dirs(obj);
     Codegen cg = new_codegen();
     cg.no_main = s.dll;
-    SplitOutput so = (({ __auto_type strata_t1642_ = (&cg); __auto_type strata_t1643_ = prog; __auto_type strata_t1644_ = str_concat(name, ".strata.h"); __auto_type strata_t1645_ = guard_for(str_concat(name, "_strata")); generate_split(strata_t1642_, strata_t1643_, strata_t1644_, strata_t1645_); }));
+    SplitOutput so = (({ __auto_type strata_t2718_ = (&cg); __auto_type strata_t2719_ = prog; __auto_type strata_t2720_ = str_concat(name, ".strata.h"); __auto_type strata_t2721_ = guard_for(str_concat(name, "_strata")); generate_split(strata_t2718_, strata_t2719_, strata_t2720_, strata_t2721_); }));
     if (cg.had_error) {
         strata_report("codegen: program uses features not supported yet");
         return false;
@@ -15794,12 +23329,12 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     if (needs_pic(s)) {
         pic = " -fPIC";
     }
-    const char* flags = (({ __auto_type strata_t1648_ = str_concat((({ __auto_type strata_t1646_ = str_concat(str_concat(str_concat("-std=gnu11", opt), pic), " -pipe -I"); __auto_type strata_t1647_ = rsp_arg(obj); str_concat(strata_t1646_, strata_t1647_); })), " -I"); __auto_type strata_t1649_ = rsp_arg(libdir); str_concat(strata_t1648_, strata_t1649_); }));
+    const char* flags = (({ __auto_type strata_t2724_ = str_concat((({ __auto_type strata_t2722_ = str_concat(str_concat(str_concat("-std=gnu11", opt), pic), " -pipe -I"); __auto_type strata_t2723_ = rsp_arg(obj); str_concat(strata_t2722_, strata_t2723_); })), " -I"); __auto_type strata_t2725_ = rsp_arg(libdir); str_concat(strata_t2724_, strata_t2725_); }));
     for (int64_t i = 0; i < s.include_dirs.len; i++) {
-        flags = (({ __auto_type strata_t1650_ = str_concat(flags, " -I"); __auto_type strata_t1651_ = rsp_arg(((const char**)(s.include_dirs).data)[i]); str_concat(strata_t1650_, strata_t1651_); }));
+        flags = (({ __auto_type strata_t2726_ = str_concat(flags, " -I"); __auto_type strata_t2727_ = rsp_arg(((const char**)(s.include_dirs).data)[i]); str_concat(strata_t2726_, strata_t2727_); }));
     }
     for (int64_t i = 0; i < s.defines.len; i++) {
-        flags = (({ __auto_type strata_t1652_ = str_concat(flags, " -D"); __auto_type strata_t1653_ = quoted(((const char**)(s.defines).data)[i]); str_concat(strata_t1652_, strata_t1653_); }));
+        flags = (({ __auto_type strata_t2728_ = str_concat(flags, " -D"); __auto_type strata_t2729_ = quoted(((const char**)(s.defines).data)[i]); str_concat(strata_t2728_, strata_t2729_); }));
     }
     const char* salt = str_concat(str_concat(str_concat(flags, "\n"), s.tool_version), "\n");
     int64_t jobs = strata_cpu_count();
@@ -15825,7 +23360,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         const char* text = strata_join((&parts));
         const char* cfile = str_concat(str_concat(obj, "/"), ((const char**)(so.names).data)[u]);
         if ((end - u) > 1) {
-            cfile = str_concat(str_concat((({ __auto_type strata_t1654_ = str_concat(obj, "/chunk"); __auto_type strata_t1655_ = str_from_int(u); str_concat(strata_t1654_, strata_t1655_); })), "_"), ((const char**)(so.names).data)[u]);
+            cfile = str_concat(str_concat((({ __auto_type strata_t2730_ = str_concat(obj, "/chunk"); __auto_type strata_t2731_ = str_from_int(u); str_concat(strata_t2730_, strata_t2731_); })), "_"), ((const char**)(so.names).data)[u]);
         }
         const char* ofile = str_concat(stem_of(cfile), ".o");
         const char* key = fingerprint(str_concat(str_concat(str_concat(salt, so.header), "\n"), text));
@@ -15834,7 +23369,7 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         if ((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile))) {
             write_if_changed(cfile, text);
             const char* rsp = str_concat(stem_of(cfile), ".rsp");
-            (({ __auto_type strata_t1656_ = rsp; __auto_type strata_t1657_ = str_concat((({ __auto_type strata_t1660_ = str_concat((({ __auto_type strata_t1658_ = str_concat(flags, " -c "); __auto_type strata_t1659_ = rsp_arg(cfile); str_concat(strata_t1658_, strata_t1659_); })), " -o "); __auto_type strata_t1661_ = rsp_arg(ofile); str_concat(strata_t1660_, strata_t1661_); })), "\n"); write_if_changed(strata_t1656_, strata_t1657_); }));
+            (({ __auto_type strata_t2732_ = rsp; __auto_type strata_t2733_ = str_concat((({ __auto_type strata_t2736_ = str_concat((({ __auto_type strata_t2734_ = str_concat(flags, " -c "); __auto_type strata_t2735_ = rsp_arg(cfile); str_concat(strata_t2734_, strata_t2735_); })), " -o "); __auto_type strata_t2737_ = rsp_arg(ofile); str_concat(strata_t2736_, strata_t2737_); })), "\n"); write_if_changed(strata_t2732_, strata_t2733_); }));
             ({ const char* _e = rsp; arr_push(&(rsps), &_e); });
             ({ const char* _e = key; arr_push(&(keys), &_e); });
             ({ const char* _e = str_concat(ofile, ".key"); arr_push(&(key_files), &_e); });
@@ -15842,20 +23377,20 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
         u = end;
     }
     for (int64_t i = 0; i < s.c_sources.len; i++) {
-        const char* ofile = str_concat((({ __auto_type strata_t1664_ = str_concat((({ __auto_type strata_t1662_ = str_concat(obj, "/c"); __auto_type strata_t1663_ = str_from_int(i); str_concat(strata_t1662_, strata_t1663_); })), "_"); __auto_type strata_t1665_ = basename_of(stem_of(((const char**)(s.c_sources).data)[i])); str_concat(strata_t1664_, strata_t1665_); })), ".o");
-        const char* key = fingerprint((({ __auto_type strata_t1666_ = salt; __auto_type strata_t1667_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1666_, strata_t1667_); })));
+        const char* ofile = str_concat((({ __auto_type strata_t2740_ = str_concat((({ __auto_type strata_t2738_ = str_concat(obj, "/c"); __auto_type strata_t2739_ = str_from_int(i); str_concat(strata_t2738_, strata_t2739_); })), "_"); __auto_type strata_t2741_ = basename_of(stem_of(((const char**)(s.c_sources).data)[i])); str_concat(strata_t2740_, strata_t2741_); })), ".o");
+        const char* key = fingerprint((({ __auto_type strata_t2742_ = salt; __auto_type strata_t2743_ = strata_read_file(((const char**)(s.c_sources).data)[i]); str_concat(strata_t2742_, strata_t2743_); })));
         ({ const char* _e = ofile; arr_push(&(objects), &_e); });
         total += 1;
         if ((s.force || (!str_eq(strata_read_file(str_concat(ofile, ".key")), key))) || (!strata_file_exists(ofile))) {
             const char* rsp = str_concat(stem_of(ofile), ".rsp");
-            (({ __auto_type strata_t1668_ = rsp; __auto_type strata_t1669_ = str_concat((({ __auto_type strata_t1672_ = str_concat((({ __auto_type strata_t1670_ = str_concat(flags, " -c "); __auto_type strata_t1671_ = rsp_arg(((const char**)(s.c_sources).data)[i]); str_concat(strata_t1670_, strata_t1671_); })), " -o "); __auto_type strata_t1673_ = rsp_arg(ofile); str_concat(strata_t1672_, strata_t1673_); })), "\n"); write_if_changed(strata_t1668_, strata_t1669_); }));
+            (({ __auto_type strata_t2744_ = rsp; __auto_type strata_t2745_ = str_concat((({ __auto_type strata_t2748_ = str_concat((({ __auto_type strata_t2746_ = str_concat(flags, " -c "); __auto_type strata_t2747_ = rsp_arg(((const char**)(s.c_sources).data)[i]); str_concat(strata_t2746_, strata_t2747_); })), " -o "); __auto_type strata_t2749_ = rsp_arg(ofile); str_concat(strata_t2748_, strata_t2749_); })), "\n"); write_if_changed(strata_t2744_, strata_t2745_); }));
             ({ const char* _e = rsp; arr_push(&(rsps), &_e); });
             ({ const char* _e = key; arr_push(&(keys), &_e); });
             ({ const char* _e = str_concat(ofile, ".key"); arr_push(&(key_files), &_e); });
         }
     }
     if (s.dll) {
-        (({ __auto_type strata_t1674_ = str_concat(stem_of(s.out_bin), ".h"); __auto_type strata_t1675_ = (({ __auto_type strata_t1676_ = prog; __auto_type strata_t1677_ = guard_for(name); __auto_type strata_t1678_ = basename_of(s.entry); generate_header(strata_t1676_, strata_t1677_, strata_t1678_); })); write_if_changed(strata_t1674_, strata_t1675_); }));
+        (({ __auto_type strata_t2750_ = str_concat(stem_of(s.out_bin), ".h"); __auto_type strata_t2751_ = (({ __auto_type strata_t2752_ = prog; __auto_type strata_t2753_ = guard_for(name); __auto_type strata_t2754_ = basename_of(s.entry); generate_header(strata_t2752_, strata_t2753_, strata_t2754_); })); write_if_changed(strata_t2750_, strata_t2751_); }));
     }
     if (rsps.len > 0) {
         if (strata_run_cc_parallel((&rsps), jobs) > 0) {
@@ -15912,12 +23447,12 @@ bool run_split_build(BuildSpec s, const char* libdir, Program prog) {
     }
     strata_write_file(s.cache_file, link_key);
     if (!s.quiet) {
-        strata_report(str_concat((({ __auto_type strata_t1683_ = str_concat((({ __auto_type strata_t1681_ = str_concat((({ __auto_type strata_t1679_ = str_concat(str_concat("built ", s.out_bin), " ("); __auto_type strata_t1680_ = str_from_int(rsps.len); str_concat(strata_t1679_, strata_t1680_); })), " of "); __auto_type strata_t1682_ = str_from_int(total); str_concat(strata_t1681_, strata_t1682_); })), " C files compiled, "); __auto_type strata_t1684_ = str_from_int(so.units.len); str_concat(strata_t1683_, strata_t1684_); })), " modules)"));
+        strata_report(str_concat((({ __auto_type strata_t2759_ = str_concat((({ __auto_type strata_t2757_ = str_concat((({ __auto_type strata_t2755_ = str_concat(str_concat("built ", s.out_bin), " ("); __auto_type strata_t2756_ = str_from_int(rsps.len); str_concat(strata_t2755_, strata_t2756_); })), " of "); __auto_type strata_t2758_ = str_from_int(total); str_concat(strata_t2757_, strata_t2758_); })), " C files compiled, "); __auto_type strata_t2760_ = str_from_int(so.units.len); str_concat(strata_t2759_, strata_t2760_); })), " modules)"));
     }
     return true;
 }
 
-bool ends_with(const char* s, const char* suffix) {
+bool build__ends_with(const char* s, const char* suffix) {
     return ((str_len(s) >= str_len(suffix)) && str_eq(str_sub(s, (str_len(s) - str_len(suffix)), str_len(suffix)), suffix));
 }
 
@@ -15927,11 +23462,11 @@ Project no_project(void) {
 }
 
 Target resolve_target(const char* arg) {
-    if (ends_with(arg, ".strata") || ends_with(arg, ".str")) {
-        return (({ __auto_type strata_t1685_ = arg; __auto_type strata_t1686_ = no_project(); (Target){true, false, strata_t1685_, strata_t1686_}; }));
+    if (build__ends_with(arg, ".strata") || build__ends_with(arg, ".str")) {
+        return (({ __auto_type strata_t2761_ = arg; __auto_type strata_t2762_ = no_project(); (Target){true, false, strata_t2761_, strata_t2762_}; }));
     }
     const char* toml = "strata.toml";
-    if (ends_with(arg, "strata.toml")) {
+    if (build__ends_with(arg, "strata.toml")) {
         toml = arg;
     } else 
     if (!str_eq(arg, "")) {
@@ -15957,7 +23492,7 @@ BuildSpec target_spec(Target t, const char* version, bool release, bool force, b
 }
 
 const char* stratac_version(void) {
-    return "2.5.0 (native dlls)";
+    return "2.6.0 (native everywhere)";
 }
 
 bool file_exists(const char* p) {
@@ -16000,7 +23535,7 @@ int64_t cmd_ast(const char* path) {
     Parser p = new_parser(lex(strata_read_file(path)));
     Program prog = parse_program((&p));
     if (p.had_error) {
-        printf("%s\n", str_concat(str_concat((({ __auto_type strata_t1689_ = str_concat((({ __auto_type strata_t1687_ = str_concat(basename_of(path), ":"); __auto_type strata_t1688_ = str_from_int(p.err_line); str_concat(strata_t1687_, strata_t1688_); })), ":"); __auto_type strata_t1690_ = str_from_int(p.err_col); str_concat(strata_t1689_, strata_t1690_); })), ": parse error: "), p.err_msg));
+        printf("%s\n", str_concat(str_concat((({ __auto_type strata_t2765_ = str_concat((({ __auto_type strata_t2763_ = str_concat(basename_of(path), ":"); __auto_type strata_t2764_ = str_from_int(p.err_line); str_concat(strata_t2763_, strata_t2764_); })), ":"); __auto_type strata_t2766_ = str_from_int(p.err_col); str_concat(strata_t2765_, strata_t2766_); })), ": parse error: "), p.err_msg));
         return 1;
     }
     print_program(prog);
@@ -16061,16 +23596,16 @@ int64_t cmd_native(const char* path, bool show_ir, bool opt) {
     if (ck->had_error) {
         return 1;
     }
-    NativeResult nr = native_compile(prog, true, opt);
+    int64_t view = view_asm();
+    if (show_ir) {
+        view = view_ir();
+    }
+    NativeResult nr = native_compile(prog, true, opt, view);
     if (!nr.ok) {
         printf("%s\n", str_concat(str_concat(basename_of(path), ": error: can't compile natively: "), nr.why));
         return 1;
     }
-    if (show_ir) {
-        strata_print_raw(nr.ir);
-    } else {
-        strata_print_raw(nr.asm_text);
-    }
+    strata_print_raw(nr.text);
     return 0;
 }
 
@@ -16080,7 +23615,7 @@ int64_t cmd_assemble(const char* path, const char* out) {
         printf("%s\n", str_concat("error: cannot read ", path));
         return 1;
     }
-    ObjFile ob = assemble_x64(src);
+    ObjFile ob = (({ __auto_type strata_t2767_ = src; __auto_type strata_t2768_ = arch_name(target_arch()); assemble(strata_t2767_, strata_t2768_); }));
     if (!ob.ok) {
         printf("%s\n", str_concat(str_concat(basename_of(path), ": error: "), ob.err));
         return 1;
@@ -16088,7 +23623,7 @@ int64_t cmd_assemble(const char* path, const char* out) {
     if (str_eq(out, "")) {
         out = str_concat(stem_of(path), ".o");
     }
-    if (!write_coff(out, (&ob))) {
+    if (!write_object(target_os(), out, (&ob))) {
         printf("%s\n", str_concat("error: cannot write ", out));
         return 1;
     }
@@ -16108,23 +23643,19 @@ int64_t cmd_object(const char* path, const char* out) {
     }
     if (prog.main.len > 0) {
         Stmt* st = ((Stmt**)(prog.main).data)[0];
-        printf("%s\n", str_concat((({ __auto_type strata_t1693_ = str_concat((({ __auto_type strata_t1691_ = str_concat(basename_of(path), ":"); __auto_type strata_t1692_ = str_from_int(st->line); str_concat(strata_t1691_, strata_t1692_); })), ":"); __auto_type strata_t1694_ = str_from_int(st->col); str_concat(strata_t1693_, strata_t1694_); })), ": error: an object file has no main, so its file can't contain top-level code"));
+        printf("%s\n", str_concat((({ __auto_type strata_t2771_ = str_concat((({ __auto_type strata_t2769_ = str_concat(basename_of(path), ":"); __auto_type strata_t2770_ = str_from_int(st->line); str_concat(strata_t2769_, strata_t2770_); })), ":"); __auto_type strata_t2772_ = str_from_int(st->col); str_concat(strata_t2771_, strata_t2772_); })), ": error: an object file has no main, so its file can't contain top-level code"));
         return 1;
     }
-    NativeResult nr = native_compile(prog, false, true);
+    NativeResult nr = (({ __auto_type strata_t2773_ = prog; __auto_type strata_t2774_ = view_object(); native_compile(strata_t2773_, false, true, strata_t2774_); }));
     if (!nr.ok) {
         printf("%s\n", str_concat(str_concat(basename_of(path), ": error: can't compile natively: "), nr.why));
         return 1;
     }
-    ObjFile ob = assemble_x64(nr.asm_text);
-    if (!ob.ok) {
-        printf("%s\n", str_concat(str_concat(basename_of(path), ": internal error in the assembler: "), ob.err));
-        return 1;
-    }
+    ObjFile ob = nr.obj;
     if (str_eq(out, "")) {
         out = str_concat(stem_of(path), ".o");
     }
-    if (!write_coff(out, (&ob))) {
+    if (!write_object(target_os(), out, (&ob))) {
         printf("%s\n", str_concat("error: cannot write ", out));
         return 1;
     }
@@ -16132,7 +23663,7 @@ int64_t cmd_object(const char* path, const char* out) {
 }
 
 BuildSpec cli_spec(Target t, bool release, bool force, bool quiet, const char* backend) {
-    BuildSpec s = (({ __auto_type strata_t1695_ = t; __auto_type strata_t1696_ = stratac_version(); target_spec(strata_t1695_, strata_t1696_, release, force, quiet); }));
+    BuildSpec s = (({ __auto_type strata_t2775_ = t; __auto_type strata_t2776_ = stratac_version(); target_spec(strata_t2775_, strata_t2776_, release, force, quiet); }));
     s.backend = backend;
     return s;
 }
@@ -16205,6 +23736,7 @@ int64_t usage(void) {
     printf("%s\n", "  stratac object <file.strata> [out.o]  compile a module (no main) into an object file");
     printf("%s\n", "  stratac ast    <file.strata>     parse and print the AST");
     printf("%s\n", "  stratac tokens <file.strata>     print the token stream");
+    printf("%s\n", "  --target windows-x64 | linux-x64 | macos-arm64   build for another OS / CPU (native backend)");
     printf("%s\n", "");
     printf("%s\n", "target: a .strata file, a project folder, a strata.toml, or nothing (the project");
     printf("%s\n", "in the current folder). Projects are cached: unchanged builds skip the C compiler.");
@@ -16230,6 +23762,8 @@ int64_t dmm_main(Array args) {
     bool rest_mode = false;
     const char* backend = "auto";
     bool backend_next = false;
+    const char* target_flag = "";
+    bool target_next = false;
     Array prog_args = ({ Array _a = arr_make(sizeof(const char*)); _a; });
     for (int64_t i = 2; i < args.len; i++) {
         const char* a = ((const char**)(args).data)[i];
@@ -16240,11 +23774,18 @@ int64_t dmm_main(Array args) {
             backend = a;
             backend_next = false;
         } else 
+        if (target_next) {
+            target_flag = a;
+            target_next = false;
+        } else 
         if (str_eq(a, "--")) {
             rest_mode = true;
         } else 
         if (str_eq(a, "--backend")) {
             backend_next = true;
+        } else 
+        if (str_eq(a, "--target")) {
+            target_next = true;
         } else 
         if (str_eq(a, "--release")) {
             release = true;
@@ -16262,6 +23803,14 @@ int64_t dmm_main(Array args) {
     const char* libdir = resolve_libdir(((const char**)(args).data)[0]);
     if (backend_next || (((!str_eq(backend, "auto")) && (!str_eq(backend, "native"))) && (!str_eq(backend, "c")))) {
         printf("%s\n", "error: --backend takes native, c or auto");
+        return 2;
+    }
+    if (target_next || ((!str_eq(target_flag, "")) && (!set_target(target_flag)))) {
+        printf("%s\n", "error: --target takes windows-x64, linux-x64 or macos-arm64");
+        return 2;
+    }
+    if (str_eq(cmd, "run") && (!target_is_host())) {
+        printf("%s\n", str_concat(str_concat("error: a program built for ", target_name()), " can't run here (use build)"));
         return 2;
     }
     if (str_eq(cmd, "new")) {

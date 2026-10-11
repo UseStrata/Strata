@@ -6,9 +6,11 @@
 > [`CHANGELOG.md`](CHANGELOG.md) (per-version detail) and
 > [`website/design/DESIGN.md`](website/design/DESIGN.md) (language design).
 
-**Current:** stratac **2.5.0** (native dlls + import libraries; no C compiler anywhere on Windows), released 2026-10-09
-· tests **77/77** (Windows) · macOS / Linux run the C-backend subset in CI · repo **https://github.com/UseStrata/Strata**
-· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.5.0)
+**Current:** stratac **2.6.0** (native everywhere: Windows x86-64, Linux x86-64, macOS ARM64; function pointers), released 2026-10-11
+· tests **80/80** (Windows), 68/68 (Linux, macOS: natively, in CI) · repo **https://github.com/UseStrata/Strata**
+· installed on this machine at `%LOCALAPPDATA%\Programs\strata` (on the user PATH; 2.6.0)
+· releases ship windows-x64.zip, linux-x64.tar.gz and macos-arm64.tar.gz (the last two cross-compiled by
+  package.ps1; CI checks those compilers equal the ones Linux / macOS build natively)
 
 **The direction (user, 2026-10-08):** Strata grows **independent** — step by step, until it
 relies on nothing but the OS and what a game engine provides. 2.0 is step one: its own
@@ -66,7 +68,10 @@ plus releases, and approve releases when asked.
   DT_SONAME, DT_FINI_ARRAY -> srt_os_flush; no srt_os_init, so getenv is null there).
   CI's Linux job runs every run golden natively. On Linux, `auto` uses C only for projects
   with C sources; the compiler itself still builds through C there (build.sh `--backend c`).
-- **On `main` (unreleased): function pointers** (the user needs them for an engine
+- **2.6.0** released 2026-10-11: everything below marked "on main" up to here - native
+  Linux x86-64 and macOS ARM64, CrossPlatform, `when`, link names, function pointers - and
+  the first macOS / Linux release archives. The last release with the C backend.
+- **On `main` (released in 2.6.0): function pointers** (the user needs them for an engine
   project): `TypeKind.TyFunc` (TypeNode `elem` = result, `args` / `next` = the parameter
   chain), parsed by `parse_fn_type` (`fn(` in a type position; `(fn ...)` groups); the
   checker's `TcFunc` keeps the node (`Type.sig`) and compares signatures as text
